@@ -1,23 +1,31 @@
 [project]
-name = "origin-lab"
+name = "midas-memory"
 version = "0.0.1"
-description = "Midas — agentic memory wedge + eval harness (working name)"
+description = "Local-first, eval-first memory for long-horizon AI agents — no LLM at ingest"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
-# Core runs with ZERO third-party deps (stdlib only) so the harness works offline.
+keywords = ["agent", "memory", "llm", "rag", "mcp", "embeddings", "long-horizon"]
+# Core runs with ZERO third-party deps (stdlib only) so it installs instantly and works offline.
 dependencies = []
 
-# Optional extras, installed on demand (e.g. `uv pip install openai`):
-#   openai      -> real semantic embeddings + LLM-judge
-#   tiktoken    -> exact token counts (replaces the ~1.3/word estimate)
-#   mem0ai / zep-cloud / letta-client -> competitor adapters (wire up later)
+# Optional extras — install what you need (or `[all]` for everything):
+#   all       -> local embeddings + MCP server + LangGraph (the recommended one-shot install)
+#   local     -> local semantic embeddings (fastembed/ONNX — no API key, no torch)
+#   mcp       -> expose Midas as an MCP server (`midas-mcp` / `python -m midas.mcp_server`)
+#   langgraph -> use Midas as a LangGraph BaseStore (long-term memory)
+#   openai    -> OpenAI embeddings + LLM-judge   ·   dev -> tests + exact token counts
 [project.optional-dependencies]
+all = ["fastembed>=0.7", "mcp>=1.0", "langgraph>=0.2"]
+local = ["fastembed>=0.7"]
+mcp = ["mcp>=1.0"]
+langgraph = ["langgraph>=0.2"]
 openai = ["openai>=1.0"]
-local = ["fastembed>=0.7"]  # local semantic embeddings (ONNX, no API key, no torch)
-mcp = ["mcp>=1.0"]          # expose Midas as an MCP server (python -m midas.mcp_server)
-langgraph = ["langgraph>=0.2"]  # use Midas as a LangGraph BaseStore (long-term memory)
 dev = ["pytest>=8", "tiktoken"]
+
+[project.urls]
+Homepage = "https://github.com/vornicx/Midas"
+Repository = "https://github.com/vornicx/Midas"
 
 [project.scripts]
 midas-mcp = "midas.mcp_server:main"

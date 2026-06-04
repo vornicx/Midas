@@ -30,12 +30,36 @@ control.
 
 ## Install
 
+**Requirement:** Python **3.11+**. That's it — Midas's core has **zero third-party dependencies**.
+
 ```bash
-git clone https://github.com/vornicx/Midas && cd Midas
-pip install -e .                 # core: zero third-party dependencies
-pip install -e ".[local]"        # + local semantic embeddings (fastembed/ONNX — no API key, no torch)
-pip install -e ".[local,mcp]"    # + the MCP server
+git clone https://github.com/vornicx/Midas
+cd Midas
+pip install ".[all]"          # ← the one command: SDK + local embeddings + MCP + LangGraph
 ```
+
+That's the whole install. Want a smaller footprint? Pick extras à la carte instead of `[all]`:
+
+| Command | You get |
+|---|---|
+| `pip install .` | core SDK only (offline hashing embedder, zero deps) |
+| `pip install ".[local]"` | + local semantic embeddings (fastembed/ONNX — **no API key, no torch**) |
+| `pip install ".[mcp]"` | + the MCP server (`midas-mcp`) |
+| `pip install ".[all]"` | everything above + the LangGraph integration |
+
+> On its **first run**, `[local]` downloads the embedding model once (~90 MB, `bge-base` ONNX) and then
+> works **fully offline**. No API key is ever required.
+
+**Verify it works (10 seconds):**
+
+```bash
+python -c "import midas; print('Midas', midas.__version__, 'OK')"
+python quickstart.py          # tiny end-to-end demo: remember → recall
+```
+
+*(Prefer [uv](https://docs.astral.sh/uv/)? Swap `pip install` for `uv pip install`. Working in a project
+you don't want to clone into? `pip install "midas-memory[all] @ git+https://github.com/vornicx/Midas"`
+once the repo is public, or with a token while it's private.)*
 
 ## Quickstart
 
@@ -88,14 +112,14 @@ memory and scanned vectorised).
 ## Use as an MCP server
 
 Expose Midas to any [MCP](https://modelcontextprotocol.io) client (Claude Desktop, Cursor, Windsurf,
-agent frameworks) — memory tools with **no LLM and nothing leaving the machine**:
+agent frameworks) — memory tools with **no LLM and nothing leaving the machine**. The MCP server ships
+with the `[mcp]` and `[all]` installs above; check it runs:
 
 ```bash
-pip install -e ".[mcp,local]"
-python -m midas.mcp_server          # or the `midas-mcp` console script
+midas-mcp                            # starts the stdio server (Ctrl-C to stop) — or: python -m midas.mcp_server
 ```
 
-Register it (e.g. Claude Desktop's `claude_desktop_config.json`):
+Then register it (e.g. Claude Desktop's `claude_desktop_config.json`):
 
 ```json
 {
@@ -112,6 +136,10 @@ Register it (e.g. Claude Desktop's `claude_desktop_config.json`):
   }
 }
 ```
+
+> **If the client says "command not found":** it doesn't share your shell's `PATH`. Use the absolute
+> path — run `which midas-mcp` (or `which python`) and put that in `"command"`. Restart the client after
+> editing its config.
 
 Tools: `remember` (auto-derives importance), `capture` (policy-gated auto-store — see below), `recall`
 (**source-traceable** hits), `build_context` (budgeted, prompt-ready block), `maintain` (no-LLM
