@@ -14,17 +14,21 @@ Config (env):
     MIDAS_MCP_DB           = path to a SQLite file (persist memory across restarts; default: in-memory)
     MIDAS_MCP_MAX_RECORDS  = cap the store; over it, `remember` auto-forgets the lowest-value tail
                              (no LLM) so memory stays bounded out of the box (default: unbounded)
+    MIDAS_MCP_MIN_IMPORTANCE = relevance floor for `capture` (1-5); turns scoring below it are skipped
+                             (default: 2 — keeps anything with a real fact/name/number, drops chit-chat)
 """
 from __future__ import annotations
 
 import os
 import sys
 
-from midas import ContentImportance, HashingEmbedder, Memory
+from midas import AGENT_MEMORY_INSTRUCTIONS, ContentImportance, HashingEmbedder, Memory, MemoryPolicy, policy_summary
 
 # Auto-retention cap: when set, the store is kept at or below this many records by no-LLM selective
 # forgetting after each write — bounded memory for long-running/enterprise deployments.
 _MAX_RECORDS = int(os.getenv("MIDAS_MCP_MAX_RECORDS", "0")) or None
+# The relevance parameters Midas imposes on `capture` (the no-LLM "what's worth keeping" gate).
+_POLICY = MemoryPolicy(min_importance=int(os.getenv("MIDAS_MCP_MIN_IMPORTANCE", "2")))
 
 
 def build_memory() -> Memory:
@@ -49,7 +53,8 @@ def build_memory() -> Memory:
         store = SQLiteStore(db)
         print(f"[midas-mcp] persisting memory to {db}", file=sys.stderr)
     return Memory(
-        embedder=embedder, reranker=reranker, store=store, importance_scorer=ContentImportance()
+        embedder=embedder, reranker=reranker, store=store,
+        importance_scorer=ContentImportance(), policy=_POLICY,
     )
 
 
@@ -59,7 +64,9 @@ except ImportError as exc:  # pragma: no cover
     raise SystemExit('Midas MCP server needs the MCP SDK: uv pip install -e ".[mcp]"') from exc
 
 _mem = build_memory()
-server = FastMCP("midas-memory")
+# `instructions` are surfaced to the model by the MCP client on connect — this is how installing Midas
+# makes an agent start remembering on its own: it injects the recall->work->capture loop + the policy.
+server = FastMCP("midas-memory", instructions=AGENT_MEMORY_INSTRUCTIONS)
 
 
 @server.tool()
@@ -77,6 +84,26 @@ def remember(content: str, kind: str = "note", importance: int = 0, session: str
     if _MAX_RECORDS and len(_mem.store.all()) > _MAX_RECORDS:
         _mem.forget_decayed(max_records=_MAX_RECORDS)  # keep memory bounded (no LLM)
     return f"remembered ({rec.id})"
+
+
+@server.tool()
+def capture(content: str, kind: str = "chat", session: str = "default") -> dict:
+    """Offer a turn to memory; Midas decides whether to keep it (no LLM).
+
+    Forward anything that might be durable — a fact, decision, preference, constraint, or correction.
+    Midas scores its importance and keeps it only if it clears the relevance policy and isn't a
+    duplicate, so you can capture freely without polluting memory. Returns whether it was stored and
+    why (so you learn the bar). This is the workhorse for hands-off, automatic remembering.
+    """
+    result = _mem.capture(content, kind=kind, metadata={"session": session})
+    if result.stored and _MAX_RECORDS and len(_mem.store.all()) > _MAX_RECORDS:
+        _mem.forget_decayed(max_records=_MAX_RECORDS)
+    return {
+        "stored": result.stored,
+        "reason": result.reason,
+        "importance": result.importance,
+        "id": result.record.id if result.record else None,
+    }
 
 
 @server.tool()
@@ -168,6 +195,21 @@ def stats() -> dict:
         by_kind[record.kind] = by_kind.get(record.kind, 0) + 1
         by_tier[_mem.tier(record)] += 1
     return {"total": sum(by_kind.values()), "by_kind": by_kind, "by_tier": by_tier}
+
+
+@server.prompt()
+def memory_session(goal: str = "") -> str:
+    """A drop-in prompt that switches an agent into Midas auto-memory mode for a session.
+
+    Clients that don't surface server `instructions` automatically can pin this as a system prompt.
+    """
+    g = f' for this goal: "{goal.strip()}"' if goal.strip() else ""
+    return (
+        AGENT_MEMORY_INSTRUCTIONS
+        + f"\n\nStart now{g}: call `build_context` with the goal to load relevant memory, then proceed — "
+        "calling `capture` as durable facts, decisions, preferences, constraints, or corrections come up.\n"
+        f"Relevance policy in effect: {policy_summary(_POLICY)}."
+    )
 
 
 def main() -> None:

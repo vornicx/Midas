@@ -60,6 +60,11 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
   distribution), `forget`, `forget_all`. Optional SQLite persistence via `MIDAS_MCP_DB`; optional
   **bounded memory** via `MIDAS_MCP_MAX_RECORDS` (auto-forget the lowest-value tail over the cap). The
   privacy/cost/provenance/retention surface for long-running and enterprise agents.
+- **Zero-config auto-memory** (LLM-free) — install the MCP server and Midas starts remembering on its
+  own. The server **injects a memory policy** into the agent (MCP `instructions` + a `memory_session`
+  prompt): recall-then-`capture`. `Memory.capture()` + `MemoryPolicy` impose the relevance parameters —
+  it scores each turn's importance, enforces a floor (`MIDAS_MCP_MIN_IMPORTANCE`, default 2) and skips
+  duplicates, and reports stored/skipped + why. The agent captures freely; Midas decides what's kept.
 - **Eval harness** (`eval/`, dev-only) — LoCoMo + LongMemEval loaders, deterministic `recall@k`,
   per-adapter cost/latency instrumentation, and an optional LLM judge (hosted or local Ollama,
   seed-pinned + serialized for reproducibility). **Reader and judge models are decoupled**

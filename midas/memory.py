@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol, runtime_checkable
 
 from .embeddings import Embedder, HashingEmbedder, cosine
+from .importance import ContentImportance
+from .policy import DEFAULT_POLICY, MemoryPolicy
 from .store import InMemoryStore
 from .types import MemoryKind, MemoryRecord, RecallHit
 
@@ -140,6 +142,17 @@ class ContextBlock:
     tokens: int = 0
 
 
+@dataclass
+class CaptureResult:
+    """Outcome of an auto-`capture`: whether Midas's policy kept the turn, and why/why not. Returned to
+    the agent so it learns the relevance bar instead of guessing it."""
+
+    stored: bool
+    reason: str
+    record: MemoryRecord | None = None
+    importance: int = 0
+
+
 class Memory:
     def __init__(
         self,
@@ -166,6 +179,7 @@ class Memory:
         abstention_entailment_floor: float = 0.0,  # >0: abstain when no turn ENTAILS an answer (NLI)
         nli: object | None = None,  # LocalNLI: precise contradiction (revise) + entailment (abstain)
         importance_scorer: Callable[[str], int] | None = None,  # derive importance from content (no LLM)
+        policy: MemoryPolicy | None = None,  # relevance parameters Midas imposes when `capture`-ing
         include_provenance: bool = True,
     ) -> None:
         self.store = store if store is not None else InMemoryStore()
@@ -186,6 +200,7 @@ class Memory:
         self._supersede_contradiction_threshold = supersede_contradiction_threshold
         self._nli = nli
         self._importance_scorer = importance_scorer
+        self._policy = policy or DEFAULT_POLICY
         self._exclude_superseded_from_context = exclude_superseded_from_context
         self._abstention_threshold = abstention_threshold
         self._abstention_relevance_floor = abstention_relevance_floor
@@ -269,6 +284,47 @@ class Memory:
                 self._maybe_supersede(record)
             records.append(record)
         return records
+
+    def capture(
+        self,
+        content: str,
+        *,
+        kind: MemoryKind = "chat",
+        source: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        created_at: float | None = None,
+        policy: MemoryPolicy | None = None,
+    ) -> CaptureResult:
+        """Auto-remember a turn **only if it clears the relevance policy** (no LLM). Scores the content's
+        importance (`ContentImportance`), then enforces the policy's floor + accepted-kinds + dedup, and
+        reports the outcome. This is what makes "capture everything" safe: the agent forwards turns and
+        *Midas decides* what is worth keeping (and says why). For unconditional storage, use `remember`."""
+        content = (content or "").strip()
+        if not content:
+            return CaptureResult(False, "empty content")
+        policy = policy or self._policy
+        scorer = self._importance_scorer or ContentImportance()
+        importance = _clamp_importance(scorer(content))
+        if kind not in policy.accept_kinds:
+            return CaptureResult(False, f"kind '{kind}' not accepted by policy", importance=importance)
+        if importance < policy.min_importance:
+            return CaptureResult(
+                False,
+                f"below relevance floor (importance {importance} < {policy.min_importance})",
+                importance=importance,
+            )
+        if policy.dedup_threshold and policy.dedup_threshold > 0:
+            near = self.store.search(self.embedder.embed(content), limit=1)
+            if near and near[0][0] >= policy.dedup_threshold:
+                return CaptureResult(
+                    False, "near-duplicate of an existing memory", record=near[0][1],
+                    importance=importance,
+                )
+        record = self.remember(
+            content, kind=kind, importance=importance, source=source,
+            metadata=metadata, created_at=created_at,
+        )
+        return CaptureResult(True, "stored", record=record, importance=importance)
 
     def _resolve_importance(self, importance: int | None, content: str) -> int:
         """Importance as given, or derived from content (no LLM) when omitted and an

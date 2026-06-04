@@ -113,12 +113,39 @@ Register it (e.g. Claude Desktop's `claude_desktop_config.json`):
 }
 ```
 
-Tools: `remember` (auto-derives importance), `recall` (**source-traceable** hits), `build_context`
-(budgeted, prompt-ready block), `maintain` (no-LLM retention: dedup + selective forgetting, returns the
-**deletion audit**), `stats` (counts + short/medium/long tier distribution), `forget` / `forget_all`.
+Tools: `remember` (auto-derives importance), `capture` (policy-gated auto-store — see below), `recall`
+(**source-traceable** hits), `build_context` (budgeted, prompt-ready block), `maintain` (no-LLM
+retention: dedup + selective forgetting, returns the **deletion audit**), `stats` (counts +
+short/medium/long tier distribution), `forget` / `forget_all`.
 - `MIDAS_MCP_DB` persists memory across restarts (local SQLite, no native extension).
 - `MIDAS_MCP_MAX_RECORDS` keeps memory **bounded out of the box** — over the cap, the lowest-value tail
   is auto-forgotten (durable facts protected).
+
+## Zero-config auto-memory
+
+Install the MCP server and Midas **starts remembering on its own** — no wiring. On connect it injects a
+short **memory policy** into the agent (the MCP `instructions`): *recall relevant memory before acting,
+then `capture` durable facts, decisions, preferences, constraints, and corrections as they come up.* The
+agent captures liberally; **Midas decides what is actually kept** — it scores each turn's importance
+(no LLM) and skips trivia and duplicates, telling the agent why. So *Midas imposes the relevance
+parameters*, not the agent's judgement:
+
+- `MIDAS_MCP_MIN_IMPORTANCE` (default `2`) — the relevance floor; turns scoring below it are dropped.
+- near-duplicates (cosine ≥ 0.95 to an existing memory) are skipped automatically.
+- `MIDAS_MCP_MAX_RECORDS` — memory stays bounded; the low-value tail is forgotten (durable facts kept).
+
+The same gate is a one-liner in the SDK:
+
+```python
+from midas import Memory, LocalEmbedder, MemoryPolicy
+
+mem = Memory(embedder=LocalEmbedder(), policy=MemoryPolicy(min_importance=2))
+mem.capture("My deploy key expires on 2027-03-01.", kind="fact")  # -> stored
+mem.capture("haha yeah sounds good")                              # -> skipped (below the floor)
+```
+
+Clients that don't surface server instructions automatically can pin the `memory_session` prompt the
+server exposes as a system prompt.
 
 ## Use with LangGraph
 

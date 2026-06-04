@@ -9,11 +9,13 @@ os.environ["MIDAS_MCP_EMBEDDER"] = "hashing"  # must be set before importing the
 
 from midas.mcp_server import (  # noqa: E402
     build_context,
+    capture,
     forget,
     forget_all,
     maintain,
     recall,
     remember,
+    server,
     stats,
 )
 
@@ -82,3 +84,19 @@ def test_maintain_consolidates_duplicates_with_audit():
     out = maintain(consolidate_threshold=0.99)
     assert out["consolidated"] == 1 and out["remaining"] == 1
     assert len(out["removed_ids"]) == 1  # the deletion audit trail
+
+
+def test_capture_tool_gates_by_policy():
+    forget_all()
+    fact = capture("My API rate limit is 5000 requests per hour.", kind="fact")
+    assert fact["stored"] is True and fact["importance"] >= 2
+    filler = capture("haha ok cool")
+    assert filler["stored"] is False and "floor" in filler["reason"]
+    dup = capture("My API rate limit is 5000 requests per hour.", kind="fact")
+    assert dup["stored"] is False and "duplicate" in dup["reason"]
+    assert stats()["total"] == 1  # only the fact was kept
+
+
+def test_server_injects_memory_instructions():
+    # The injected prompt is how installing Midas makes an agent start remembering on its own.
+    assert server.instructions and "capture" in server.instructions.lower()

@@ -15,7 +15,8 @@ from .embeddings import (
     tokenize,
 )
 from .importance import ContentImportance
-from .memory import ContextBlock, Memory, Reranker, approx_tokens, format_record
+from .memory import CaptureResult, ContextBlock, Memory, Reranker, approx_tokens, format_record
+from .policy import AGENT_MEMORY_INSTRUCTIONS, DEFAULT_POLICY, MemoryPolicy, policy_summary
 from .store import InMemoryStore
 from .types import MEMORY_KINDS, MemoryKind, MemoryRecord, RecallHit
 
@@ -32,6 +33,11 @@ except ImportError:
 __all__ = [
     "Memory",
     "ContentImportance",
+    "MemoryPolicy",
+    "DEFAULT_POLICY",
+    "AGENT_MEMORY_INSTRUCTIONS",
+    "policy_summary",
+    "CaptureResult",
     "ContextBlock",
     "Reranker",
     "approx_tokens",
