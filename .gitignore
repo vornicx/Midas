@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+
+# Environments
+.venv/
+venv/
+.env
+
+# uv
+uv.lock
+
+# Eval outputs
+results/
+*.local.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+
+# Large / downloadable benchmark datasets (fetched via the loader — see eval/datasets.py)
+data/longmemeval_s.json
+data/longmemeval_oracle.json
+data/longmemeval_m.json
+
+# Local uv cache (set via UV_CACHE_DIR for this project)
+.uv-cache/
+
+# Ad-hoc scratch
+/test_category_breakdown.py
+
+# Internal strategy / competitive / handoff docs — keep OUT of any public release
+_private/
+
+# Datasets are fetched locally via eval/datasets.py, never committed
+/data/
