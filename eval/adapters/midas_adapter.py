@@ -48,6 +48,8 @@ class MidasAdapter:
         hybrid_fusion: str = "rrf",
         time_aware: bool = True,  # use dataset event time for recency/chronology (vs ingest order)
         importance_scorer=None,  # no-LLM ContentImportance: derive importance from raw turns
+        novelty_weight: float = 0.0,  # >0: blend novelty-vs-store into derived importance
+        reinforce: bool = False,  # restated memories gain importance (repetition ⇒ salience)
     ) -> None:
         self._embedder = embedder
         self._limit = limit
@@ -74,6 +76,8 @@ class MidasAdapter:
         self._hybrid_fusion = hybrid_fusion
         self._time_aware = time_aware
         self._importance_scorer = importance_scorer
+        self._novelty_weight = novelty_weight
+        self._reinforce = reinforce
         self._reranker = None  # cached across resets so the model loads once
         self.reset()
 
@@ -106,6 +110,8 @@ class MidasAdapter:
             supersede_conversational=self._supersede_conversational,
             nli=self._get_nli(),
             importance_scorer=self._importance_scorer,
+            novelty_weight=self._novelty_weight,
+            reinforce=self._reinforce,
             exclude_superseded_from_context=self._exclude_superseded_from_context,
             abstention_threshold=self._abstention_threshold,
             abstention_relevance_floor=self._abstention_relevance_floor,
@@ -121,9 +127,11 @@ class MidasAdapter:
                 {
                     "content": event.content,
                     "kind": kind,
-                    # When a scorer is configured, omit importance so Memory derives it from content
-                    # (no LLM); otherwise honour the dataset's annotation.
-                    "importance": None if self._importance_scorer is not None else event.importance,
+                    # When a scorer or novelty weighting is configured, omit importance so Memory
+                    # derives it (content salience + novelty-vs-store, no LLM); else honour the dataset.
+                    "importance": None
+                    if (self._importance_scorer is not None or self._novelty_weight > 0)
+                    else event.importance,
                     "created_at": event.metadata.get("timestamp") if self._time_aware else None,
                     "metadata": {
                         "event_id": event.id,

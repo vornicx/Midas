@@ -186,8 +186,25 @@ honest.
   0.18** — Midas sheds ~34% filler but refuses to drop fact-bearing turns. **As a pure eviction *rank*
   (equal budget) it helps only at moderate compression** (50% keep: 0.13 vs 0.10) and is too noisy at
   aggressive cuts (25%: 0.08 vs 0.10). So the coarse content heuristic belongs as a *protection/tier*
-  signal, not the sole rank. Remaining lever: a sharper salience — **novelty vs the existing store**
-  (surprise) — which is also what extractive consolidation needs to choose what to keep.
+  signal, not the sole rank. The next lever, **novelty-vs-store**, was built and **tested 2026-06-04 —
+  and it is a measured NEGATIVE.** `Memory(novelty_weight=…)` blends importance with `1 − max-cosine-to-
+  store` (no LLM, 7 unit tests, off by default), on the hypothesis that a *new* fact should outrank a
+  *repeated* one. At equal budget it is **neutral on LoCoMo/synthetic recall@k and HARMFUL on multiday**
+  (value-rank recall@k **1.00 → 0.60** at 50% keep, 0.60 → 0.40 at 25%). Why: novelty demotes a repeated
+  fact as "redundant", but in real memory **repetition usually signals importance** (reinforcement), and
+  when the gold evidence is itself restated, demoting the repeats *evicts* it. So novelty is the **wrong
+  signal for eviction-ranking** — its correct home is **consolidation** (merge true duplicates, keep one
+  copy), which `Memory.consolidate` already does. We then built the **inverse — reinforcement**
+  (`Memory(reinforce=True)`: a restated turn *boosts* the matched memory's importance + recency, 7 unit
+  tests, off by default) — and it is **also a measured NEGATIVE**: at equal budget recall@k *drops*
+  (LoCoMo 0.13→0.11 @50%, 0.08→**0.03** @25%; multiday 0.60→0.40 @25%). Why the symmetric failure is the
+  real lesson: **on raw conversation, repetition tracks *commonness*, not importance** — generic phrasings
+  recur while a key fact is often stated once. So novelty drops repeated *facts* (multiday) and
+  reinforcement boosts repeated *filler* (LoCoMo); **the repetition-vs-store signal — in either direction
+  — is a poor no-LLM proxy for importance and does not improve forgetting.** Conclusion: stop chasing
+  repetition-based importance; `ContentImportance` used as a *protection* (not a rank) remains the best
+  no-LLM signal, and sharpening it needs a different axis (e.g. entity/structure), not how often a turn
+  recurs. Both knobs ship off by default as tested, reproducible negatives.
 - **Lossy compression without losing the critical detail** — exactly the thing a user notices when it
   breaks. *Extractive consolidation built + measured 2026-06-04* (`Memory.consolidate`): it collapses
   near-**duplicate** restatements to the single highest-value copy — extractive (drops whole redundant

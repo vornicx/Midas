@@ -117,6 +117,8 @@ def main() -> None:
     parser.add_argument("--local-max-text-chars", type=int, default=2000)
     parser.add_argument("--fractions", type=str, default="0.75,0.5,0.25", help="retained fractions to sweep")
     parser.add_argument("--derive-importance", action="store_true", help="derive per-turn importance from content (no LLM) so forgetting can beat recency on uniform-importance chat")
+    parser.add_argument("--novelty-weight", type=float, default=0.0, help="blend novelty-vs-store into derived importance (0..1); a new fact outranks a repeated one. Pairs with --derive-importance")
+    parser.add_argument("--reinforce", action="store_true", help="reinforcement: a restated/near-duplicate turn boosts the matched memory's importance + recency (repetition ⇒ salience)")
     parser.add_argument("--value-rank-only", action="store_true", help="evict purely by value-rank to the exact target (protections off) — the apples-to-apples ranking test vs fifo")
     parser.add_argument("--consolidate", type=float, default=0.0, help="instead of the eviction sweep, measure extractive consolidation (dedup) at this cosine threshold, e.g. 0.95")
     parser.add_argument("--seed", type=int, default=0)
@@ -147,6 +149,7 @@ def main() -> None:
         return MidasAdapter(
             embedder=embedder, limit=args.limit, rerank=rerank,
             min_relevance=min_relevance, time_aware=True, importance_scorer=scorer,
+            novelty_weight=args.novelty_weight, reinforce=args.reinforce,
         )
 
     dataset = _load(args)

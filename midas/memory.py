@@ -180,6 +180,10 @@ class Memory:
         nli: object | None = None,  # LocalNLI: precise contradiction (revise) + entailment (abstain)
         importance_scorer: Callable[[str], int] | None = None,  # derive importance from content (no LLM)
         policy: MemoryPolicy | None = None,  # relevance parameters Midas imposes when `capture`-ing
+        novelty_weight: float = 0.0,  # >0: blend novelty-vs-store into derived importance (no LLM)
+        reinforce: bool = False,  # a restated memory gains importance + recency (repetition ⇒ salience)
+        reinforce_threshold: float = 0.85,
+        reinforce_bump: int = 1,
         include_provenance: bool = True,
     ) -> None:
         self.store = store if store is not None else InMemoryStore()
@@ -201,6 +205,10 @@ class Memory:
         self._nli = nli
         self._importance_scorer = importance_scorer
         self._policy = policy or DEFAULT_POLICY
+        self._novelty_weight = max(0.0, min(1.0, novelty_weight))
+        self._reinforce = reinforce
+        self._reinforce_threshold = reinforce_threshold
+        self._reinforce_bump = reinforce_bump
         self._exclude_superseded_from_context = exclude_superseded_from_context
         self._abstention_threshold = abstention_threshold
         self._abstention_relevance_floor = abstention_relevance_floor
@@ -220,21 +228,24 @@ class Memory:
         content = (content or "").strip()
         if not content:
             raise ValueError("Memory.remember: `content` is required")
-        importance = self._resolve_importance(importance, content)
+        embedding = self.embedder.embed(content)
         # `created_at` is the EVENT time (when the fact was true/stated), distinct from ingest order.
         # Passing it makes recency and chronological context reflect real time, not load order — the
         # bitemporal signal long-horizon temporal reasoning needs. Defaults to the wall clock.
         ts = created_at if created_at is not None else self._now()
+        if self._reinforce:
+            self._reinforce_existing(embedding, ts)  # a restatement boosts the matched memory
+        importance = self._derive_importance(importance, content, embedding)
         record = MemoryRecord(
             id=str(uuid.uuid4()),
             content=content,
             kind=kind,
-            importance=_clamp_importance(importance),
+            importance=importance,
             source=source,
             metadata=metadata or {},
             created_at=ts,
             updated_at=ts,
-            embedding=self.embedder.embed(content),
+            embedding=embedding,
         )
         self.store.put(record)
         if self._supersede:
@@ -268,11 +279,13 @@ class Memory:
         for item, embedding in zip(normalized, embeddings):
             ts = item.get("created_at")  # event time when provided (see remember); else ingest time
             ts = ts if ts is not None else self._now()
+            if self._reinforce:
+                self._reinforce_existing(embedding, ts)  # a restatement boosts the matched memory
             record = MemoryRecord(
                 id=str(uuid.uuid4()),
                 content=item["content"],
                 kind=item.get("kind", "note"),
-                importance=self._resolve_importance(item.get("importance"), item["content"]),
+                importance=self._derive_importance(item.get("importance"), item["content"], embedding),
                 source=item.get("source"),
                 metadata=item.get("metadata") or {},
                 created_at=ts,
@@ -304,7 +317,8 @@ class Memory:
             return CaptureResult(False, "empty content")
         policy = policy or self._policy
         scorer = self._importance_scorer or ContentImportance()
-        importance = _clamp_importance(scorer(content))
+        embedding = self.embedder.embed(content)
+        importance = self._blend_novelty(scorer(content), embedding)
         if kind not in policy.accept_kinds:
             return CaptureResult(False, f"kind '{kind}' not accepted by policy", importance=importance)
         if importance < policy.min_importance:
@@ -314,8 +328,14 @@ class Memory:
                 importance=importance,
             )
         if policy.dedup_threshold and policy.dedup_threshold > 0:
-            near = self.store.search(self.embedder.embed(content), limit=1)
+            near = self.store.search(embedding, limit=1)
             if near and near[0][0] >= policy.dedup_threshold:
+                if self._reinforce:
+                    self._reinforce_record(near[0][1], created_at if created_at is not None else self._now())
+                    return CaptureResult(
+                        False, "reinforced an existing memory (restatement)", record=near[0][1],
+                        importance=importance,
+                    )
                 return CaptureResult(
                     False, "near-duplicate of an existing memory", record=near[0][1],
                     importance=importance,
@@ -326,13 +346,57 @@ class Memory:
         )
         return CaptureResult(True, "stored", record=record, importance=importance)
 
-    def _resolve_importance(self, importance: int | None, content: str) -> int:
-        """Importance as given, or derived from content (no LLM) when omitted and an
-        `importance_scorer` is configured, else the default 1 — so raw turns get a salience without
-        the caller annotating every one. See `midas.importance.ContentImportance`."""
-        if importance is None:
-            importance = self._importance_scorer(content) if self._importance_scorer else 1
-        return _clamp_importance(importance)
+    def _novelty(self, embedding: list[float] | None) -> float:
+        """Novelty-vs-store: 1 - max cosine similarity to anything already stored (1 = wholly new,
+        0 = an exact duplicate). A store-aware salience signal — a turn dissimilar to every existing
+        memory carries new information; a near-restatement of a known fact does not. No LLM."""
+        if embedding is None:
+            return 1.0
+        hits = self.store.search(embedding, limit=1)
+        max_sim = max(0.0, hits[0][0]) if hits else 0.0
+        return max(0.0, 1.0 - max_sim)
+
+    def _reinforce_record(self, record: MemoryRecord, now: float) -> None:
+        """A memory was just restated -> it matters more (importance climbs) and is current again
+        (recency refreshes). The principled inverse of novelty: repetition signals salience."""
+        record.importance = _clamp_importance(record.importance + self._reinforce_bump)
+        record.updated_at = now
+
+    def _reinforce_existing(self, embedding: list[float] | None, now: float) -> MemoryRecord | None:
+        """When a new turn closely matches an existing memory (cosine >= `reinforce_threshold`), treat
+        it as a restatement and reinforce that memory. Returns the reinforced record, or None. No LLM."""
+        if not self._reinforce or embedding is None:
+            return None
+        hits = self.store.search(embedding, limit=1)
+        if hits and hits[0][0] >= self._reinforce_threshold:
+            self._reinforce_record(hits[0][1], now)
+            return hits[0][1]
+        return None
+
+    def _blend_novelty(self, base_importance: int, embedding: list[float] | None) -> int:
+        """Blend a content-salience importance (1-5) with novelty-vs-store via `novelty_weight` in
+        [0,1] (a convex combination of the two normalised signals), then bucket back to 1-5. At weight
+        0 this is exactly the content score; higher weights let a *new* fact outrank a *repeated* one
+        even when both look equally salient in isolation — which is what the content heuristic alone
+        cannot see."""
+        base = _clamp_importance(base_importance)
+        if self._novelty_weight <= 0 or embedding is None:
+            return base
+        nov = self._novelty(embedding)
+        content_norm = (base - 1) / 4
+        combined = (1 - self._novelty_weight) * content_norm + self._novelty_weight * nov
+        return _clamp_importance(1 + round(combined * 4))
+
+    def _derive_importance(
+        self, importance: int | None, content: str, embedding: list[float] | None = None
+    ) -> int:
+        """Importance as given, else derived (no LLM): the content scorer's salience (or 1 when no
+        scorer), optionally blended with novelty-vs-store. Used by `remember`/`remember_many` so raw
+        turns get a salience without the caller annotating every one."""
+        if importance is not None:
+            return _clamp_importance(importance)
+        base = self._importance_scorer(content) if self._importance_scorer else 1
+        return self._blend_novelty(base, embedding)
 
     def recall(
         self,

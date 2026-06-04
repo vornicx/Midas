@@ -48,7 +48,18 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
   importance_scorer=…)` auto-applies it to turns ingested without one, so raw chat gets a salience for
   forgetting/tiering. Measured: as a forgetting **protection** it lifts LoCoMo recall@k under eviction
   from 0.10 (recency) to **0.18** (sheds filler, keeps facts); as a pure rank it helps only at moderate
-  compression. Honest next lever: novelty-vs-store salience.
+  compression.
+- **Novelty-vs-store importance** (`Memory(novelty_weight=…)`, LLM-free) — blends importance with
+  `1 − max-cosine-to-store` so a *new* fact can outrank a *repeated* one. **Off by default: a measured
+  negative.** At equal budget it is neutral on LoCoMo/synthetic recall@k and *harmful* on multiday
+  (1.00 → 0.60), because repetition usually signals importance and demoting restated gold evicts it.
+  Kept as a tested, opt-in knob; its right home is consolidation (dedup), not eviction-ranking.
+- **Reinforcement importance** (`Memory(reinforce=True)`, LLM-free) — the inverse of novelty: a restated
+  turn *boosts* the matched memory's importance + recency (repetition ⇒ salience); in `capture` a
+  restatement reinforces the existing memory and is skipped. **Off by default: also a measured negative**
+  — recall@k drops at equal budget (LoCoMo 0.08→0.03 @25%; multiday 0.60→0.40 @25%). Unifying finding:
+  on raw conversation **repetition tracks commonness, not importance**, so neither novelty nor
+  reinforcement improves no-LLM forgetting. Content-salience as a *protection* stays the best signal.
 - **Extractive consolidation** (`Memory.consolidate`, LLM-free) — collapse near-**duplicate** restatements
   to the single highest-value copy (cosine ≥ threshold, chains preserved); extractive (drops redundant
   records, keeps provenance — never LLM-rewrites). Measured safe (recall@k held: LoCoMo 0.27→0.26 dropping
