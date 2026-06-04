@@ -2,66 +2,206 @@
 
 **Local-first, eval-first memory for long-horizon AI agents — no LLM at ingest.**
 
-Midas is a small Python SDK (and an MCP server) that gives agents durable memory across long,
+Midas is a small Python SDK (and an MCP server) that gives AI agents durable memory across long,
 multi-session work — coding agents, research agents, assistants — *without* sending every turn through
-an LLM to "extract" facts. It is deliberately different from LLM-heavy memory platforms:
+an LLM to "extract" facts. It runs on your machine, costs nothing per message, and every recalled memory
+is traceable to its source.
 
-- **No LLM at ingest or query.** Midas uses local embeddings + ranking, not an LLM to extract/summarize.
-  That means **$0 API spend and zero data egress at ingest**, millisecond-scale operations, and no
-  conversation turns leaving your infrastructure.
-- **Auditable provenance.** Recall returns the **source turns**, traceable to their exact origin — not
-  LLM-rewritten facts that can silently hallucinate at extraction time.
-- **Stays current, and bounded.** Local **belief revision** (supersede contradicted facts), **selective
-  forgetting + temporal tiers**, and **extractive consolidation** keep memory current and stop it from
-  growing without bound — all with **no LLM**.
-- **Embeddable + store-agnostic.** A library, not a server. Bring your own embedder and store.
-- **Eval-first.** Every claim is backed by a reproducible benchmark — see [BENCHMARKS.md](BENCHMARKS.md).
+- **No LLM at ingest or query** → **$0 API spend, zero data egress**, millisecond operations.
+- **Auditable provenance** → recall returns the **source turns**, not LLM-rewritten facts.
+- **Stays current and bounded** → belief revision, selective forgetting + tiers, dedup — all no-LLM.
+- **Embeddable + store-agnostic** → a library, not a SaaS. Bring your own embedder/store.
+- **Eval-first** → every claim has a reproducible benchmark ([BENCHMARKS.md](BENCHMARKS.md)).
 
 > **Status:** early (v0.0.1). The API may change. Built narrow and measured-first.
 
-## Why "no LLM at ingest" matters
+---
 
-LLM-at-ingest memory systems call an LLM to extract/summarize facts on every ingested session. They pay
-for it three times: **$ per token forever at scale, the latency of LLM inference, and every conversation
-turn sent to an LLM provider.** For production agents, that cost/privacy structure — not a few points of
-benchmark accuracy — is often what decides build-vs-buy. Midas trades the heavyweight extraction step
-for cheap, local, auditable retrieval, and puts the only LLM (the *reader* that answers) under your
-control.
+## How it works (in plain English)
+
+Your AI assistant forgets everything between sessions — every new chat starts from zero. Midas is a
+**memory that lives next to your AI, on your computer.** It does four simple things:
+
+1. **Notices what matters.** As you work, Midas saves the durable stuff — a decision, a fact about you, a
+   preference, a deadline — and ignores small talk. It judges *"does this matter?"* by reading the words
+   (names, numbers, dates make a turn important) — **without calling another AI**.
+2. **Hands the right notes back.** Before the AI answers, Midas finds the handful of past notes related
+   to your question — by **meaning**, not exact keywords — and slips them into the prompt.
+3. **Keeps the notebook honest and tidy.** When something changes ("actually, use Postgres now") it
+   **updates** the old note instead of keeping both; it **merges duplicates**; and it **forgets** old,
+   unimportant trivia so memory never bloats.
+4. **Stays yours.** Everything is a local file — no cloud, no per-message AI bill — and every note links
+   back to the exact moment it came from, so you can always check *why* the AI "knows" something.
+
+The trick that makes it cheap, private, and instant: Midas never sends your conversation to an AI to
+"process" it. It uses fast local math (*embeddings* — turning text into vectors and comparing them). The
+only AI involved is the one you're already talking to.
+
+**Why "no LLM at ingest" matters:** other memory tools call an LLM to summarize every session — you pay
+in tokens forever, in latency, and by sending every turn to a provider. Midas trades that for cheap,
+local, auditable retrieval.
+
+---
 
 ## Install
 
-**Requirement:** Python **3.11+**. That's it — Midas's core has **zero third-party dependencies**.
+You need **Python 3.11+**. Check with `python --version` (or `python3 --version`). If you don't have it:
+[python.org/downloads](https://www.python.org/downloads/), or `winget install Python.Python.3.12`
+(Windows) · `brew install python@3.12` (macOS) · your package manager (Linux). The easiest installer for
+everything below is [**uv**](https://docs.astral.sh/uv/) (one line: see its site), but `pip`/`pipx` work
+too.
+
+### A) To plug Midas into an AI tool (Claude Code, Cursor, …) — install the `midas-mcp` command
+
+This puts a `midas-mcp` program on your PATH that any MCP client can launch.
 
 ```bash
 git clone https://github.com/vornicx/Midas
 cd Midas
-pip install ".[all]"          # ← the one command: SDK + local embeddings + MCP + LangGraph
+
+# recommended — isolated global install with uv (works on Windows, macOS, Linux):
+uv tool install . --with "fastembed>=0.7" --with "mcp>=1.0"
+
+# …or with pipx:
+pipx install ".[all]"
 ```
 
-That's the whole install. Want a smaller footprint? Pick extras à la carte instead of `[all]`:
+Where the command lands (you'll need this path for some clients):
 
-| Command | You get |
-|---|---|
-| `pip install .` | core SDK only (offline hashing embedder, zero deps) |
-| `pip install ".[local]"` | + local semantic embeddings (fastembed/ONNX — **no API key, no torch**) |
-| `pip install ".[mcp]"` | + the MCP server (`midas-mcp`) |
-| `pip install ".[all]"` | everything above + the LangGraph integration |
+| OS | `midas-mcp` location | Find it with |
+|---|---|---|
+| **Linux / macOS** | `~/.local/bin/midas-mcp` | `which midas-mcp` |
+| **Windows** | `%USERPROFILE%\.local\bin\midas-mcp.exe` | `where midas-mcp` |
 
-> On its **first run**, `[local]` downloads the embedding model once (~90 MB, `bge-base` ONNX) and then
-> works **fully offline**. No API key is ever required.
+> *(Once Midas is on PyPI this becomes a one-liner — `uv tool install "midas-memory[all]"` — no clone.)*
 
-**Verify it works (10 seconds):**
+### B) To use Midas as a Python library — install into your project
 
 ```bash
-python -c "import midas; print('Midas', midas.__version__, 'OK')"
-python quickstart.py          # tiny end-to-end demo: remember → recall
+pip install ".[all]"          # SDK + local embeddings + MCP + LangGraph
+# smaller: `pip install .` (core, zero deps) · `".[local]"` (embeddings) · `".[mcp]"` (server)
 ```
 
-*(Prefer [uv](https://docs.astral.sh/uv/)? Swap `pip install` for `uv pip install`. Working in a project
-you don't want to clone into? `pip install "midas-memory[all] @ git+https://github.com/vornicx/Midas"`
-once the repo is public, or with a token while it's private.)*
+> **First run** downloads the embedding model once (~90 MB, `bge-base` ONNX), then works **fully
+> offline**. No API key, ever.
 
-## Quickstart
+**Verify:**
+
+```bash
+which midas-mcp || where midas-mcp                       # the server command is installed
+python -c "import midas; print('Midas', midas.__version__, 'OK')"
+python quickstart.py                                     # tiny end-to-end demo: remember → recall
+```
+
+---
+
+## Connect it to your coding agent
+
+Midas is a standard **MCP server**. Every MCP client launches the same command — `midas-mcp` — and
+passes a few environment variables. **The only thing that differs between tools is *where* you put the
+config.** Use this block everywhere (swap in your real home path):
+
+```json
+{
+  "mcpServers": {
+    "midas": {
+      "command": "midas-mcp",
+      "env": {
+        "MIDAS_MCP_EMBEDDER": "local",
+        "MIDAS_MCP_DB": "/home/you/.midas/memory.sqlite3",
+        "MIDAS_MCP_MAX_RECORDS": "50000",
+        "MIDAS_MCP_MIN_IMPORTANCE": "2"
+      }
+    }
+  }
+}
+```
+
+> ⚠️ **The #1 gotcha:** GUI apps don't share your terminal's `PATH`, so they may not find `midas-mcp`.
+> If a client says *"command not found"*, replace `"command": "midas-mcp"` with the **absolute path**
+> from `which midas-mcp` (macOS/Linux) or `where midas-mcp` (Windows, e.g.
+> `"C:/Users/you/.local/bin/midas-mcp.exe"` — use forward slashes or `\\` in JSON). On Windows, write the
+> DB path with forward slashes too: `C:/Users/you/.midas/memory.sqlite3`.
+
+### Claude Code
+
+Use the CLI (no file editing) — this is the exact command, verified:
+
+```bash
+claude mcp add midas -s user \
+  -e MIDAS_MCP_EMBEDDER=local \
+  -e MIDAS_MCP_DB="$HOME/.midas/memory.sqlite3" \
+  -e MIDAS_MCP_MAX_RECORDS=50000 \
+  -e MIDAS_MCP_MIN_IMPORTANCE=2 \
+  -- midas-mcp
+
+claude mcp list        # → midas: midas-mcp - ✓ Connected
+```
+
+`-s user` = available in **all** your projects · `-s project` = writes a shareable `.mcp.json` in the
+repo · `-s local` = just you, this project. Remove with `claude mcp remove midas -s user`.
+
+### Cursor
+
+Edit **`~/.cursor/mcp.json`** (all projects) or **`.cursor/mcp.json`** (this project) and paste the JSON
+block above. Then Cursor → **Settings → MCP** should show `midas`. Restart Cursor after changing `env`.
+
+### Claude Desktop
+
+**Settings → Developer → Edit Config** opens the file (or edit it directly):
+
+| OS | Path |
+|---|---|
+| macOS | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| Windows | `%APPDATA%\Claude\claude_desktop_config.json` |
+
+Paste the JSON block, save, and **restart Claude Desktop**.
+
+### Codex CLI
+
+Codex uses **TOML**, not JSON. Either run `codex mcp add midas -- midas-mcp`, or add this to
+**`~/.codex/config.toml`**:
+
+```toml
+[mcp_servers.midas]
+command = "midas-mcp"
+args = []
+env = { MIDAS_MCP_EMBEDDER = "local", MIDAS_MCP_DB = "/home/you/.midas/memory.sqlite3", MIDAS_MCP_MAX_RECORDS = "50000", MIDAS_MCP_MIN_IMPORTANCE = "2" }
+```
+
+Start a session and run **`/mcp`** to confirm it's connected.
+
+### Windsurf
+
+Edit the config (Cascade → **MCP icon → Configure** opens it), paste the JSON block, refresh:
+
+| OS | Path |
+|---|---|
+| macOS / Linux | `~/.codeium/windsurf/mcp_config.json` |
+| Windows | `%USERPROFILE%\.codeium\windsurf\mcp_config.json` |
+
+### Anything else (VS Code, Cline, Zed, OpenAI Agents SDK…)
+
+Same pattern: point it at command `midas-mcp` with those env vars (JSON clients reuse the block above).
+
+### What happens once it's connected
+
+On connect, Midas **injects a short memory policy into the agent** (via the MCP `instructions`): *recall
+relevant memory first, then `capture` durable facts / decisions / preferences / constraints /
+corrections as they come up.* The agent captures freely; **Midas decides what's actually kept** — it
+scores importance (no LLM), drops trivia below `MIDAS_MCP_MIN_IMPORTANCE` and skips duplicates, and keeps
+memory bounded via `MIDAS_MCP_MAX_RECORDS` (forgetting low-value items, protecting durable facts).
+Restart the client (or run `/mcp`) after editing config so it picks up the server.
+
+**Tools it exposes:** `remember`, `capture` (policy-gated auto-store), `recall` (source-traceable),
+`build_context` (budgeted prompt block), `maintain` (dedup + forgetting, returns a deletion audit),
+`stats` (counts + short/medium/long tiers), `forget` / `forget_all`. **Env knobs:** `MIDAS_MCP_DB`
+(persist to a SQLite file), `MIDAS_MCP_EMBEDDER` (`local` or `hashing`), `MIDAS_MCP_MAX_RECORDS`,
+`MIDAS_MCP_MIN_IMPORTANCE`.
+
+---
+
+## Use it from Python (the SDK)
 
 ```python
 from midas import Memory, LocalEmbedder, ContentImportance
@@ -79,106 +219,34 @@ print(mem.assemble("When do we launch?", token_budget=128))
 # Or structured, ranked hits, each traceable to its source:
 for hit in mem.recall("which database did we pick?", limit=3):
     print(f"{hit.score:.2f}  {hit.record.content}")
+
+# Auto-capture: forward a turn; Midas keeps it only if it clears the relevance policy (no LLM).
+mem.capture("My deploy key expires on 2027-03-01.", kind="fact")   # -> stored
+mem.capture("lol ok cool")                                          # -> skipped (below the floor)
 ```
 
-## Staying current and bounded — the long-horizon core
+### Staying current and bounded — the long-horizon core
 
-A multi-day agent's memory must stay **current** (no stale/contradictory beliefs) and **bounded** (it
-can't grow forever). Midas does both with **no LLM**:
+A multi-day agent's memory must stay **current** (no stale beliefs) and **bounded** (can't grow forever):
 
 ```python
 from midas.nli import LocalNLI
 
-# 1) Belief revision — a new turn that CONTRADICTS an old belief supersedes it (local NLI, not keywords)
+# Belief revision — a turn that CONTRADICTS an old belief supersedes it (local NLI, not keywords):
 mem = Memory(embedder=LocalEmbedder(), supersede=True, supersede_conversational=True, nli=LocalNLI())
 
-# 2) Selective forgetting + temporal tiers — bound storage, protect the durable tier, audit deletions
-forgotten_ids = mem.forget_decayed(max_records=50_000)   # evict lowest value (importance × recency)
-mem.tier(record)                                          # 'short' (≤1d) | 'medium' (≤1w) | 'long'
-
-# 3) Extractive consolidation — collapse near-duplicate restatements to one copy (keeps provenance)
-mem.consolidate(similarity_threshold=0.95)
+mem.forget_decayed(max_records=50_000)      # evict lowest value (importance × recency); protects facts
+mem.consolidate(similarity_threshold=0.95)  # collapse near-duplicate restatements (keeps provenance)
+mem.tier(record)                            # 'short' (≤1d) | 'medium' (≤1w) | 'long'
 ```
 
-Forgetting **protects** the durable tier (facts/preferences/constraints, high importance) and never
-orphans a supersession chain; it returns the removed ids as a **deletion audit trail**. Importance can
-be supplied by you or derived from content (`ContentImportance`, no LLM). All of this is measured against
-a reproducible retention harness — see [`eval/retention.py`](eval/retention.py) and the design doc.
+Forgetting returns the removed ids as a **deletion audit trail** and never drops the durable tier
+(facts/preferences/constraints, high importance). **Durable storage:** `Memory(store=SQLiteStore(
+"memory.db"), embedder=LocalEmbedder())` — a local file, no native extension.
 
-**Durable storage:** swap the in-memory store for SQLite — `Memory(store=SQLiteStore("memory.db"),
-embedder=LocalEmbedder())` — a local file, no native extension; search stays fast (records mirrored in
-memory and scanned vectorised).
+### Use with LangGraph
 
-## Use as an MCP server
-
-Expose Midas to any [MCP](https://modelcontextprotocol.io) client (Claude Desktop, Cursor, Windsurf,
-agent frameworks) — memory tools with **no LLM and nothing leaving the machine**. The MCP server ships
-with the `[mcp]` and `[all]` installs above; check it runs:
-
-```bash
-midas-mcp                            # starts the stdio server (Ctrl-C to stop) — or: python -m midas.mcp_server
-```
-
-Then register it (e.g. Claude Desktop's `claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "midas": {
-      "command": "python",
-      "args": ["-m", "midas.mcp_server"],
-      "env": {
-        "MIDAS_MCP_EMBEDDER": "local",
-        "MIDAS_MCP_DB": "/home/you/.midas/memory.sqlite3",
-        "MIDAS_MCP_MAX_RECORDS": "50000"
-      }
-    }
-  }
-}
-```
-
-> **If the client says "command not found":** it doesn't share your shell's `PATH`. Use the absolute
-> path — run `which midas-mcp` (or `which python`) and put that in `"command"`. Restart the client after
-> editing its config.
-
-Tools: `remember` (auto-derives importance), `capture` (policy-gated auto-store — see below), `recall`
-(**source-traceable** hits), `build_context` (budgeted, prompt-ready block), `maintain` (no-LLM
-retention: dedup + selective forgetting, returns the **deletion audit**), `stats` (counts +
-short/medium/long tier distribution), `forget` / `forget_all`.
-- `MIDAS_MCP_DB` persists memory across restarts (local SQLite, no native extension).
-- `MIDAS_MCP_MAX_RECORDS` keeps memory **bounded out of the box** — over the cap, the lowest-value tail
-  is auto-forgotten (durable facts protected).
-
-## Zero-config auto-memory
-
-Install the MCP server and Midas **starts remembering on its own** — no wiring. On connect it injects a
-short **memory policy** into the agent (the MCP `instructions`): *recall relevant memory before acting,
-then `capture` durable facts, decisions, preferences, constraints, and corrections as they come up.* The
-agent captures liberally; **Midas decides what is actually kept** — it scores each turn's importance
-(no LLM) and skips trivia and duplicates, telling the agent why. So *Midas imposes the relevance
-parameters*, not the agent's judgement:
-
-- `MIDAS_MCP_MIN_IMPORTANCE` (default `2`) — the relevance floor; turns scoring below it are dropped.
-- near-duplicates (cosine ≥ 0.95 to an existing memory) are skipped automatically.
-- `MIDAS_MCP_MAX_RECORDS` — memory stays bounded; the low-value tail is forgotten (durable facts kept).
-
-The same gate is a one-liner in the SDK:
-
-```python
-from midas import Memory, LocalEmbedder, MemoryPolicy
-
-mem = Memory(embedder=LocalEmbedder(), policy=MemoryPolicy(min_importance=2))
-mem.capture("My deploy key expires on 2027-03-01.", kind="fact")  # -> stored
-mem.capture("haha yeah sounds good")                              # -> skipped (below the floor)
-```
-
-Clients that don't surface server instructions automatically can pin the `memory_session` prompt the
-server exposes as a system prompt.
-
-## Use with LangGraph
-
-Back LangGraph's long-term memory with Midas — semantic, local, source-traceable recall behind the
-standard `BaseStore` (`pip install -e ".[langgraph]"`):
+Back LangGraph's long-term memory with Midas (`pip install ".[langgraph]"`):
 
 ```python
 from midas.integrations.langgraph_store import MidasStore
@@ -188,10 +256,12 @@ store.put(("user", "123"), "pref", {"text": "prefers dark mode and concise answe
 hits = store.search(("user", "123"), query="ui preferences")
 ```
 
+---
+
 ## Benchmarks
 
-Midas leads on the **reader-independent** axes that actually isolate a memory layer's quality (full
-methodology, numbers, and reproduce commands in [BENCHMARKS.md](BENCHMARKS.md)):
+Midas leads on the **reader-independent** axes that isolate a memory layer's quality (full methodology +
+reproduce commands in [BENCHMARKS.md](BENCHMARKS.md)):
 
 | | baseline (recency window) | **Midas** |
 |---|---:|---:|
@@ -200,47 +270,38 @@ methodology, numbers, and reproduce commands in [BENCHMARKS.md](BENCHMARKS.md)):
 | **Answer** — LongMemEval-`s` correctness (reader = gpt-4.1-mini, n=40) | 0.05 | **0.82** |
 | **Ingest cost** | — | **0 LLM calls · $0 API · 0 data egress** |
 
-We deliberately lead with **retrieval and cost** (deterministic, reader-independent) rather than
-end-to-end answer accuracy — because correctness on these benchmarks is dominated by the *reader* LLM,
-not the memory layer. That's the honest way to measure a memory system; caveats are in BENCHMARKS.md.
-
-**Head-to-head, same reader, zero LLM at ingest.** With `gpt-4o` as reader, Midas scores **0.84** on
-LongMemEval-`s` — **matching** the LLM-ingest SOTA (Observational Memory, 0.84 @ gpt-4o) while doing
-**no LLM at ingest**. And it **scales**: on a 500-session haystack (~4,944 turns) Midas assembles a
-bounded ~480-token context, where keep-everything-in-context designs overflow.
+We lead with **retrieval and cost** (deterministic, reader-independent) because end-to-end correctness on
+these benchmarks is dominated by the *reader* LLM, not the memory layer. **Head-to-head, same reader:**
+with `gpt-4o`, Midas scores **0.84** on LongMemEval-`s` — **matching** the LLM-ingest SOTA (Observational
+Memory) while doing **no LLM at ingest** — and on a 500-session haystack (~4,944 turns) it assembles a
+bounded ~480-token context where keep-everything-in-context designs overflow.
 
 ## The eval harness
 
-`eval/` is a dev-only benchmark harness (kept out of the shipped wheel) that runs Midas and competitors
-through the same datasets (LoCoMo, LongMemEval) with deterministic `recall@k`, cost/latency
-instrumentation, an optional (local or hosted) LLM judge, and a retention/forgetting measurement.
+`eval/` (dev-only) runs Midas and competitors through LoCoMo / LongMemEval with deterministic `recall@k`,
+cost/latency instrumentation, an optional local-or-hosted LLM judge, and a retention/forgetting measure:
 
 ```bash
-# deterministic retrieval benchmark — no API key needed
-python -m eval.runner --dataset longmemeval --variant s --local --midas-no-rerank \
-  --max-questions 15 --limit 20 --seed 0
-
-# retention: does no-LLM forgetting keep recall while bounding storage? (vs recency/random controls)
+python -m eval.runner --dataset longmemeval --variant s --local --midas-no-rerank --max-questions 15
 python -m eval.retention --dataset locomo --max-convs 1 --local --derive-importance
 ```
 
 ## Design concept
 
 [`docs/long-horizon-memory.md`](docs/long-horizon-memory.md) — the north-star: the **4 C's**
-(Complete · Clean · Current · Calibrated), why multi-day accuracy is a *belief-management* problem (not
-only retrieval), and the honest, measured state of each piece (including the open frontiers).
+(Complete · Clean · Current · Calibrated), why multi-day accuracy is a *belief-management* problem, and
+the honest, measured state of each piece (including the open frontiers).
 
 ## Layout
 
 ```
 midas/      # the SDK (importable; zero core dependencies)
-  embeddings.py   # Embedder protocol · Hashing / Local / OpenAI · DiskCachedEmbedder · LocalReranker
-  store.py        # InMemoryStore (cosine) · sqlite_store.py (persistent) · ann.py (IVF index)
-  memory.py       # Memory: remember / recall / build_context · forget_decayed · consolidate · tier
-  importance.py   # ContentImportance — no-LLM per-turn salience
+  memory.py       # Memory: remember / capture / recall / build_context · forget_decayed · consolidate · tier
+  importance.py   # ContentImportance — no-LLM per-turn salience   ·   policy.py — MemoryPolicy + auto-memory prompt
   nli.py          # LocalNLI — local entailment/contradiction (belief revision + abstention)
+  embeddings.py   # Hashing / Local (bge) / OpenAI · DiskCachedEmbedder · LocalReranker
+  store.py · sqlite_store.py · ann.py   # in-memory cosine · persistent SQLite · IVF index
   mcp_server.py   # the MCP server
-  types.py        # MemoryRecord, RecallHit
 eval/       # dev-only benchmark harness (datasets · adapters · metrics · runner · retention)
 ```
 
