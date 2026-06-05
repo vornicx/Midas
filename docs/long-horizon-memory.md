@@ -204,7 +204,17 @@ honest.
   — is a poor no-LLM proxy for importance and does not improve forgetting.** Conclusion: stop chasing
   repetition-based importance; `ContentImportance` used as a *protection* (not a rank) remains the best
   no-LLM signal, and sharpening it needs a different axis (e.g. entity/structure), not how often a turn
-  recurs. Both knobs ship off by default as tested, reproducible negatives.
+  recurs. Both knobs ship off by default as tested, reproducible negatives. We then tried a genuinely
+  *better* signal — **structural importance** (`StructuralImportance`: content salience + boost for an
+  *assertion of a durable attribute*, demote questions/meta; it provably fixes a ContentImportance blind
+  spot — "My favorite food is sushi" now outranks "Where is the best sushi in Tokyo?", which content
+  scored backwards) — and it too is **NEUTRAL on the retention benchmark** (LoCoMo value-rank 0.13→0.14
+  @50%, 0.08→0.06 @25%; multiday unchanged). **Conclusion after three signals: the bottleneck is the
+  EVAL, not the signal.** recall@k on LoCoMo/multiday cannot isolate importance — gold is diverse (recall
+  doesn't gate on importance) or saturated. Importance's *measurable* wins are (a) as a **protection**
+  (ContentImportance 0.10→0.18) and (b) the next, properly-targeted application: **entity-grained
+  abstention** (the Calibrated root cause). `StructuralImportance` is kept as a strictly-better drop-in
+  scorer for `capture`/auto-memory even though this benchmark can't reward it.
 - **Lossy compression without losing the critical detail** — exactly the thing a user notices when it
   breaks. *Extractive consolidation built + measured 2026-06-04* (`Memory.consolidate`): it collapses
   near-**duplicate** restatements to the single highest-value copy — extractive (drops whole redundant

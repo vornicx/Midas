@@ -63,6 +63,19 @@ LLM call per ingested session — which means **$/token forever at scale, second
 conversation turn leaving the box**. At the scale where agent memory actually matters, that cost
 structure — not a few points of benchmark accuracy — is what decides build-vs-buy.
 
+**Microbenchmark (`eval/bench_perf.py`, bge-base on a modest CPU box — measured, not estimated):** a
+single `remember` is **~16 ms p50** (embed-bound — there is no LLM, just the ONNX embedding forward
+pass), `build_context` **~51 ms p50** over a 2,000-record store; ingest batches far faster via
+`remember_many`. Honest framing: these are **tens of milliseconds, embed-bound** — fast and local (no
+per-turn network round-trip), not sub-millisecond. **Footprint: ~3.6 MB per 1,000 records** at 768 dims
+— embeddings are stored as **float32 arrays**; a Python `list[float]` would cost ~7× more (~24 MB/1k),
+and switching to float32 left `recall@k` unchanged (LoCoMo 0.27 → 0.27). SQLite persistence already
+stored float32.
+
+```bash
+python -m eval.bench_perf --local --n 2000 --q 200   # latency · throughput · real (tracemalloc) footprint
+```
+
 **Every Midas mechanism is local, $0, zero-egress** — embeddings (bge-base ONNX), recall, supersession,
 the NLI contradiction/entailment checks (`midas/nli.py`, int8 ONNX MNLI), and the abstention metric.
 The only LLM is the *reader*, which is pluggable. **Demonstrated end-to-end fully offline** — Midas +

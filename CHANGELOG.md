@@ -15,6 +15,11 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
 - **Stores** — `InMemoryStore` with a vectorised cosine scan over a **cached** embedding matrix
   (numpy; comfortable to ~1M memories) and an identical pure-Python fallback; `SQLiteStore` for
   **persistence across restarts** with **no native extension** (pure stdlib sqlite3).
+- **float32 in-memory embeddings** — records store the embedding as a float32 numpy array, not a
+  Python `list[float]` (~32 B/value). Measured ~**7× smaller footprint** at 768 dims (a 1M-record
+  in-memory store drops from ~24 GB to ~3.5 GB) and **faster queries** (float32 matmul); SQLite already
+  persisted float32. Measured by `eval/bench_perf.py` (latency / throughput / real tracemalloc footprint
+  — the numbers the project had never measured).
 - **Hybrid retrieval** (BM25 fused with semantic) — off by default; see `BENCHMARKS.md` for the
   honest negative result on conversational data.
 - **Belief revision** (supersession) for typed durable facts — off by default; chat never supersedes

@@ -7,7 +7,7 @@ multi-session work — coding agents, research agents, assistants — *without* 
 an LLM to "extract" facts. It runs on your machine, costs nothing per message, and every recalled memory
 is traceable to its source.
 
-- **No LLM at ingest or query** → **$0 API spend, zero data egress**, millisecond operations.
+- **No LLM at ingest or query** → **$0 API spend, zero data egress**, fast local ops (no per-turn network round-trip; ingest is embed-bound, ~tens of ms).
 - **Auditable provenance** → recall returns the **source turns**, not LLM-rewritten facts.
 - **Stays current and bounded** → belief revision, selective forgetting + tiers, dedup — all no-LLM.
 - **Embeddable + store-agnostic** → a library, not a SaaS. Bring your own embedder/store.
@@ -33,7 +33,7 @@ Your AI assistant forgets everything between sessions — every new chat starts 
 4. **Stays yours.** Everything is a local file — no cloud, no per-message AI bill — and every note links
    back to the exact moment it came from, so you can always check *why* the AI "knows" something.
 
-The trick that makes it cheap, private, and instant: Midas never sends your conversation to an AI to
+The trick that makes it cheap, private, and local: Midas never sends your conversation to an AI to
 "process" it. It uses fast local math (*embeddings* — turning text into vectors and comparing them). The
 only AI involved is the one you're already talking to.
 

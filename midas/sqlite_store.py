@@ -65,7 +65,12 @@ class SQLiteStore(InMemoryStore):
          created_at, updated_at, superseded_by, emb_blob) = row
         embedding = None
         if emb_blob is not None:
-            embedding = list(struct.unpack(f"<{len(emb_blob) // 4}f", emb_blob))
+            try:
+                import numpy as np
+
+                embedding = np.frombuffer(emb_blob, dtype="<f4").copy()  # float32 array (footprint)
+            except ImportError:
+                embedding = list(struct.unpack(f"<{len(emb_blob) // 4}f", emb_blob))
         return MemoryRecord(
             id=id_, content=content, kind=kind, importance=importance, source=source,
             metadata=json.loads(metadata_json) if metadata_json else {},

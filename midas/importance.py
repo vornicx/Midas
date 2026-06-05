@@ -95,3 +95,52 @@ class ContentImportance:
         return max(self.min_importance, min(self.max_importance, score))
 
     __call__ = score
+
+
+class StructuralImportance(ContentImportance):
+    """Content salience **plus structure** — boost a turn that *asserts a durable attribute* (especially
+    about the user: "my X is Y", "I'm a…", "I prefer…"), and demote questions / meta / backchannel.
+
+    The discriminator the bag-of-features content score misses: an *assertion of a personal fact* vs a
+    *question* that merely mentions the same salient words (a question and a fact about "sushi in Tokyo"
+    score alike on content features, but only the assertion is worth remembering). Still no LLM — cheap,
+    generic English cues (no dataset-specific terms), composed on top of `ContentImportance`.
+    """
+
+    _FIRST_PERSON = re.compile(
+        r"\b(i'?m|i\s+am|my|mine|i\s+have|i'?ve|i\s+(?:prefer|like|love|hate|need|use|own|drive|speak|"
+        r"work|live)|i\s+was\s+born)\b",
+        re.I,
+    )
+    _DURABLE = re.compile(
+        r"\b(prefer|allergic|favou?rite|deadline|due|born|named|called|decided|always|never|must|"
+        r"require|policy|rule)\b",
+        re.I,
+    )
+    _COPULA = re.compile(r"\b(is|are|was|were|named|called)\b", re.I)
+    _META = re.compile(
+        r"\b(let'?s|let\s+me|can\s+you|could\s+you|should\s+we|shall\s+we|please|thanks|thank\s+you|"
+        r"sounds?\s+good|got\s+it|no\s+problem)\b",
+        re.I,
+    )
+
+    def score(self, text: str) -> int:
+        text = (text or "").strip()
+        base = super().score(text)
+        is_question = text.endswith("?")
+        boost = 0
+        if self._FIRST_PERSON.search(text):
+            boost += 1  # a fact about the user — the durable stuff an assistant must keep
+        if self._DURABLE.search(text):
+            boost += 1  # preference / constraint / deadline markers
+        if not is_question and self._COPULA.search(text):
+            boost += 1  # a declarative attribute assertion (not a question)
+        penalty = 0
+        if is_question:
+            penalty += 1  # questions are rarely the durable fact to remember
+        elif boost == 0 and self._META.search(text):
+            penalty += 1  # pure meta / acknowledgement
+        score = base + min(boost, 2) - penalty
+        return max(self.min_importance, min(self.max_importance, score))
+
+    __call__ = score

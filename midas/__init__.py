@@ -14,7 +14,7 @@ from .embeddings import (
     cosine,
     tokenize,
 )
-from .importance import ContentImportance
+from .importance import ContentImportance, StructuralImportance
 from .memory import CaptureResult, ContextBlock, Memory, Reranker, approx_tokens, format_record
 from .policy import AGENT_MEMORY_INSTRUCTIONS, DEFAULT_POLICY, MemoryPolicy, policy_summary
 from .store import InMemoryStore
@@ -33,6 +33,7 @@ except ImportError:
 __all__ = [
     "Memory",
     "ContentImportance",
+    "StructuralImportance",
     "MemoryPolicy",
     "DEFAULT_POLICY",
     "AGENT_MEMORY_INSTRUCTIONS",

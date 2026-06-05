@@ -228,7 +228,7 @@ class Memory:
         content = (content or "").strip()
         if not content:
             raise ValueError("Memory.remember: `content` is required")
-        embedding = self.embedder.embed(content)
+        embedding = _as_f32(self.embedder.embed(content))
         # `created_at` is the EVENT time (when the fact was true/stated), distinct from ingest order.
         # Passing it makes recency and chronological context reflect real time, not load order — the
         # bitemporal signal long-horizon temporal reasoning needs. Defaults to the wall clock.
@@ -277,6 +277,7 @@ class Memory:
 
         records: list[MemoryRecord] = []
         for item, embedding in zip(normalized, embeddings):
+            embedding = _as_f32(embedding)  # store as float32 array, not list[float] (footprint)
             ts = item.get("created_at")  # event time when provided (see remember); else ingest time
             ts = ts if ts is not None else self._now()
             if self._reinforce:
@@ -951,6 +952,20 @@ class Memory:
     def assemble(self, query: str, **kwargs: Any) -> str:
         """Prompt-ready context string (thin wrapper over `build_context`)."""
         return self.build_context(query, **kwargs).text
+
+
+def _as_f32(embedding):
+    """Store the embedding as a float32 numpy array, not a Python list[float]. Embeddings dominate the
+    in-memory footprint and a list of floats costs ~32 B/value (PyObject + pointer) vs 4 B for float32
+    — a ~7x reduction at 768 dims. Falls back to the list unchanged when numpy is absent. (SQLite
+    persistence already stores float32 BLOBs; this fixes the in-memory side.)"""
+    if embedding is None:
+        return None
+    try:
+        import numpy as np
+    except ImportError:
+        return embedding
+    return np.asarray(embedding, dtype=np.float32)
 
 
 def _sigmoid(x: float) -> float:

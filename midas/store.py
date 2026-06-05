@@ -64,7 +64,7 @@ class InMemoryStore:
             return
         recs = [r for r in self._records.values() if r.embedding is not None]
         self._matrix_recs = recs
-        self._matrix = np.asarray([r.embedding for r in recs], dtype=np.float64) if recs else None
+        self._matrix = np.asarray([r.embedding for r in recs], dtype=np.float32) if recs else None
         self._dirty = False
 
     def search(
@@ -97,7 +97,7 @@ class InMemoryStore:
         if self._matrix is None:
             return []
         recs = self._matrix_recs
-        sims = np.clip(self._matrix @ np.asarray(embedding, dtype=np.float64), -1.0, 1.0)
+        sims = np.clip(self._matrix @ np.asarray(embedding, dtype=np.float32), -1.0, 1.0)
 
         if predicate is not None:
             mask = np.fromiter((predicate(r) for r in recs), dtype=bool, count=len(recs))

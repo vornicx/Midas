@@ -117,6 +117,7 @@ def main() -> None:
     parser.add_argument("--local-max-text-chars", type=int, default=2000)
     parser.add_argument("--fractions", type=str, default="0.75,0.5,0.25", help="retained fractions to sweep")
     parser.add_argument("--derive-importance", action="store_true", help="derive per-turn importance from content (no LLM) so forgetting can beat recency on uniform-importance chat")
+    parser.add_argument("--structural-importance", action="store_true", help="use StructuralImportance (content salience + assertion/attribute structure) instead of ContentImportance")
     parser.add_argument("--novelty-weight", type=float, default=0.0, help="blend novelty-vs-store into derived importance (0..1); a new fact outranks a repeated one. Pairs with --derive-importance")
     parser.add_argument("--reinforce", action="store_true", help="reinforcement: a restated/near-duplicate turn boosts the matched memory's importance + recency (repetition ⇒ salience)")
     parser.add_argument("--value-rank-only", action="store_true", help="evict purely by value-rank to the exact target (protections off) — the apples-to-apples ranking test vs fifo")
@@ -140,7 +141,11 @@ def main() -> None:
     rerank = not args.no_rerank and embedder is not None
 
     scorer = None
-    if args.derive_importance:
+    if args.structural_importance:
+        from midas import StructuralImportance
+
+        scorer = StructuralImportance()
+    elif args.derive_importance:
         from midas import ContentImportance
 
         scorer = ContentImportance()
