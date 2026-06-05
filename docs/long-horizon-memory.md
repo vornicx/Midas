@@ -212,15 +212,16 @@ honest.
   @25%; multiday unchanged), but those benchmarks **cannot isolate importance** (gold is diverse, so
   recall doesn't gate on it, or saturated). So — rule #1, the moat is measuring — we **built the right
   eval (multi-sample LongMemEval-`s`, real evidence buried among distractors, `eval/retention.py` now
-  averages over all samples) and the signal RESOLVES POSITIVE.** At n=15, under aggressive forgetting
-  (keep 25%), **importance-ranked eviction beats recency**: value-rank recall@k **0.35 (content) / 0.37
-  (structural) vs fifo 0.28 vs random 0.17** — the ordering *value > fifo > random* is consistent, and
-  **structural ≥ content throughout** (incl. the no-forget recall ranking, 0.58 → 0.63). Magnitude is
-  modest at n=15 but the ordering is clean. **Conclusion: the three earlier "neutrals" were the EVAL, not
-  the signal — the right measurement vindicates both importance-as-rank (where importance actually
-  matters: buried facts) and the structural refinement.** Importance also wins as a **protection**
-  (ContentImportance 0.10→0.18). Next, properly-targeted: **entity-grained abstention** (the Calibrated
-  root cause). `StructuralImportance` ships as a strictly-better drop-in scorer for `capture`/auto-memory.
+  averages over all samples) and the signal RESOLVES POSITIVE — strongly, at n=40.** Under forgetting,
+  **importance-ranked eviction beats recency at every level** (value > fifo > random, consistent): e.g.
+  keep-50% value-rank recall@k **0.43 (content) / 0.56 (structural) vs fifo 0.36 vs random 0.25**;
+  keep-25% **0.26 / 0.36 vs fifo 0.19 vs random 0.12**. And **structural beats content by +0.10 to +0.13
+  recall@k** under forgetting (no longer noise) — plus +0.05 on the no-forget recall ranking (0.59 →
+  0.64). **Conclusion: the three earlier "neutrals" were the EVAL, not the signal — the right
+  measurement vindicates both importance-as-rank (where importance actually matters: buried facts) and
+  the structural refinement, substantially.** Importance also wins as a **protection** (0.10→0.18). Next,
+  properly-targeted: **entity-grained abstention** (the Calibrated root cause, reader-blocked).
+  `StructuralImportance` ships as the default scorer for `capture`/auto-memory (measured-better).
 - **Lossy compression without losing the critical detail** — exactly the thing a user notices when it
   breaks. *Extractive consolidation built + measured 2026-06-04* (`Memory.consolidate`): it collapses
   near-**duplicate** restatements to the single highest-value copy — extractive (drops whole redundant
