@@ -103,6 +103,17 @@ def _run_policy(make_adapter, sample, *, budget: int, policy: str, frac: float, 
     return _measure(adapter, sample, budget=budget)
 
 
+def _run_policy_multi(make_adapter, samples, **kw) -> dict:
+    """Average a policy's metrics over many samples (e.g. each LongMemEval instance = one buried-fact
+    question) — so recall@k under forgetting is measured over N questions, not a single noisy one."""
+    runs = [_run_policy(make_adapter, s, **kw) for s in samples]
+    out = {}
+    for key in runs[0]:
+        vals = [r[key] for r in runs if r[key] == r[key]]  # drop NaN (questions without gold)
+        out[key] = sum(vals) / len(vals) if vals else float("nan")
+    return out
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Midas retention / selective-forgetting measurement")
     parser.add_argument("--dataset", choices=["locomo", "multiday", "synthetic", "longmemeval"], default="locomo")
@@ -180,19 +191,22 @@ def main() -> None:
               "avg_tokens down while recall@k holds (the dropped copies were redundant restatements).")
         return
 
-    print(f"\nDataset: {dataset.name}  |  events: {len(sample.events)}  |  questions: {len(sample.questions)}")
+    samples = dataset.samples  # average the eviction sweep over ALL loaded samples (N questions)
+    n_q = sum(len(s.questions) for s in samples)
+    print(f"\nDataset: {dataset.name}  |  samples: {len(samples)}  |  questions: {n_q}  "
+          f"(recall@k averaged over them)")
     print(f"Budget: {budget}  |  top-k: {args.limit}  |  embedder: {embedder_label}  |  "
           f"rerank: {'on' if rerank else 'off'}  |  min_relevance: {min_relevance}")
     cols = ["store", "recall@k", "ctx_current", "avg_tokens"]
     print("\n| policy | keep | " + " | ".join(cols) + " |")
     print("| --- | --- | " + " | ".join("---" for _ in cols) + " |")
 
-    base = _run_policy(make_adapter, sample, budget=budget, policy="none", frac=1.0, seed=args.seed)
+    base = _run_policy_multi(make_adapter, samples, budget=budget, policy="none", frac=1.0, seed=args.seed)
     print(f"| none | 100% | " + " | ".join(_fmt(base[c]) for c in cols) + " |")
     for frac in fractions:
         for policy in ("value", "fifo", "random"):
-            m = _run_policy(make_adapter, sample, budget=budget, policy=policy, frac=frac,
-                            seed=args.seed, rank_only=args.value_rank_only)
+            m = _run_policy_multi(make_adapter, samples, budget=budget, policy=policy, frac=frac,
+                                  seed=args.seed, rank_only=args.value_rank_only)
             label = "value (Midas)" if policy == "value" else policy
             print(f"| {label} | {int(frac*100)}% | " + " | ".join(_fmt(m[c]) for c in cols) + " |")
 

@@ -64,9 +64,10 @@ conversation turn leaving the box**. At the scale where agent memory actually ma
 structure — not a few points of benchmark accuracy — is what decides build-vs-buy.
 
 **Microbenchmark (`eval/bench_perf.py`, bge-base on a modest CPU box — measured, not estimated):** a
-single `remember` is **~16 ms p50** (embed-bound — there is no LLM, just the ONNX embedding forward
-pass), `build_context` **~51 ms p50** over a 2,000-record store; ingest batches far faster via
-`remember_many`. Honest framing: these are **tens of milliseconds, embed-bound** — fast and local (no
+single `remember` is **~16 ms p50** on short records (embed-bound — there is no LLM, just the ONNX
+embedding forward pass; the time scales with text length, so the longer real turns above land at the
+~116 ms/event figure), `build_context` **~51 ms p50** over a 2,000-record store; ingest batches far
+faster via `remember_many`. Honest framing: these are **tens of milliseconds, embed-bound** — fast and local (no
 per-turn network round-trip), not sub-millisecond. **Footprint: ~3.6 MB per 1,000 records** at 768 dims
 — embeddings are stored as **float32 arrays**; a Python `list[float]` would cost ~7× more (~24 MB/1k),
 and switching to float32 left `recall@k` unchanged (LoCoMo 0.27 → 0.27). SQLite persistence already
