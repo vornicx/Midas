@@ -22,7 +22,7 @@ from __future__ import annotations
 import os
 import sys
 
-from midas import AGENT_MEMORY_INSTRUCTIONS, ContentImportance, HashingEmbedder, Memory, MemoryPolicy, policy_summary
+from midas import AGENT_MEMORY_INSTRUCTIONS, HashingEmbedder, Memory, MemoryPolicy, StructuralImportance, policy_summary
 
 # Auto-retention cap: when set, the store is kept at or below this many records by no-LLM selective
 # forgetting after each write — bounded memory for long-running/enterprise deployments.
@@ -54,7 +54,7 @@ def build_memory() -> Memory:
         print(f"[midas-mcp] persisting memory to {db}", file=sys.stderr)
     return Memory(
         embedder=embedder, reranker=reranker, store=store,
-        importance_scorer=ContentImportance(), policy=_POLICY,
+        importance_scorer=StructuralImportance(), policy=_POLICY,  # measured-better fact-vs-question
     )
 
 
