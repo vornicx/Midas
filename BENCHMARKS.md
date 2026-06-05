@@ -135,7 +135,31 @@ stays the default and `IVFStore` is opt-in for large, read-heavy corpora.
 python -m eval.bench_ann   # real cached embeddings if present, else synthetic clustered
 ```
 
-## 5. Correctness with a fixed strong reader (secondary)
+## 5. Retention — selective forgetting beats recency (no LLM)
+
+Long-horizon memory must stay **bounded**. Midas forgets by `memory_value` (importance × recency); the
+real question is whether that keeps the *right* memories under pressure. Measured on **LongMemEval-`s`
+(n=40, evidence buried among distractors)** by evicting to a fixed budget and comparing policies
+(`eval/retention.py`, recall@k averaged over all 40 questions):
+
+| keep | importance — `StructuralImportance` | importance — `ContentImportance` | recency (FIFO) | random |
+|---|---:|---:|---:|---:|
+| 50% | **0.56** | 0.43 | 0.36 | 0.25 |
+| 25% | **0.36** | 0.26 | 0.19 | 0.12 |
+
+**Importance-ranked forgetting beats recency at every level** (`value > fifo > random`), and a structural
+salience signal (boost an *assertion of a durable attribute*; demote questions/meta) beats the plain
+content score by **+0.10–0.13 recall@k** under forgetting — all **no-LLM**. On undifferentiated chat
+(LoCoMo) the signal is neutral, because recall there doesn't gate on importance; the buried-fact setting
+is where it shows. (The honest negatives along the way — *novelty-vs-store* and *reinforcement* — are
+documented in the design doc; the moat is reporting them too.)
+
+```bash
+python -m eval.retention --dataset longmemeval --variant s --local --no-rerank \
+  --structural-importance --value-rank-only --max-questions 40 --fractions 0.5,0.25
+```
+
+## 6. Correctness with a fixed strong reader (secondary)
 
 `recall@k` measures the memory layer directly; *answer correctness* additionally depends on the reader
 LLM (see Methodology). Holding the reader **fixed and identical across systems** (`gpt-4.1-mini` at
