@@ -190,8 +190,11 @@ seed 0; judge fixed = gpt-4o to match Observational Memory's protocol; structure
 LLM Observer+Reflector on every conversation at ingest. With gpt-5-mini Midas reaches 0.87–0.89 vs
 OM's 0.95: OM's curated observations help a strong reader more than raw retrieved turns do. Across the
 sweep Midas pays **$0 at ingest, no data egress, and returns source-traceable turns** — none of which
-the LLM-ingest systems offer — and its retrieval **scales to corpora where OM's keep-every-observation-
-in-context design overflows** (LongMemEval-`m` = ~500 sessions). By category Midas **leads
+the LLM-ingest systems offer — and its retrieval **scales to ~500-session corpora (LongMemEval-`m`) by
+retrieving + forgetting** (measured: a ~4,944-turn haystack assembles a bounded ~480-token context,
+recall@k 0.78 over n=3), where a keep-every-observation-in-context design does not fit by construction.
+*(We measure Midas's side at that scale; we do not run OM — the overflow is an architectural inference,
+not a head-to-head.)* By category Midas **leads
 multi-session (0.89 vs OM's 0.872)** and matches knowledge-update (1.00 vs 0.962); the remaining gap is
 **temporal** (0.82 vs 0.955; per-category n=4–13 → wide bars).
 

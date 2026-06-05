@@ -273,8 +273,9 @@ reproduce commands in [BENCHMARKS.md](BENCHMARKS.md)):
 We lead with **retrieval and cost** (deterministic, reader-independent) because end-to-end correctness on
 these benchmarks is dominated by the *reader* LLM, not the memory layer. **Head-to-head, same reader:**
 with `gpt-4o`, Midas scores **0.84** on LongMemEval-`s` — **matching** the LLM-ingest SOTA (Observational
-Memory) while doing **no LLM at ingest** — and on a 500-session haystack (~4,944 turns) it assembles a
-bounded ~480-token context where keep-everything-in-context designs overflow.
+Memory) while doing **no LLM at ingest** — and on a ~500-session haystack (~4,944 turns) it assembles a
+bounded ~480-token context (recall@k 0.78), where keep-every-observation-in-context designs do not fit
+by construction. (Same-reader, within-harness comparison — not a leaderboard rank; see BENCHMARKS.md.)
 
 ## The eval harness
 

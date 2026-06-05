@@ -16,7 +16,10 @@ import numpy as np
 
 from midas.ann import IVFIndex
 
-DB = os.environ.get("MIDAS_EMBED_CACHE", r"D:\hf-cache\midas-embeddings.sqlite3")
+DB = os.environ.get(
+    "MIDAS_EMBED_CACHE",
+    os.path.expanduser("~/.cache/midas/midas-embeddings.sqlite3"),  # the DiskCachedEmbedder default
+)
 N_QUERIES = 500
 K = 10
 
