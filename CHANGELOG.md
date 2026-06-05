@@ -34,6 +34,12 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
   no retrieved turn entails the answer. Honest result: it does NOT reliably improve abstention (a
   deterministic-reader A/B is unchanged, 0.37→0.37) because the confabulation is drawn from a retrieved
   distractor that *entails* it. Abstention/Calibrated remains the open frontier; see docs.
+- **Entity-grounded abstention** (`midas/entity.py`, LLM-free) — a new abstention lever orthogonal to
+  cosine/NLI: abstain when the answer's source turn is about a *different entity* than the question asks
+  (the diagnosed confab-from-distractor root cause). Dropping recurring *attribute* words makes the focus
+  the entity noun; **offline-validated 8/8** on the diagnosed failure cases (incl. "favorite colour" vs
+  "favorite food", "city" vs "Barcelona"), 11 tests. Honest limit: crafted cases — the end-to-end win
+  needs a capable reader (local 1B doesn't confabulate-from-distractor; hosted credits exhausted).
 - **Time-aware retrieval** (LLM-free) — memories carry real **event time** (`remember(created_at=…)`);
   `recall`/`build_context` take a query `now` so recency decays from when a question is asked, context
   renders true dates (UTC), and a "today" header anchors relative-time reasoning. Bitemporal signal,

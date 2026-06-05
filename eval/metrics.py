@@ -148,6 +148,34 @@ def _nli_grounds_answer(
     return nli.scores(source, hyp).get("CONTRADICTION", 0.0) < floor
 
 
+def _entity_grounds_answer(question, answer: str, context: str, top_texts=None) -> bool:
+    """Entity grounding (no LLM): the answer's SOURCE turn must be about the entity the question asks
+    about. Find the turn the answer was drawn from (max lexical overlap with the answer), then check it
+    shares the question's focus entity — a confab drawn from a wrong-entity distractor does not. This is
+    orthogonal to NLI/cosine (which the fooling distractor also scores high on). Offline-validated on the
+    diagnosed failure cases (see midas/entity.py + tests); the end-to-end win still needs a capable
+    reader. `question` may be a Question or a raw string."""
+    from midas.entity import entity_grounded
+
+    q_text = getattr(question, "text", question)
+    if not answer or _ABSTAIN_RE.search(answer):
+        return True
+    turns = list(top_texts or [])
+    if not turns:
+        turns = [ln for ln in context.split("\n") if ln.strip() and not ln.lstrip().startswith("#")]
+    ans_words = set(re.findall(r"[a-zA-Z0-9]{3,}", answer.lower()))
+    if not turns or not ans_words:
+        return True
+
+    def _overlap(turn: str) -> int:
+        return len(ans_words & set(re.findall(r"[a-zA-Z0-9]{3,}", turn.lower())))
+
+    source = max(turns, key=_overlap)
+    if _overlap(source) == 0:
+        return True  # answer not stated in any retrieved turn (computed) -> don't override
+    return entity_grounded(q_text, source)
+
+
 _VERIFY_SYS = (
     "You check whether a proposed answer is EXPLICITLY supported by the provided context. "
     "Information that is merely related to the topic but does NOT state the specific thing asked "

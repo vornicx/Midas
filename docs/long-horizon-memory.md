@@ -219,9 +219,21 @@ honest.
   recall@k** under forgetting (no longer noise) — plus +0.05 on the no-forget recall ranking (0.59 →
   0.64). **Conclusion: the three earlier "neutrals" were the EVAL, not the signal — the right
   measurement vindicates both importance-as-rank (where importance actually matters: buried facts) and
-  the structural refinement, substantially.** Importance also wins as a **protection** (0.10→0.18). Next,
-  properly-targeted: **entity-grained abstention** (the Calibrated root cause, reader-blocked).
+  the structural refinement, substantially.** Importance also wins as a **protection** (0.10→0.18).
   `StructuralImportance` ships as the default scorer for `capture`/auto-memory (measured-better).
+
+- **Calibrated — entity-grained abstention built + offline-validated (2026-06-05).** A new no-LLM lever
+  for the abstention frontier (`midas/entity.py` + `eval/metrics.py::_entity_grounds_answer`): abstain
+  when the answer's **source turn is about a *different entity* than the question asks** — the diagnosed
+  confab-from-distractor root cause. It is **orthogonal to cosine/NLI/entailment** (which all score the
+  fooling distractor high, because it genuinely entails the wrong answer). The trick: drop the recurring
+  *attribute* words ("favorite", "name") so the focus is the **entity** noun. On the diagnosed failure
+  cases it separates confab from real **8/8**, including the pairs that broke a naive check — *"favorite
+  colour" vs "favorite food"* → abstain; *"What city…" vs "I live in Barcelona"* → keep (shared
+  predicate). 11 tests. **Honest limit: these are crafted cases** — the end-to-end win on LongMemEval's
+  unanswerable set needs a *capable* reader (the local 1B model hallucinates rather than confabulating
+  from a distractor, so it can't exhibit the target; OpenRouter credits = $0). Lesson (again): I
+  predicted this would be another near-miss and was wrong — **measure, don't assume**.
 - **Lossy compression without losing the critical detail** — exactly the thing a user notices when it
   breaks. *Extractive consolidation built + measured 2026-06-04* (`Memory.consolidate`): it collapses
   near-**duplicate** restatements to the single highest-value copy — extractive (drops whole redundant
