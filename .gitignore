@@ -12,6 +12,9 @@ build/
 venv/
 .env
 
+# MCP registry publisher credential (written to cwd by `mcp-publisher login`)
+.mcpregistry_github_token
+
 # uv
 uv.lock
 
