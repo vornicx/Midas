@@ -2,6 +2,11 @@
 
 **Local-first, eval-first memory for long-horizon AI agents — no LLM at ingest.**
 
+[![tests](https://github.com/vornicx/Midas/actions/workflows/ci.yml/badge.svg)](https://github.com/vornicx/Midas/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/midas-memory)](https://pypi.org/project/midas-memory/)
+![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 Midas is a small Python SDK (and an MCP server) that gives AI agents durable memory across long,
 multi-session work — coding agents, research agents, assistants — *without* sending every turn through
 an LLM to "extract" facts. It runs on your machine, costs nothing per message, and every recalled memory
