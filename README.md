@@ -69,10 +69,6 @@ uv tool install "midas-memory[mcp,local]"     # recommended (Windows, macOS, Lin
 # …or:  pipx install "midas-memory[mcp,local]"
 ```
 
-> **No-install option:** Midas is also on the [official MCP registry](https://registry.modelcontextprotocol.io/)
-> as `io.github.vornicx/midas`. Clients that read the registry can discover it automatically, or you can
-> launch the same server on demand with `uvx midas-memory-mcp` — nothing to install.
-
 Where the command lands (you'll need this path for some clients):
 
 | OS | `midas-mcp` location | Find it with |
