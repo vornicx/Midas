@@ -6,6 +6,9 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- **MCP server distribution** — new `midas-memory-mcp` launcher on PyPI, listed on the **official
+  MCP registry** (`io.github.vornicx/midas`); run install-free with `uvx midas-memory-mcp`. The MCP
+  server now reports its own version in the handshake (previously the MCP SDK version).
 - **Core SDK** — `Memory` (`remember` / `recall` / `build_context` / `assemble`) ranking by
   relevance × importance × recency, with same-thread neighbour-window expansion and budgeted,
   highest-value-first context assembly. No LLM at ingest or query.

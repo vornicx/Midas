@@ -22,7 +22,10 @@ from __future__ import annotations
 import os
 import sys
 
-from midas import AGENT_MEMORY_INSTRUCTIONS, HashingEmbedder, Memory, MemoryPolicy, StructuralImportance, policy_summary
+from midas import (
+    AGENT_MEMORY_INSTRUCTIONS, HashingEmbedder, Memory, MemoryPolicy, StructuralImportance,
+    __version__, policy_summary,
+)
 
 # Auto-retention cap: when set, the store is kept at or below this many records by no-LLM selective
 # forgetting after each write — bounded memory for long-running/enterprise deployments.
@@ -67,6 +70,8 @@ _mem = build_memory()
 # `instructions` are surfaced to the model by the MCP client on connect — this is how installing Midas
 # makes an agent start remembering on its own: it injects the recall->work->capture loop + the policy.
 server = FastMCP("midas-memory", instructions=AGENT_MEMORY_INSTRUCTIONS)
+# Report Midas's own version in the MCP handshake (FastMCP otherwise reports the MCP SDK version).
+server._mcp_server.version = __version__
 
 
 @server.tool()

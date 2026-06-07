@@ -7,6 +7,10 @@
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
+<p align="center">
+  <img src="docs/demo.gif" alt="Midas remembers facts with no LLM, then recalls them later by meaning — local and source-traceable" width="800">
+</p>
+
 Midas is a small Python SDK (and an MCP server) that gives AI agents durable memory across long,
 multi-session work — coding agents, research agents, assistants — *without* sending every turn through
 an LLM to "extract" facts. It runs on your machine, costs nothing per message, and every recalled memory
@@ -18,7 +22,7 @@ is traceable to its source.
 - **Embeddable + store-agnostic** → a library, not a SaaS. Bring your own embedder/store.
 - **Eval-first** → every claim has a reproducible benchmark ([BENCHMARKS.md](BENCHMARKS.md)).
 
-> **Status:** early (v0.0.1). The API may change. Built narrow and measured-first.
+> **Status:** early. The API may change. Built narrow and measured-first.
 
 ---
 
