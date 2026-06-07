@@ -50,6 +50,15 @@ only AI involved is the one you're already talking to.
 in tokens forever, in latency, and by sending every turn to a provider. Midas trades that for cheap,
 local, auditable retrieval.
 
+**See it remember across sessions** — session 1 stores decisions; a fresh session 2 recalls them *by
+meaning*:
+
+<p align="center">
+  <img src="docs/demo-claude-code.gif" alt="Across two sessions: Midas stores decisions in session 1, and a fresh session 2 recalls them by meaning" width="820">
+</p>
+
+<p align="center"><sub>Claude Code-style demo — the recalled lines (in green) are the real output Midas returned across two separate processes sharing one on-disk store.</sub></p>
+
 ---
 
 ## Install
