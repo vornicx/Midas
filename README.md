@@ -58,17 +58,11 @@ too.
 
 ### A) To plug Midas into an AI tool (Claude Code, Cursor, …) — install the `midas-mcp` command
 
-This puts a `midas-mcp` program on your PATH that any MCP client can launch.
+This puts a `midas-mcp` program on your PATH that any MCP client can launch — **one line, no clone**:
 
 ```bash
-git clone https://github.com/vornicx/Midas
-cd Midas
-
-# recommended — isolated global install with uv (works on Windows, macOS, Linux):
-uv tool install . --with "fastembed>=0.7" --with "mcp>=1.0"
-
-# …or with pipx:
-pipx install ".[all]"
+uv tool install "midas-memory[mcp,local]"     # recommended (Windows, macOS, Linux)
+# …or:  pipx install "midas-memory[mcp,local]"
 ```
 
 Where the command lands (you'll need this path for some clients):
@@ -78,14 +72,15 @@ Where the command lands (you'll need this path for some clients):
 | **Linux / macOS** | `~/.local/bin/midas-mcp` | `which midas-mcp` |
 | **Windows** | `%USERPROFILE%\.local\bin\midas-mcp.exe` | `where midas-mcp` |
 
-> *(Once Midas is on PyPI this becomes a one-liner — `uv tool install "midas-memory[all]"` — no clone.)*
-
-### B) To use Midas as a Python library — install into your project
+### B) To use Midas as a Python library
 
 ```bash
-pip install ".[all]"          # SDK + local embeddings + MCP + LangGraph
-# smaller: `pip install .` (core, zero deps) · `".[local]"` (embeddings) · `".[mcp]"` (server)
+pip install "midas-memory[all]"     # SDK + local embeddings + MCP + LangGraph
+# smaller: `pip install midas-memory` (core, zero deps) · `"…[local]"` (embeddings) · `"…[mcp]"`
 ```
+
+*(Want the source / to contribute? `git clone https://github.com/vornicx/Midas && cd Midas && pip
+install -e ".[all,dev]"`.)*
 
 > **First run** downloads the embedding model once (~90 MB, `bge-base` ONNX), then works **fully
 > offline**. No API key, ever.
