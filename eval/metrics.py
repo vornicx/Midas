@@ -16,6 +16,22 @@ def recall_at_k(result: RetrievalResult, question: Question) -> float | None:
     return hit / len(question.gold_event_ids)
 
 
+def precision_at_k(result: RetrievalResult, question: Question) -> float | None:
+    """Fraction of retrieved source events that are gold supporting events.
+
+    This is the false-positive stress metric: high recall with low precision means the memory layer
+    found the answer but also packed distractors that can mislead an agent loop.
+    """
+    if not question.gold_event_ids:
+        return None
+    retrieved = list(dict.fromkeys(result.retrieved_event_ids))
+    if not retrieved:
+        return 0.0
+    gold = set(question.gold_event_ids)
+    hit = sum(1 for rid in retrieved if rid in gold)
+    return hit / len(retrieved)
+
+
 def answer_recoverable(result: RetrievalResult, question: Question) -> float | None:
     """Offline proxy for answer correctness: is the gold answer string present in
     the assembled context at all? If it isn't, no downstream LLM could answer from
@@ -24,6 +40,97 @@ def answer_recoverable(result: RetrievalResult, question: Question) -> float | N
     if not question.answer:
         return None
     return 1.0 if question.answer.lower() in result.context.lower() else 0.0
+
+
+# --- Staleness diagnostics (deterministic, no LLM) ---------------------------------------------
+
+
+def contains_answer(text: str, needle: str | None) -> bool:
+    return bool(needle) and needle.lower() in text.lower()
+
+
+def has_stale_conflict(context: str, current: str | None, stale: str | None) -> bool:
+    """True when some context line asserts the OUTDATED value without the current one beside it —
+    the line an agent could quote as if it were still true."""
+    if not stale:
+        return False
+    for line in context.splitlines():
+        if contains_answer(line, stale) and not contains_answer(line, current):
+            return True
+    return False
+
+
+# --- Dumb reader: a deterministic, no-LLM reader ablation -------------------------------------
+# Reviewers of memory systems rightly ask whether a capable reader is doing "heroic recovery" that
+# makes weak retrieval look strong. The dumb reader answers that: it picks the single retrieved turn
+# with the highest content-word overlap with the question and scores it against gold. It cannot
+# reason, combine turns, or paraphrase — so its score moves with retrieval quality alone. If
+# `answer_dumb` tracks recall@k, the published numbers are not reader-inflated.
+
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_DUMB_STOPWORDS = frozenset(
+    "a an and are as at be but by did do does for from had has have how i in is it its me my of on "
+    "or our s t that the their them they this to was we were what when where which who whom why "
+    "will with you your".split()
+)
+
+
+def _content_words(text: str) -> list[str]:
+    return [w for w in _TOKEN_RE.findall(text.lower()) if w not in _DUMB_STOPWORDS]
+
+
+def extractive_answer(result: RetrievalResult, question: Question) -> str:
+    """The dumb reader's 'answer': the retrieved turn with the highest content-word overlap with
+    the question. Prefers `top_texts` (relevance-ranked turns); falls back to context lines. Ties
+    keep the earlier (higher-ranked) turn, so the score is deterministic."""
+    turns = [t for t in (result.top_texts or []) if t.strip()]
+    if not turns:
+        turns = [
+            ln for ln in result.context.split("\n") if ln.strip() and not ln.lstrip().startswith("#")
+        ]
+    if not turns:
+        return ""
+    q_words = set(_content_words(question.text))
+    if not q_words:
+        return turns[0]
+
+    def _overlap(turn: str) -> int:
+        return len(q_words & set(_content_words(turn)))
+
+    return max(turns, key=_overlap)
+
+
+def token_f1(predicted: str, gold: str) -> float:
+    """SQuAD-style token F1 between two strings (multiset overlap of word tokens)."""
+    pred_tokens = _TOKEN_RE.findall(predicted.lower())
+    gold_tokens = _TOKEN_RE.findall(gold.lower())
+    if not pred_tokens or not gold_tokens:
+        return 0.0
+    pred_counts: dict[str, int] = {}
+    for tok in pred_tokens:
+        pred_counts[tok] = pred_counts.get(tok, 0) + 1
+    common = 0
+    for tok in gold_tokens:
+        if pred_counts.get(tok, 0) > 0:
+            pred_counts[tok] -= 1
+            common += 1
+    if common == 0:
+        return 0.0
+    precision = common / len(pred_tokens)
+    recall = common / len(gold_tokens)
+    return 2 * precision * recall / (precision + recall)
+
+
+def dumb_reader_score(result: RetrievalResult, question: Question) -> float | None:
+    """Score the dumb reader's extracted turn against gold: 1.0 when the gold answer appears
+    verbatim in the chosen turn, else token F1 (partial credit for paraphrase overlap).
+    None when the question has no gold answer (unanswerable)."""
+    if not question.answer:
+        return None
+    extracted = extractive_answer(result, question)
+    if question.answer.lower() in extracted.lower():
+        return 1.0
+    return token_f1(extracted, question.answer)
 
 
 _ANSWER_SYS = (

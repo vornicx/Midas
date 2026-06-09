@@ -10,9 +10,11 @@ os.environ["MIDAS_MCP_EMBEDDER"] = "hashing"  # must be set before importing the
 from midas.mcp_server import (  # noqa: E402
     build_context,
     capture,
+    check_memory_use,
     forget,
     forget_all,
     maintain,
+    memory_policy,
     recall,
     remember,
     server,
@@ -29,7 +31,7 @@ def test_remember_recall_roundtrip():
     hits = recall("which database did we pick?", limit=2)
     assert isinstance(hits, list) and hits, "recall should return hits"
     # source-traceable shape
-    assert all({"id", "score", "kind", "content"} <= set(h) for h in hits)
+    assert all({"id", "score", "kind", "provenance", "actor", "source", "content"} <= set(h) for h in hits)
     assert any("PostgreSQL" in h["content"] for h in hits), "relevant memory should surface"
 
 
@@ -48,12 +50,19 @@ def test_forget_all_clears():
 
 def test_stats_and_forget_by_id():
     forget_all()
-    out = remember("Decision: use PostgreSQL.", kind="constraint", importance=5)
+    out = remember(
+        "Decision: use PostgreSQL.",
+        kind="constraint",
+        importance=5,
+        provenance="user_confirmation",
+        actor="user",
+    )
     rid = out.split("(", 1)[1].rstrip(")")  # "remembered (<id>)"
     remember("a chat turn", kind="chat")
 
     s = stats()
     assert s["total"] == 2 and s["by_kind"].get("constraint") == 1
+    assert s["by_provenance"]["user_confirmation"] == 1
     assert forget(rid) == "forgotten"
     assert stats()["total"] == 1
 
@@ -97,6 +106,32 @@ def test_capture_tool_gates_by_policy():
     assert stats()["total"] == 1  # only the fact was kept
 
 
+def test_guard_blocks_action_until_user_confirmation():
+    forget_all()
+    remember("Deploy target is staging.", kind="constraint", importance=5, provenance="observation")
+    blocked = check_memory_use("deploy target", intended_use="external_action")
+    assert blocked["allowed"] is False
+
+    forget_all()
+    remember(
+        "User confirmed deploy target is staging.",
+        kind="constraint",
+        importance=5,
+        provenance="user_confirmation",
+        actor="user",
+    )
+    allowed = check_memory_use("deploy target", intended_use="external_action")
+    assert allowed["allowed"] is True
+
+
+def test_memory_policy_exposes_injected_text_and_guard_options():
+    out = memory_policy()
+    assert "RECALL FIRST" in out["instructions"]
+    assert "user_confirmation" in out["provenance"]
+    assert "external_action" in out["guard_uses"]
+
+
 def test_server_injects_memory_instructions():
     # The injected prompt is how installing Midas makes an agent start remembering on its own.
     assert server.instructions and "capture" in server.instructions.lower()
+    assert "check_memory_use" in server.instructions

@@ -27,7 +27,7 @@ from .embeddings import Embedder, HashingEmbedder, cosine
 from .importance import ContentImportance
 from .policy import DEFAULT_POLICY, MemoryPolicy
 from .store import InMemoryStore
-from .types import MemoryKind, MemoryRecord, RecallHit
+from .types import MEMORY_PROVENANCE, MemoryKind, MemoryProvenance, MemoryRecord, RecallHit
 
 RECENCY_HALF_LIFE_DAYS = 30.0
 DEFAULT_RECALL_LIMIT = 6
@@ -118,6 +118,19 @@ _SUPERSEDE_STOPWORDS = {
     'should', 'may', 'might', 'must', 'can', 'we', 'our', 'us', 'it', 'its',
     'this', 'that', 'these', 'those', 'i', 'you', 'he', 'she', 'they', 'them',
 }
+_SUPERSEDE_ENTITY_STOPWORDS = {
+    "project", "user", "client", "team", "ticket", "issue", "task", "feature", "release", "launch",
+    "date", "database", "service", "server", "environment",
+    "january", "february", "march", "april", "may", "june", "july", "august", "september",
+    "october", "november", "december",
+}
+_PROPER_ENTITY_RE = re.compile(r"\b[A-Z][A-Za-z0-9_-]{2,}\b")
+_PROVENANCE_RANK = {
+    "planning": 0,
+    "observation": 1,
+    "action": 2,
+    "user_confirmation": 3,
+}
 
 
 def _content_words(text: str) -> set[str]:
@@ -127,6 +140,19 @@ def _content_words(text: str) -> set[str]:
         w.lower()
         for w in text.split()
         if len(w) > 3 and w.lower() not in _SUPERSEDE_STOPWORDS and w.isalnum()
+    }
+
+
+def _proper_entities(text: str) -> set[str]:
+    """Very cheap named-entity guard for supersession.
+
+    If two otherwise-similar memories are about different named things (Apollo vs Artemis), they are
+    near-duplicates, not updates. We only use this as a negative guard; embeddings still do the recall.
+    """
+    return {
+        w.lower()
+        for w in _PROPER_ENTITY_RE.findall(text)
+        if w.lower() not in _SUPERSEDE_ENTITY_STOPWORDS
     }
 
 
@@ -222,6 +248,8 @@ class Memory:
         kind: MemoryKind = "note",
         importance: int | None = None,
         source: str | None = None,
+        provenance: MemoryProvenance = "observation",
+        actor: str | None = None,
         metadata: dict[str, Any] | None = None,
         created_at: float | None = None,
     ) -> MemoryRecord:
@@ -242,6 +270,8 @@ class Memory:
             kind=kind,
             importance=importance,
             source=source,
+            provenance=_normalize_provenance(provenance),
+            actor=actor,
             metadata=metadata or {},
             created_at=ts,
             updated_at=ts,
@@ -288,6 +318,8 @@ class Memory:
                 kind=item.get("kind", "note"),
                 importance=self._derive_importance(item.get("importance"), item["content"], embedding),
                 source=item.get("source"),
+                provenance=_normalize_provenance(item.get("provenance") or "observation"),
+                actor=item.get("actor"),
                 metadata=item.get("metadata") or {},
                 created_at=ts,
                 updated_at=ts,
@@ -305,6 +337,8 @@ class Memory:
         *,
         kind: MemoryKind = "chat",
         source: str | None = None,
+        provenance: MemoryProvenance = "observation",
+        actor: str | None = None,
         metadata: dict[str, Any] | None = None,
         created_at: float | None = None,
         policy: MemoryPolicy | None = None,
@@ -331,21 +365,54 @@ class Memory:
         if policy.dedup_threshold and policy.dedup_threshold > 0:
             near = self.store.search(embedding, limit=1)
             if near and near[0][0] >= policy.dedup_threshold:
+                existing = near[0][1]
+                upgraded = self._upgrade_provenance(
+                    existing,
+                    provenance=provenance,
+                    actor=actor,
+                    source=source,
+                    metadata=metadata,
+                    updated_at=created_at,
+                )
                 if self._reinforce:
-                    self._reinforce_record(near[0][1], created_at if created_at is not None else self._now())
+                    self._reinforce_record(existing, created_at if created_at is not None else self._now())
                     return CaptureResult(
-                        False, "reinforced an existing memory (restatement)", record=near[0][1],
+                        False, "reinforced an existing memory (restatement)", record=existing,
                         importance=importance,
                     )
+                reason = "near-duplicate of an existing memory"
+                if upgraded:
+                    reason += " (provenance upgraded)"
                 return CaptureResult(
-                    False, "near-duplicate of an existing memory", record=near[0][1],
-                    importance=importance,
+                    False, reason, record=existing, importance=importance,
                 )
         record = self.remember(
             content, kind=kind, importance=importance, source=source,
+            provenance=provenance, actor=actor,
             metadata=metadata, created_at=created_at,
         )
         return CaptureResult(True, "stored", record=record, importance=importance)
+
+    def _upgrade_provenance(
+        self,
+        record: MemoryRecord,
+        *,
+        provenance: MemoryProvenance,
+        actor: str | None,
+        source: str | None,
+        metadata: dict[str, Any] | None,
+        updated_at: float | None,
+    ) -> bool:
+        provenance = _normalize_provenance(provenance)
+        if _PROVENANCE_RANK[provenance] <= _PROVENANCE_RANK[record.provenance]:
+            return False
+        record.provenance = provenance
+        record.actor = actor or record.actor
+        record.source = source or record.source
+        record.metadata = {**record.metadata, **(metadata or {})}
+        record.updated_at = updated_at if updated_at is not None else self._now()
+        self.store.put(record)
+        return True
 
     def _novelty(self, embedding: list[float] | None) -> float:
         """Novelty-vs-store: 1 - max cosine similarity to anything already stored (1 = wholly new,
@@ -536,6 +603,29 @@ class Memory:
         confidence = min(1.0, max(0.0, top_score / max_possible))
         return hits, confidence
 
+    def guard_reliance(
+        self,
+        query: str,
+        *,
+        intended_use: str = "planning",
+        acting_agent: str | None = None,
+        limit: int = DEFAULT_RECALL_LIMIT,
+        **recall_kwargs: Any,
+    ):
+        """Recall evidence for `query` and decide whether it can justify `intended_use`.
+
+        This is the Guard boundary: memory that is fine for planning may still be insufficient for an
+        external action unless it came from explicit user confirmation.
+        """
+        from .guard import decide_memory_use
+
+        hits = self.recall(query, limit=limit, **recall_kwargs)
+        return decide_memory_use(
+            [h.record for h in hits],
+            intended_use=intended_use,
+            acting_agent=acting_agent,
+        )
+
     def _maybe_supersede(self, new_record: MemoryRecord) -> None:
         """LLM-free belief revision: when a new memory expresses the same belief as an existing one
         (high embedding similarity, same kind), mark the old head superseded so recall returns only
@@ -585,6 +675,12 @@ class Memory:
             head = self._resolve_head(candidate)
             if head.id == new_record.id or head.superseded_by is not None:
                 continue
+            if " ".join(head.content.split()).lower() == " ".join(new_record.content.split()).lower():
+                continue  # exact duplicates are consolidation/dedup work, not belief revision
+            new_entities = _proper_entities(new_record.content)
+            head_entities = _proper_entities(head.content)
+            if new_entities and head_entities and not (new_entities & head_entities):
+                continue
             # Below the strong threshold the embedder isn't confident it's the SAME belief; require a
             # shared salient word as a cheap, domain-agnostic topical anchor (no synonym map). Chat is
             # noisy, so demand the topical anchor for it regardless of score.
@@ -605,7 +701,7 @@ class Memory:
         # Precision gate (the principled no-LLM fix): with a local NLI model, only revise a belief the
         # new record actually CONTRADICTS — not merely one it's similar to. This is what makes
         # conversational revision safe on diverse data, where "similar + cue" is often a distinct fact.
-        if self._nli is not None and is_chat:
+        if self._nli is not None:
             if self._nli.contradiction(new_record.content, head.content) < self._supersede_contradiction_threshold:
                 return
         head.superseded_by = new_record.id
@@ -983,6 +1079,13 @@ def _clamp_importance(value: Any) -> int:
     return max(1, min(5, n))
 
 
+def _normalize_provenance(value: str) -> MemoryProvenance:
+    if value in MEMORY_PROVENANCE:
+        return value  # type: ignore[return-value]
+    allowed = ", ".join(MEMORY_PROVENANCE)
+    raise ValueError(f"invalid memory provenance '{value}' (expected one of: {allowed})")
+
+
 def _fmt_date(ts: float) -> str:
     """Render an epoch as a UTC date. UTC (not local) so event dates match the dataset's own
     timestamps and relative-time answers ("how many days ago") don't drift by a timezone offset."""
@@ -1017,7 +1120,11 @@ def format_record(
         date = f"{date}, {_relative_age(record.created_at, now)}"
     body = " ".join(record.content.split())[:max_chars]
     if include_provenance:
-        return f"- [{record.kind} | imp{record.importance} | {date} | id:{record.id[:8]}] {body}"
+        actor = f" | actor:{record.actor}" if record.actor else ""
+        return (
+            f"- [{record.kind}/{record.provenance} | imp{record.importance} | {date} "
+            f"| id:{record.id[:8]}{actor}] {body}"
+        )
     # Default line stays lean: importance is Midas's internal ranking signal, noise to the reader —
     # dropping it makes budget room for the date/age the reader actually uses.
     return f"- [{record.kind} | {date}] {body}"

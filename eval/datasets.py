@@ -1,8 +1,9 @@
 """Dataset loaders.
 
-`synthetic()` is a tiny, fully-offline scenario (zero setup). `locomo()` loads the
-real LoCoMo long-conversation benchmark. Both return the same shape so the runner
-and metrics are unchanged.
+`synthetic()` — tiny offline scenario. `locomo()` — real LoCoMo. `multiday()` — evolving facts +
+staleness detector. `conflicts()` — adversarial near-duplicates + temporal conflicts. `longmemeval()`
+— LongMemEval (HuggingFace `xiaowu0162/longmemeval-cleaned`). All return the same Event/Question/Sample
+shape so runner, metrics, and retention harnesses are unchanged.
 """
 from __future__ import annotations
 
@@ -202,6 +203,75 @@ def multiday() -> Dataset:
         Question("q-office", "In which city is the main office?", None, [], category="unanswerable"),
     ]
     return Dataset(name="multiday-v1-adversarial", samples=[Sample("md1", events, questions)])
+
+
+def conflicts() -> Dataset:
+    """Adversarial near-duplicates + temporal conflicts — where local embedding memory usually cheats.
+
+    Three trap patterns, each a known failure mode for embedding-similarity memory:
+      - SAME FACT, DIFFERENT DATE: the old value is repeated with near-identical phrasing
+        (prominent, high importance); the new value appears ONCE, later, lower importance.
+      - SAME PLAN, ONE CONSTRAINT CHANGED: a multi-clause plan is restated verbatim except for
+        one number — cosine similarity is ~1, so naive dedup/supersession can pick the wrong copy.
+      - ENTITY-CONFUSABLE NEAR-DUPLICATES: two facts that differ only in the entity (Apollo vs
+        Artemis). Both are simultaneously TRUE — wrongly superseding one with the other, or
+        retrieving the wrong-entity line, is the failure.
+
+    Question categories reuse the multiday machinery: 'current' questions carry the outdated value
+    in `stale_answer`; 'confusable' questions carry the WRONG-ENTITY value in `stale_answer` (so
+    ctx_stale measures the trap surfacing alone in context); 'stable' are controls; 'unanswerable'
+    should produce abstention. All deterministic — no LLM needed via --context-only.
+    """
+    F = "chat"  # filler kind shorthand
+    events = [
+        # ---- day 1: temporal-conflict facts stated PROMINENTLY; confusable pair introduced ----
+        Event("c1-1", "The quarterly security review is scheduled for March 3.", kind="fact", importance=5, metadata={"session": "day1"}),
+        Event("c1-2", "Project Apollo uses PostgreSQL as its database.", kind="fact", importance=4, metadata={"session": "day1"}),
+        Event("c1-3", "Project Artemis uses MySQL as its database.", kind="fact", importance=4, metadata={"session": "day1"}),
+        Event("c1-4", "Deploy plan: blue-green rollout, 5 percent canary, abort if the error rate exceeds 2 percent.", kind="constraint", importance=5, metadata={"session": "day1"}),
+        Event("c1-5", "We chatted about the new espresso machine in the kitchen.", kind=F, metadata={"session": "day1"}),
+        # ---- day 2: old values REPEATED near-verbatim (the adversarial reinforcement) ----
+        Event("c2-1", "Reminder: the quarterly security review is scheduled for March 3.", kind="fact", importance=4, metadata={"session": "day2"}),
+        Event("c2-2", "Deploy plan recap: blue-green rollout, 5 percent canary, abort if the error rate exceeds 2 percent.", kind="constraint", importance=4, metadata={"session": "day2"}),
+        Event("c2-3", "Log retention policy: keep application logs for 90 days.", kind="constraint", importance=4, metadata={"session": "day2"}),
+        Event("c2-4", "Someone shared photos from the weekend hike.", kind=F, metadata={"session": "day2"}),
+        # ---- day 3: second confusable pair (pets) + more reinforcement of old date ----
+        Event("c3-1", "Luna, the office cat, has her vet appointment on Friday.", kind="fact", importance=3, metadata={"session": "day3"}),
+        Event("c3-2", "Nova, the office dog, has her vet appointment on Monday.", kind="fact", importance=3, metadata={"session": "day3"}),
+        Event("c3-3", "Don't forget the March 3 security review when planning the sprint.", kind="fact", importance=3, metadata={"session": "day3"}),
+        Event("c3-4", "We debated the best keyboard switches for a while.", kind=F, metadata={"session": "day3"}),
+        # ---- day 4: filler distance before the updates ----
+        Event("c4-1", "Chatter about the weather and weekend plans.", kind=F, metadata={"session": "day4"}),
+        Event("c4-2", "Someone recommended a documentary about volcanoes.", kind=F, metadata={"session": "day4"}),
+        Event("c4-3", "Quick aside about the parking garage being full again.", kind=F, metadata={"session": "day4"}),
+        # ---- day 5: the UPDATES — each stated ONCE, lower importance, near-identical phrasing ----
+        Event("c5-1", "Update: the quarterly security review has moved to March 17.", kind="fact", importance=3, metadata={"session": "day5"}),
+        Event("c5-2", "Deploy plan change: blue-green rollout, 5 percent canary, abort if the error rate exceeds 1 percent.", kind="constraint", importance=3, metadata={"session": "day5"}),
+        Event("c5-3", "New log retention policy: keep application logs for 30 days.", kind="constraint", importance=3, metadata={"session": "day5"}),
+        Event("c5-4", "Someone brought churros for the whole team.", kind=F, metadata={"session": "day5"}),
+        # ---- day 6: stable controls + filler ----
+        Event("c6-1", "The on-call rotation handbook lives in the team wiki.", kind="fact", importance=3, metadata={"session": "day6"}),
+        Event("c6-2", "Decision: all public APIs must be versioned under /v2.", kind="constraint", importance=4, metadata={"session": "day6"}),
+        Event("c6-3", "Talk about a new lunch spot opening across the street.", kind=F, metadata={"session": "day6"}),
+    ]
+    questions = [
+        # Temporal conflicts (old value repeated 3x / 2x, new value once)
+        Question("q-review", "When is the quarterly security review?", "March 17", ["c5-1"], category="current", stale_answer="March 3"),
+        Question("q-abort", "At what error rate do we abort a deploy?", "1 percent", ["c5-2"], category="current", stale_answer="2 percent"),
+        Question("q-logs", "How long do we keep application logs?", "30 days", ["c5-3"], category="current", stale_answer="90 days"),
+        # Entity-confusable near-duplicates (BOTH sides asked: wrong supersession fails one of them)
+        Question("q-artemis", "Which database does Project Artemis use?", "MySQL", ["c1-3"], category="confusable", stale_answer="PostgreSQL"),
+        Question("q-apollo", "Which database does Project Apollo use?", "PostgreSQL", ["c1-2"], category="confusable", stale_answer="MySQL"),
+        Question("q-nova", "When is Nova's vet appointment?", "Monday", ["c3-2"], category="confusable", stale_answer="Friday"),
+        Question("q-luna", "When is Luna's vet appointment?", "Friday", ["c3-1"], category="confusable", stale_answer="Monday"),
+        # Stable controls
+        Question("q-wiki", "Where does the on-call rotation handbook live?", "team wiki", ["c6-1"], category="stable"),
+        Question("q-api", "How must public APIs be versioned?", "/v2", ["c6-2"], category="stable"),
+        # Calibration
+        Question("q-cdn", "Which CDN provider do we use?", None, [], category="unanswerable"),
+        Question("q-region", "In which cloud region is production deployed?", None, [], category="unanswerable"),
+    ]
+    return Dataset(name="conflicts-v1", samples=[Sample("cf1", events, questions)])
 
 
 def longmemeval(

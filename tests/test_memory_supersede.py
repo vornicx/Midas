@@ -45,6 +45,18 @@ class AmbiguousEmbedder:
         return vectors[text]
 
 
+class AdversarialNearDuplicateEmbedder:
+    dim = 2
+
+    def embed(self, text: str) -> list[float]:
+        vectors = {
+            "Project Apollo launch moved to October 1": [1.0, 0.0],
+            "Project Artemis launch moved to October 1": [1.0, 0.0],
+            "Project Apollo launch moved to November 1": [1.0, 0.0],
+        }
+        return vectors[text]
+
+
 class CountingBatchEmbedder(FixedEmbedder):
     def __init__(self) -> None:
         self.single_calls = 0
@@ -242,6 +254,33 @@ def test_ambiguous_update_does_not_supersede_any_belief() -> None:
 
     assert a.superseded_by is None
     assert b.superseded_by is None
+
+
+def test_adversarial_near_duplicate_different_entity_does_not_supersede() -> None:
+    mem = Memory(
+        embedder=AdversarialNearDuplicateEmbedder(),
+        supersede=True,
+        supersede_threshold=0.9,
+    )
+
+    apollo = mem.remember("Project Apollo launch moved to October 1", kind="fact")
+    artemis = mem.remember("Project Artemis launch moved to October 1", kind="fact")
+
+    assert apollo.superseded_by is None
+    assert artemis.superseded_by is None
+
+
+def test_temporal_conflict_same_entity_supersedes_old_belief() -> None:
+    mem = Memory(
+        embedder=AdversarialNearDuplicateEmbedder(),
+        supersede=True,
+        supersede_threshold=0.9,
+    )
+
+    old = mem.remember("Project Apollo launch moved to October 1", kind="fact")
+    new = mem.remember("Project Apollo launch moved to November 1", kind="fact")
+
+    assert old.superseded_by == new.id
 
 
 class ConvoUpdateEmbedder:

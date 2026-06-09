@@ -144,6 +144,26 @@ lesson: don't add machinery until you've measured the point where it actually pa
 
 ---
 
+## 10. Dumb reader + adversarial conflicts — isolating retrieval from the reader
+
+External reviewers of memory benchmarks ask three fair questions: is there query rewriting, is there
+eval contamination, and is a capable reader doing "heroic recovery"? Midas now publishes explicit
+answers in [`methodology.md`](methodology.md):
+
+- **No query rewriting** — questions pass verbatim to `adapter.query(question.text)`.
+- **`answer_dumb` (`--dumb-reader`)** — a deterministic extractive reader (no LLM) whose score can only
+  move with retrieval. On synthetic-v0, Midas gets recall@k 1.00 and answer_dumb 1.00; on conflicts-v1,
+  recall@k 1.00 and answer_dumb 0.82 (the gap is the dumb reader quoting a stale repetition that
+  lexically matches the question — a publishable failure case, not hidden heroic recovery).
+- **`conflicts-v1`** — adversarial near-duplicates and temporal conflicts ("same fact, different date",
+  "same plan, one constraint changed", entity-confusable pairs). Supersession drops ctx_stale from
+  1.00 → 0.86 without losing ctx_current; the residual 0.86 is the honest gap.
+
+**Takeaway:** lead with `recall@k` / `precision@k` / `answer_dumb`; publish traces and failure cases,
+not just averages. See [`methodology.md`](methodology.md) and [`BENCHMARKS.md`](../BENCHMARKS.md).
+
+---
+
 *All claims here are backed by reproducible runs; see [BENCHMARKS.md](../BENCHMARKS.md) for numbers and
-commands. Methodology bias: we deliberately prefer deterministic, reader-independent metrics over
-headline accuracy.*
+commands, and [methodology.md](methodology.md) for the full anti-cheating write-up. Methodology bias:
+we deliberately prefer deterministic, reader-independent metrics over headline accuracy.*

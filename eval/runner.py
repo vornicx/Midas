@@ -1,12 +1,17 @@
 """Run the adapter benchmark and print a leaderboard.
 
     uv run python -m eval.runner                                      # synthetic, offline
+    uv run python -m eval.runner --dataset synthetic --dumb-reader    # + deterministic reader ablation
     uv run --no-sync python -m eval.runner --dataset locomo --local   # local semantic embeddings
+    uv run --no-sync python -m eval.runner --dataset conflicts --dumb-reader --midas-supersede
+    uv run --no-sync python -m eval.runner --dataset longmemeval --variant s --local --midas-no-rerank
     uv run --no-sync python -m eval.runner --dataset locomo --local --judge          # + LLM-judge
     uv run --no-sync python -m eval.runner --dataset locomo --local --judge --mem0   # + Mem0 competitor
 
-`--judge` uses an LLM (key from .env) to answer from each adapter's context and grade
-vs gold — the real, cross-system correctness metric. `--mem0` adds the Mem0 competitor.
+Primary metrics (no API key): `recall@k`, `precision@k`, optional `answer_dumb` (`--dumb-reader`),
+optional `ctx_stale` / `ctx_contradict` (datasets with `stale_answer`, e.g. multiday, conflicts).
+`--judge` uses an LLM to answer from each adapter's context and grade vs gold — secondary, reader-bound.
+See docs/methodology.md for the full anti-cheating checklist.
 """
 from __future__ import annotations
 
@@ -19,17 +24,28 @@ from .adapters.midas_adapter import MidasAdapter
 from .adapters.mem0_adapter import Mem0Adapter
 from .adapters.base import MemoryAdapter
 from .adapters.baseline_raw import BaselineRawAdapter
-from .datasets import locomo, longmemeval, synthetic
+from .datasets import conflicts, locomo, longmemeval, multiday, synthetic
 from .llm import from_env, load_dotenv
-from .metrics import answer_recoverable, llm_answer_and_judge, recall_at_k, score_abstention
+from .metrics import (
+    answer_recoverable,
+    contains_answer,
+    dumb_reader_score,
+    has_stale_conflict,
+    llm_answer_and_judge,
+    precision_at_k,
+    recall_at_k,
+    score_abstention,
+)
 from .schema import Dataset
 
-_COLUMNS = ["recall@k", "answer", "avg_tokens", "eff(ans/1k_tok)"]
+_COLUMNS = ["recall@k", "precision@k", "answer", "avg_tokens", "eff(ans/1k_tok)"]
 
 _DEFAULTS = {
     "synthetic": {"budget": 110, "limit": 5},
     "locomo": {"budget": 1024, "limit": 100},
     "longmemeval": {"budget": 2048, "limit": 50},
+    "multiday": {"budget": 256, "limit": 8},
+    "conflicts": {"budget": 256, "limit": 8},
 }
 
 
@@ -46,10 +62,13 @@ def run_adapter(
     max_questions: int | None = None,
     trace_questions: bool = False,
     trace_snippets: bool = False,
+    dumb_reader: bool = False,
 ) -> dict[str, float | None]:
     tracks_recall = getattr(adapter, "tracks_event_ids", True)
     recalls: list[float] = []
+    precisions: list[float] = []
     answers: list[float] = []
+    dumb_answers: list[float] = []  # deterministic extractive-reader ablation (no LLM)
     answers_grounded: list[float] = []  # answerable correctness AFTER the verifier (its cost)
     abstentions: list[float] = []  # Calibrated: did the reader abstain on unanswerable questions?
     abstentions_grounded: list[float] = []  # + NLI source-grounding override (same answers, no noise)
@@ -60,9 +79,15 @@ def run_adapter(
     ingest_seconds = 0.0
     query_seconds = 0.0
     n_ingested = 0
+    # Staleness diagnostics over questions that annotate an OUTDATED value (`stale_answer`):
+    # deterministic, computed on the assembled context — no reader/judge involved.
+    stale_updated = 0
+    stale_hits = 0
+    stale_contradictions = 0
     
     # For per-category breakdown
     category_recalls: dict[str, list[float]] = {}
+    category_precisions: dict[str, list[float]] = {}
     category_answers: dict[str, list[float]] = {}
     category_tokens: dict[str, list[int]] = {}
     
@@ -84,10 +109,27 @@ def run_adapter(
             asked += 1
             token_costs.append(result.tokens)
             recall = None
+            precision = None
             if tracks_recall:
                 recall = recall_at_k(result, question)
                 if recall is not None:
                     recalls.append(recall)
+                precision = precision_at_k(result, question)
+                if precision is not None:
+                    precisions.append(precision)
+            dumb = None
+            if dumb_reader:
+                dumb = dumb_reader_score(result, question)
+                if dumb is not None:
+                    dumb_answers.append(dumb)
+            if question.stale_answer is not None:
+                stale_updated += 1
+                has_current = contains_answer(result.context, question.answer)
+                has_stale = has_stale_conflict(
+                    result.context, question.answer, question.stale_answer
+                )
+                stale_hits += has_stale
+                stale_contradictions += has_current and has_stale
             answer = None
             trace_entry = None
             if trace_questions:
@@ -97,7 +139,9 @@ def run_adapter(
                     "gold": question.gold_event_ids,
                     "retrieved": result.retrieved_event_ids,
                     "recall@k": recall,
+                    "precision@k": precision,
                     "answer": None,
+                    "answer_dumb": dumb,
                     "predicted": None,
                     "tokens": result.tokens,
                 }
@@ -122,12 +166,15 @@ def run_adapter(
             category = question.category
             if category not in category_recalls:
                 category_recalls[category] = []
+                category_precisions[category] = []
                 category_answers[category] = []
                 category_tokens[category] = []
             
             if tracks_recall:
                 if recall is not None:
                     category_recalls[category].append(recall)
+                if precision is not None:
+                    category_precisions[category].append(precision)
             
             if llm is not None:
                 # Will be populated later
@@ -188,18 +235,24 @@ def run_adapter(
     category_breakdown = {}
     for category in set(category_recalls.keys()) | set(category_answers.keys()):
         cat_recalls = category_recalls.get(category, [])
+        cat_precisions = category_precisions.get(category, [])
         cat_answers = category_answers.get(category, [])
         cat_tokens = category_tokens.get(category, [])
         category_breakdown[category] = {
             "count": len(cat_tokens),
             "recall@k": _mean(cat_recalls) if cat_recalls else None,
+            "precision@k": _mean(cat_precisions) if cat_precisions else None,
             "answer": _mean(cat_answers) if cat_answers else None,
             "avg_tokens": _mean(cat_tokens) if cat_tokens else 0.0,
         }
     
     return {
         "recall@k": _mean(recalls) if tracks_recall else None,
+        "precision@k": _mean(precisions) if tracks_recall else None,
         "answer": avg_answer,
+        "answer_dumb": _mean(dumb_answers) if dumb_answers else None,
+        "ctx_stale": (stale_hits / stale_updated) if stale_updated else None,
+        "ctx_contradict": (stale_contradictions / stale_updated) if stale_updated else None,
         "answer_grounded": _mean(answers_grounded) if answers_grounded else None,
         "abstention": _mean(abstentions) if abstentions else None,
         "abstention_grounded": _mean(abstentions_grounded) if abstentions_grounded else None,
@@ -223,11 +276,17 @@ def _fmt(value: float | None) -> str:
 
 
 def leaderboard(results: dict[str, dict[str, float | None]]) -> str:
-    header = "| adapter | " + " | ".join(_COLUMNS) + " |"
-    sep = "| --- " * (len(_COLUMNS) + 1) + "|"
+    # Optional columns appear only when some adapter produced them: `answer_dumb` with
+    # --dumb-reader; ctx_stale/ctx_contradict when the dataset annotates stale answers.
+    columns = list(_COLUMNS)
+    for extra in ("answer_dumb", "ctx_stale", "ctx_contradict"):
+        if any(m.get(extra) is not None for m in results.values()):
+            columns.append(extra)
+    header = "| adapter | " + " | ".join(columns) + " |"
+    sep = "| --- " * (len(columns) + 1) + "|"
     rows = [header, sep]
     for name, metrics in results.items():
-        cells = " | ".join(_fmt(metrics[c]) for c in _COLUMNS)
+        cells = " | ".join(_fmt(metrics.get(c)) for c in columns)
         rows.append(f"| {name} | {cells} |")
     return "\n".join(rows)
 
@@ -264,7 +323,12 @@ def category_breakdown_table(results: dict[str, dict[str, float | None]]) -> str
     all_categories = sorted(all_categories)
     
     # Build header
-    header_cells = ["category", "count"] + [f"{name}_recall" for name in results.keys()] + [f"{name}_answer" for name in results.keys()]
+    header_cells = (
+        ["category", "count"]
+        + [f"{name}_recall" for name in results.keys()]
+        + [f"{name}_precision" for name in results.keys()]
+        + [f"{name}_answer" for name in results.keys()]
+    )
     header = "| " + " | ".join(header_cells) + " |"
     sep = "| --- " * (len(header_cells) + 1) + "|"
     
@@ -283,6 +347,11 @@ def category_breakdown_table(results: dict[str, dict[str, float | None]]) -> str
             cat_data = adapter_results.get("categories", {}).get(category, {})
             recall = cat_data.get("recall@k")
             cells.append(_fmt(recall))
+
+        for adapter_name, adapter_results in results.items():
+            cat_data = adapter_results.get("categories", {}).get(category, {})
+            precision = cat_data.get("precision@k")
+            cells.append(_fmt(precision))
         
         for adapter_name, adapter_results in results.items():
             cat_data = adapter_results.get("categories", {}).get(category, {})
@@ -303,17 +372,19 @@ def category_breakdown_by_adapter(results: dict[str, dict[str, float | None]]) -
             continue
         
         header = f"\n#### {adapter_name} — category breakdown"
-        table_header = "| category | count | recall@k | answer | avg_tokens |"
-        sep = "| --- | --- | --- | --- | --- |"
+        table_header = "| category | count | recall@k | precision@k | answer | avg_tokens |"
+        sep = "| --- | --- | --- | --- | --- | --- |"
         rows = [header, "", table_header, sep]
         
         for category, cat_metrics in sorted(categories.items()):
             count = cat_metrics.get("count", 0)
             recall = cat_metrics.get("recall@k")
+            precision = cat_metrics.get("precision@k")
             answer = cat_metrics.get("answer")
             avg_tokens = cat_metrics.get("avg_tokens")
             rows.append(
-                f"| {category} | {count} | {_fmt(recall)} | {_fmt(answer)} | {_fmt(avg_tokens)} |"
+                f"| {category} | {count} | {_fmt(recall)} | {_fmt(precision)} | "
+                f"{_fmt(answer)} | {_fmt(avg_tokens)} |"
             )
         
         tables.append("\n".join(rows))
@@ -331,12 +402,24 @@ def question_trace_by_adapter(results: dict[str, dict[str, float | None]]) -> st
         include_snippets = any(
             trace.get("gold_snippets") or trace.get("retrieved_snippets") for trace in traces
         )
+        include_dumb = any(trace.get("answer_dumb") is not None for trace in traces)
 
         rows = [
             f"\n#### {adapter_name} - question trace",
             "",
         ]
-        headers = ["id", "category", "recall@k", "answer", "tokens", "predicted", "gold", "retrieved"]
+        headers = [
+            "id",
+            "category",
+            "recall@k",
+            "precision@k",
+            "answer",
+            *(["answer_dumb"] if include_dumb else []),
+            "tokens",
+            "predicted",
+            "gold",
+            "retrieved",
+        ]
         if include_snippets:
             headers.extend(["gold_snippets", "retrieved_snippets"])
         rows.append("| " + " | ".join(headers) + " |")
@@ -353,7 +436,9 @@ def question_trace_by_adapter(results: dict[str, dict[str, float | None]]) -> st
                 str(trace.get("id", "-")),
                 str(trace.get("category", "-")),
                 _fmt(trace.get("recall@k")),
+                _fmt(trace.get("precision@k")),
                 _fmt(trace.get("answer")),
+                *([_fmt(trace.get("answer_dumb"))] if include_dumb else []),
                 _fmt(trace.get("tokens")),
                 predicted,
                 gold or "-",
@@ -427,6 +512,10 @@ def _load(
 ) -> Dataset:
     if dataset == "synthetic":
         return synthetic()
+    if dataset == "multiday":
+        return multiday()
+    if dataset == "conflicts":
+        return conflicts()
     if dataset == "locomo":
         return locomo(max_conversations=max_convs)
     if dataset == "longmemeval":
@@ -460,7 +549,7 @@ def _make_embedder(args: argparse.Namespace) -> tuple[object | None, str]:
 def main() -> None:
     load_dotenv()
     parser = argparse.ArgumentParser(description="Midas agentic-memory eval harness")
-    parser.add_argument("--dataset", choices=["synthetic", "locomo", "longmemeval"], default="synthetic")
+    parser.add_argument("--dataset", choices=["synthetic", "locomo", "longmemeval", "multiday", "conflicts"], default="synthetic")
     parser.add_argument("--budget", type=int, default=None, help="token budget (per-dataset default if unset)")
     parser.add_argument("--limit", type=int, default=None, help="top-k (per-dataset default if unset)")
     parser.add_argument("--max-convs", type=int, default=2, help="LoCoMo: conversations to include")
@@ -501,6 +590,7 @@ def main() -> None:
         default="recency",
         help="order selected Midas records in the assembled context",
     )
+    parser.add_argument("--dumb-reader", action="store_true", help="deterministic extractive-reader ablation (no LLM): adds answer_dumb — if it tracks recall@k, no 'heroic reader recovery' is inflating the numbers")
     parser.add_argument("--trace-questions", action="store_true", help="print per-question recall/answer trace")
     parser.add_argument("--trace-snippets", action="store_true", help="include short gold/retrieved event snippets in question traces")
     args = parser.parse_args()
@@ -587,6 +677,7 @@ def main() -> None:
             max_questions=max_q,
             trace_questions=args.trace_questions,
             trace_snippets=args.trace_snippets,
+            dumb_reader=args.dumb_reader,
         )
         for a in adapters
     }
@@ -648,9 +739,23 @@ def main() -> None:
         print(question_trace_by_adapter(results))
     
     print(
-        "\nReading it: higher recall@k and answer = better; lower avg_tokens = cheaper.\n"
-        "recall@k is '-' for Mem0 (it returns synthesized facts, not source turn ids);\n"
+        "\nReading it: higher recall@k, precision@k, and answer = better; "
+        "lower avg_tokens = cheaper.\n"
+        "recall@k/precision@k are '-' for Mem0 "
+        "(it returns synthesized facts, not source turn ids);\n"
         "judged 'answer' is the cross-system metric."
+        + (
+            "\nanswer_dumb: deterministic extractive reader (no LLM) — moves with retrieval "
+            "quality only, so it cannot be inflated by a clever reader."
+            if args.dumb_reader
+            else ""
+        )
+        + (
+            "\nctx_stale/ctx_contradict: LOWER = better (outdated value, or old+new conflict, "
+            "present in the assembled context)."
+            if any(m.get("ctx_stale") is not None for m in results.values())
+            else ""
+        )
     )
 
 

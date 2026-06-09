@@ -1,6 +1,6 @@
 """Sweep Midas retrieval/assembly knobs on LoCoMo without LLM judge.
 
-This is an R&D tool: use deterministic recall + answer-string recoverability to find
+This is an R&D tool: use deterministic recall/precision + answer-string recoverability to find
 cheap candidate settings, then validate only the promising ones with `eval.runner --judge`.
 """
 from __future__ import annotations
@@ -52,10 +52,11 @@ def main() -> None:
         flush=True,
     )
     print(
-        "| budget | min_rel | max_chars | recall@k | answer_proxy | avg_tokens | eff(ans/1k_tok) |",
+        "| budget | min_rel | max_chars | recall@k | precision@k | answer_proxy | avg_tokens | "
+        "eff(ans/1k_tok) |",
         flush=True,
     )
-    print("| --- | --- | --- | --- | --- | --- | --- |", flush=True)
+    print("| --- | --- | --- | --- | --- | --- | --- | --- |", flush=True)
     for budget in budgets:
         for min_rel in min_relevances:
             for chars in max_record_chars:
@@ -73,7 +74,8 @@ def main() -> None:
                 )
                 print(
                     f"| {budget} | {_fmt(min_rel)} | {chars} | {_fmt(metrics['recall@k'])} | "
-                    f"{_fmt(metrics['answer'])} | {_fmt(metrics['avg_tokens'])} | "
+                    f"{_fmt(metrics['precision@k'])} | {_fmt(metrics['answer'])} | "
+                    f"{_fmt(metrics['avg_tokens'])} | "
                     f"{_fmt(metrics['eff(ans/1k_tok)'])} |",
                     flush=True,
                 )

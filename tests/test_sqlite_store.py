@@ -30,3 +30,23 @@ def test_delete_and_clear_persist(tmp_path):
     reopened = SQLiteStore(db)
     assert reopened.all() == [], "clear() should persist"
     reopened.close()
+
+
+def test_provenance_persists_after_reopen(tmp_path):
+    db = str(tmp_path / "mem3.db")
+    mem = Memory(store=SQLiteStore(db), embedder=HashingEmbedder())
+    mem.remember(
+        "User confirmed deploy target is staging.",
+        kind="constraint",
+        provenance="user_confirmation",
+        actor="user",
+        source="mcp:s1",
+    )
+    mem.store.close()
+
+    reopened = Memory(store=SQLiteStore(db), embedder=HashingEmbedder())
+    rec = reopened.store.all()[0]
+    assert rec.provenance == "user_confirmation"
+    assert rec.actor == "user"
+    assert rec.source == "mcp:s1"
+    reopened.store.close()

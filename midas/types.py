@@ -20,6 +20,14 @@ MEMORY_KINDS: tuple[MemoryKind, ...] = (
     "constraint",
 )
 
+MemoryProvenance = Literal["planning", "action", "observation", "user_confirmation"]
+MEMORY_PROVENANCE: tuple[MemoryProvenance, ...] = (
+    "planning",
+    "action",
+    "observation",
+    "user_confirmation",
+)
+
 
 @dataclass
 class MemoryRecord:
@@ -28,6 +36,8 @@ class MemoryRecord:
     kind: MemoryKind = "note"
     importance: int = 1  # 1 (incidental) .. 5 (critical)
     source: str | None = None
+    provenance: MemoryProvenance = "observation"
+    actor: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)  # epoch seconds
     updated_at: float = field(default_factory=time.time)

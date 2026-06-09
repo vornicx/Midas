@@ -133,6 +133,8 @@ class MidasAdapter:
                     if (self._importance_scorer is not None or self._novelty_weight > 0)
                     else event.importance,
                     "created_at": event.metadata.get("timestamp") if self._time_aware else None,
+                    "provenance": event.metadata.get("provenance", "observation"),
+                    "actor": event.metadata.get("actor"),
                     "metadata": {
                         "event_id": event.id,
                         "session": event.metadata.get("session") or event.metadata.get("session_id"),

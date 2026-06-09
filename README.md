@@ -201,16 +201,26 @@ Same pattern: point it at command `midas-mcp` with those env vars (JSON clients 
 
 On connect, Midas **injects a short memory policy into the agent** (via the MCP `instructions`): *recall
 relevant memory first, then `capture` durable facts / decisions / preferences / constraints /
-corrections as they come up.* The agent captures freely; **Midas decides what's actually kept** — it
-scores importance (no LLM), drops trivia below `MIDAS_MCP_MIN_IMPORTANCE` and skips duplicates, and keeps
-memory bounded via `MIDAS_MCP_MAX_RECORDS` (forgetting low-value items, protecting durable facts).
-Restart the client (or run `/mcp`) after editing config so it picks up the server.
+corrections as they come up.* Every captured memory is tagged with provenance:
+`planning`, `action`, `observation`, or `user_confirmation`. The agent captures freely; **Midas decides
+what's actually kept** — it scores importance (no LLM), drops trivia below `MIDAS_MCP_MIN_IMPORTANCE`
+and skips duplicates, keeps memory current via typed belief revision, and keeps memory bounded via
+`MIDAS_MCP_MAX_RECORDS` (forgetting low-value items, protecting durable facts). Restart the client (or
+run `/mcp`) after editing config so it picks up the server.
+
+**Guard boundary:** memory can guide planning, but it cannot by itself authorize external or destructive
+actions. Before relying on memory to act outside the chat, call `check_memory_use` with
+`intended_use="external_action"` or `"destructive_action"`. Those actions require
+`user_confirmation` provenance; otherwise the agent must ask the user to confirm in the current turn.
 
 **Tools it exposes:** `remember`, `capture` (policy-gated auto-store), `recall` (source-traceable),
-`build_context` (budgeted prompt block), `maintain` (dedup + forgetting, returns a deletion audit),
-`stats` (counts + short/medium/long tiers), `forget` / `forget_all`. **Env knobs:** `MIDAS_MCP_DB`
-(persist to a SQLite file), `MIDAS_MCP_EMBEDDER` (`local` or `hashing`), `MIDAS_MCP_MAX_RECORDS`,
-`MIDAS_MCP_MIN_IMPORTANCE`.
+`build_context` (budgeted prompt block), `check_memory_use` (Guard provenance boundary),
+`memory_policy` (exact injected policy text), `maintain` (dedup + forgetting, returns a deletion
+audit), `stats` (counts + provenance + short/medium/long tiers), `forget` / `forget_all`. **Env knobs:**
+`MIDAS_MCP_DB` (persist to a SQLite file), `MIDAS_MCP_EMBEDDER` (`local` or `hashing`),
+`MIDAS_MCP_MAX_RECORDS`, `MIDAS_MCP_MIN_IMPORTANCE`, `MIDAS_MCP_SUPERSEDE=0` to disable typed belief
+revision, `MIDAS_MCP_SUPERSEDE_CONVO=1` to allow strict-cue chat revision, `MIDAS_MCP_NLI=1` to gate
+revision with the local NLI model.
 
 ---
 
@@ -236,6 +246,11 @@ for hit in mem.recall("which database did we pick?", limit=3):
 # Auto-capture: forward a turn; Midas keeps it only if it clears the relevance policy (no LLM).
 mem.capture("My deploy key expires on 2027-03-01.", kind="fact")   # -> stored
 mem.capture("lol ok cool")                                          # -> skipped (below the floor)
+
+# Provenance guard: observed memory is fine for planning, but not enough to deploy.
+mem.remember("Deploy target is staging.", kind="constraint", provenance="observation")
+decision = mem.guard_reliance("deploy target", intended_use="external_action")
+assert not decision.allowed  # ask the user to confirm before acting
 ```
 
 ### Staying current and bounded — the long-horizon core
@@ -274,7 +289,8 @@ hits = store.search(("user", "123"), query="ui preferences")
 ## Benchmarks
 
 Midas leads on the **reader-independent** axes that isolate a memory layer's quality (full methodology +
-reproduce commands in [BENCHMARKS.md](BENCHMARKS.md)):
+reproduce commands in [BENCHMARKS.md](BENCHMARKS.md); anti-cheating checklist, failure cases, and
+verbatim MCP policy in [docs/methodology.md](docs/methodology.md)):
 
 | | baseline (recency window) | **Midas** |
 |---|---:|---:|
@@ -292,13 +308,25 @@ by construction. (Same-reader, within-harness comparison — not a leaderboard r
 
 ## The eval harness
 
-`eval/` (dev-only) runs Midas and competitors through LoCoMo / LongMemEval with deterministic `recall@k`,
-cost/latency instrumentation, an optional local-or-hosted LLM judge, and a retention/forgetting measure:
+`eval/` (dev-only) runs Midas and competitors through LoCoMo / LongMemEval / **multiday** /
+**conflicts-v1** with deterministic `recall@k` and `precision@k`, cost/latency instrumentation, an
+optional local-or-hosted LLM judge, a deterministic **dumb-reader ablation** (`--dumb-reader` — proves
+the numbers aren't reader-inflated), an **adversarial conflicts benchmark** (near-duplicates +
+temporal conflicts), and a retention/forgetting measure with per-question success/failure traces:
 
 ```bash
 python -m eval.runner --dataset longmemeval --variant s --local --midas-no-rerank --max-questions 15
-python -m eval.retention --dataset locomo --max-convs 1 --local --derive-importance
+python -m eval.runner --dataset longmemeval --variant s --local --dumb-reader --max-questions 25
+python -m eval.runner --dataset multiday --dumb-reader                    # ctx_stale on leaderboard
+python -m eval.runner --dataset conflicts --dumb-reader --midas-supersede
+python -m eval.multiday --dataset conflicts --context-only --ab-supersede --midas-only
+python -m eval.retention --dataset multiday --trace
+python -m eval.retention --dataset multiday --trace --value-rank-only     # forgetting failure mode
 ```
+
+How the eval avoids the usual memory-stack cheats (no query rewriting, no LLM at ingest, no gold
+leakage, seeded sampling), how conflicting memories are handled, and the exact MCP-injected policy
+text — with real failure cases — are documented in [`docs/methodology.md`](docs/methodology.md).
 
 ## Design concept
 
@@ -306,18 +334,32 @@ python -m eval.retention --dataset locomo --max-convs 1 --local --derive-importa
 (Complete · Clean · Current · Calibrated), why multi-day accuracy is a *belief-management* problem, and
 the honest, measured state of each piece (including the open frontiers).
 
+[`docs/methodology.md`](docs/methodology.md) — how the eval avoids the usual memory-stack cheats,
+the dumb-reader ablation, conflicts-v1 stress tests, forgetting failure traces, supersession mechanics,
+and the exact MCP-injected policy text (for external review / Reddit-style scrutiny).
+
 ## Layout
 
 ```
 midas/      # the SDK (importable; zero core dependencies)
   memory.py       # Memory: remember / capture / recall / build_context · forget_decayed · consolidate · tier
+  guard.py        # Guard + Armorer: provenance tags · check_memory_use policy boundary
   importance.py   # ContentImportance — no-LLM per-turn salience   ·   policy.py — MemoryPolicy + auto-memory prompt
   nli.py          # LocalNLI — local entailment/contradiction (belief revision + abstention)
   embeddings.py   # Hashing / Local (bge) / OpenAI · DiskCachedEmbedder · LocalReranker
   store.py · sqlite_store.py · ann.py   # in-memory cosine · persistent SQLite · IVF index
   mcp_server.py   # the MCP server
-eval/       # dev-only benchmark harness (datasets · adapters · metrics · runner · retention)
+eval/       # dev-only benchmark harness (datasets · adapters · metrics · runner · multiday · retention)
+docs/       # long-horizon-memory.md (design) · methodology.md (eval anti-cheating) · research-notes.md
 ```
+
+## Privacy
+
+Midas is local-first: every memory lives in a SQLite file on your own machine, recall returns the
+exact stored text, and capture/recall/forget make **no network calls** — your memories never leave
+your computer. The developer collects no data; there is no account, API key, or telemetry. The only
+outbound traffic is infrastructure (a one-time embedding-model download for the `local` backend, and
+package install from PyPI), never your data. Full details: [`PRIVACY.md`](PRIVACY.md).
 
 ## License
 
