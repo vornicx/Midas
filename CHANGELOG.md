@@ -5,6 +5,14 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
 
 ## [Unreleased]
 
+### Measured
+- **Full-set retrieval headlines — no sampling caveat left.** LongMemEval-`s`, all **500**
+  questions (246,750 turns ingested, deterministic, seed 0): Midas recall@k **0.92** vs
+  recency-baseline **0.01**; per-category fact 0.97 (n=126) · knowledge-update 0.93 (n=78) ·
+  temporal 0.91 (n=133) · multi-session 0.89 (n=133) · preference 0.89 (n=30). Together with the
+  full LoCoMo set (0.73, n=1,540) both retrieval headlines now run on complete public question
+  sets. Judged answer-correctness remains n=40 (hosted-reader cost-bound).
+
 ### Fixed
 - **LoCoMo benchmark corrected to the full public set: recall@k 0.73 vs baseline 0.05 (n=1,540).**
   The previously published **0.85 (n=50) did not reproduce** against the publicly downloadable
