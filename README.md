@@ -315,8 +315,8 @@ the numbers aren't reader-inflated), an **adversarial conflicts benchmark** (nea
 temporal conflicts), and a retention/forgetting measure with per-question success/failure traces:
 
 ```bash
-python -m eval.runner --dataset longmemeval --variant s --local --midas-no-rerank --max-questions 15
-python -m eval.runner --dataset longmemeval --variant s --local --dumb-reader --max-questions 25
+python -m eval.runner --dataset longmemeval --variant s --local --midas-no-rerank --max-questions 40
+python -m eval.runner --dataset longmemeval --variant s --local --dumb-reader --max-questions 40
 python -m eval.runner --dataset multiday --dumb-reader                    # ctx_stale on leaderboard
 python -m eval.runner --dataset conflicts --dumb-reader --midas-supersede
 python -m eval.multiday --dataset conflicts --context-only --ab-supersede --midas-only

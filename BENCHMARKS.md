@@ -87,7 +87,7 @@ ingest/query edge. (fact dips 0.92 → 0.89, within n=13 noise and with no effec
 # Place longmemeval_s_cleaned.json at data/longmemeval_s.json (or use --longmemeval-path)
 python -m eval.runner --dataset longmemeval --variant s --local \
   --local-max-text-chars 600 --local-batch-size 16 --midas-no-rerank \
-  --max-questions 15 --limit 20 --seed 0
+  --max-questions 40 --limit 20 --seed 0
 ```
 
 ## 2. Cost / latency — the no-LLM edge (memory layer only)
@@ -348,7 +348,7 @@ For useful external review, publish the trace table, not just aggregate scores:
 
 ```bash
 python -m eval.runner --dataset longmemeval --variant s --local --midas-no-rerank \
-  --trace-questions --trace-snippets --max-questions 15
+  --trace-questions --trace-snippets --max-questions 40
 ```
 
 The trace shows `gold`, `retrieved`, `recall@k`, `precision@k`, and snippets for each question, so

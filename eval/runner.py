@@ -39,6 +39,7 @@ from .metrics import (
 from .schema import Dataset
 
 _COLUMNS = ["recall@k", "precision@k", "answer", "avg_tokens", "eff(ans/1k_tok)"]
+DEFAULT_JUDGE_MAX_QUESTIONS = 40
 
 _DEFAULTS = {
     "synthetic": {"budget": 110, "limit": 5},
@@ -553,7 +554,7 @@ def main() -> None:
     parser.add_argument("--budget", type=int, default=None, help="token budget (per-dataset default if unset)")
     parser.add_argument("--limit", type=int, default=None, help="top-k (per-dataset default if unset)")
     parser.add_argument("--max-convs", type=int, default=2, help="LoCoMo: conversations to include")
-    parser.add_argument("--max-questions", type=int, default=None, help="cap questions (default 25 when --judge)")
+    parser.add_argument("--max-questions", type=int, default=None, help="cap questions (default 40 when --judge)")
     parser.add_argument("--variant", type=str, default="s", choices=["s", "m", "oracle"], help="LongMemEval: variant to use (s, m, oracle)")
     parser.add_argument("--longmemeval-path", type=str, default=None, help="Path to LongMemEval JSON file (overrides variant default)")
     parser.add_argument("--longmemeval-abstention", action="store_true", help="LongMemEval: load only the abstention (unanswerable) questions, to measure Calibrated/abstention")
@@ -598,12 +599,16 @@ def main() -> None:
     defaults = _DEFAULTS[args.dataset]
     budget = args.budget if args.budget is not None else defaults["budget"]
     limit = args.limit if args.limit is not None else defaults["limit"]
-    max_q = args.max_questions if args.max_questions is not None else (25 if args.judge else None)
+    max_q = (
+        args.max_questions
+        if args.max_questions is not None
+        else (DEFAULT_JUDGE_MAX_QUESTIONS if args.judge else None)
+    )
 
     dataset = _load(
         args.dataset,
         max_convs=args.max_convs,
-        max_questions=args.max_questions,
+        max_questions=max_q,
         variant=args.variant,
         longmemeval_path=args.longmemeval_path,
         abstention_only=args.longmemeval_abstention,

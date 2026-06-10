@@ -19,7 +19,7 @@ audit (which gold turns survived eviction, value-vs-fifo wins and failures) — 
     uv run --no-sync python -m eval.retention --dataset multiday --local --no-rerank
     uv run --no-sync python -m eval.retention --dataset multiday --trace
     uv run --no-sync python -m eval.retention --dataset longmemeval --variant s --local --no-rerank \
-        --local-max-text-chars 600 --max-questions 15
+        --local-max-text-chars 600 --max-questions 40
 """
 from __future__ import annotations
 

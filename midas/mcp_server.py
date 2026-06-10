@@ -168,28 +168,102 @@ def capture(
     }
 
 
+def _round_score(value: float) -> float:
+    return round(float(value), 3)
+
+
+def _serialize_record(record) -> dict:
+    """Human-auditable memory evidence. Deliberately omits the embedding."""
+    return {
+        "id": record.id,
+        "kind": record.kind,
+        "importance": record.importance,
+        "provenance": record.provenance,
+        "actor": record.actor,
+        "source": record.source,
+        "metadata": record.metadata,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+        "superseded_by": record.superseded_by,
+        "content": record.content,
+    }
+
+
+def _serialize_recall_hit(hit, *, explain: bool = True) -> dict:
+    """Structured, source-traceable recall evidence for MCP clients.
+
+    Keep this separate from `build_context`: agents need compact prompt context by default, while audit
+    workflows need the deterministic retrieval signals that explain why a record surfaced.
+    """
+    record = hit.record
+    item = {
+        **_serialize_record(record),
+        "score": _round_score(hit.score),
+    }
+    if explain:
+        item["explanation"] = {
+            "score": _round_score(hit.score),
+            "relevance": _round_score(hit.relevance),
+            "importance_norm": _round_score(hit.importance_norm),
+            "recency": _round_score(hit.recency),
+            "formula": "score = relevance + 0.3*importance_norm + 0.2*recency",
+        }
+        # Keep the raw components at the top level too so simple clients can filter/sort without digging.
+        item.update(
+            {
+                "relevance": _round_score(hit.relevance),
+                "importance_norm": _round_score(hit.importance_norm),
+                "recency": _round_score(hit.recency),
+            }
+        )
+    return item
+
+
 @server.tool(
     title="Recall",
     annotations=ToolAnnotations(title="Recall", readOnlyHint=True, openWorldHint=False),
 )
-def recall(query: str, limit: int = 5) -> list[dict]:
-    """Retrieve the most relevant memories for a query.
+def recall(
+    query: str,
+    limit: int = 5,
+    kind: str | None = None,
+    min_importance: int = 0,
+    min_relevance: float = 0.0,
+    hybrid: bool = False,
+    fusion: str = "rrf",
+    pool: int = 0,
+    explain: bool = True,
+) -> list[dict]:
+    """Retrieve relevant memories with deterministic, source-traceable evidence.
 
-    Returns source-traceable hits (id, score, kind, original content) — no LLM rewriting, so each
-    result is auditable back to the exact stored text.
+    Returns exact stored text plus provenance/source/timestamps and, by default, score components
+    (relevance, importance_norm, recency). No LLM rewrites or rationales are generated.
     """
     return [
-        {
-            "id": h.record.id,
-            "score": round(float(h.score), 3),
-            "kind": h.record.kind,
-            "provenance": h.record.provenance,
-            "actor": h.record.actor,
-            "source": h.record.source,
-            "content": h.record.content,
-        }
-        for h in _mem.recall(query, limit=int(limit))
+        _serialize_recall_hit(h, explain=bool(explain))
+        for h in _mem.recall(
+            query,
+            limit=int(limit),
+            kind=kind or None,
+            min_importance=int(min_importance) or None,
+            min_relevance=float(min_relevance) or None,
+            hybrid=bool(hybrid),
+            fusion=fusion,
+            pool=int(pool) or None,
+        )
     ]
+
+
+@server.tool(
+    title="Inspect memory",
+    annotations=ToolAnnotations(title="Inspect memory", readOnlyHint=True, openWorldHint=False),
+)
+def inspect_memory(memory_id: str) -> dict:
+    """Inspect one stored memory by id without search, mutation, or embedding exposure."""
+    record = _mem.store.get(memory_id)
+    if record is None:
+        return {"found": False, "id": memory_id}
+    return {"found": True, **_serialize_record(record)}
 
 
 @server.tool(

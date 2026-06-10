@@ -68,7 +68,7 @@ shrinks that exposure (section 3); the residue is measured, not hidden.
 ```bash
 python -m eval.runner --dataset synthetic --dumb-reader
 python -m eval.runner --dataset conflicts --dumb-reader --midas-supersede
-python -m eval.runner --dataset longmemeval --variant s --local --max-questions 25 --dumb-reader
+python -m eval.runner --dataset longmemeval --variant s --local --max-questions 40 --dumb-reader
 ```
 
 ## 3. Adversarial near-duplicates and temporal conflicts (`conflicts-v1`)
@@ -229,5 +229,5 @@ python -m eval.retention --dataset multiday --trace --value-rank-only
 # LongMemEval-s with the dumb reader (downloads dataset + local bge model on first run)
 # curl -L -o data/longmemeval_s.json \
 #   https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json
-python -m eval.runner --dataset longmemeval --variant s --local --max-questions 25 --dumb-reader --midas-no-rerank --seed 0
+python -m eval.runner --dataset longmemeval --variant s --local --max-questions 40 --dumb-reader --midas-no-rerank --seed 0
 ```
