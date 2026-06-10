@@ -32,6 +32,53 @@ def test_delete_and_clear_persist(tmp_path):
     reopened.close()
 
 
+def test_two_open_stores_share_writes_live(tmp_path):
+    """Two stores on the same file (≈ two MCP client processes) see each other's writes without a
+    reopen — the cross-session memory story, live."""
+    db = str(tmp_path / "shared.db")
+    a = Memory(store=SQLiteStore(db), embedder=HashingEmbedder())
+    b = Memory(store=SQLiteStore(db), embedder=HashingEmbedder())
+
+    a.remember("decision: queue runs on Redis Streams", kind="fact", importance=5)
+    hits = b.recall("what does the queue run on?", limit=1)
+    assert hits and "Redis Streams" in hits[0].record.content, "B should see A's write live"
+
+    rec = b.remember("note from the other session", kind="note")
+    assert a.store.get(rec.id) is not None, "A should see B's write live"
+
+    assert b.store.delete(hits[0].record.id) is True
+    assert a.store.get(hits[0].record.id) is None, "A should see B's delete live"
+    a.store.close()
+    b.store.close()
+
+
+def test_concurrent_threaded_writes(tmp_path):
+    """The shared connection is lock-guarded: writes from worker threads (how MCP frameworks run
+    sync tools) must not corrupt or raise."""
+    import threading
+
+    db = str(tmp_path / "threads.db")
+    store = SQLiteStore(db)
+    mem = Memory(store=store, embedder=HashingEmbedder())
+    errors: list[Exception] = []
+
+    def write(n: int) -> None:
+        try:
+            for i in range(20):
+                mem.remember(f"thread {n} note {i}", kind="note")
+        except Exception as exc:  # pragma: no cover - the assertion below reports it
+            errors.append(exc)
+
+    threads = [threading.Thread(target=write, args=(n,)) for n in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors, f"threaded writes raised: {errors!r}"
+    assert len(store.all()) == 80
+    store.close()
+
+
 def test_provenance_persists_after_reopen(tmp_path):
     db = str(tmp_path / "mem3.db")
     mem = Memory(store=SQLiteStore(db), embedder=HashingEmbedder())

@@ -81,7 +81,8 @@
     { "name": "build_context", "description": "Assemble a budgeted, prompt-ready context block from memory for a query." },
     { "name": "memory_policy", "description": "Return the exact MCP-injected memory policy text and guard parameters." },
     { "name": "check_memory_use", "description": "Decide whether recalled memory may justify a planning, answer, external, or destructive use." },
-    { "name": "forget", "description": "Delete a single memory by id." },
+    { "name": "forget", "description": "Delete a single memory by id (supersession chains are relinked, not orphaned)." },
+    { "name": "forget_matching", "description": "Topic-level erasure: preview (dry run) then delete every memory matching a query, with a full audit." },
     { "name": "forget_all", "description": "Clear all stored memories (fresh start)." },
     { "name": "maintain", "description": "Run a no-LLM retention pass (dedup / bound / prune) and return the deletion audit." },
     { "name": "stats", "description": "Memory stats: total count, breakdown by kind, and temporal-tier distribution." }

@@ -6,6 +6,38 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- **Live multi-process memory sharing** — `SQLiteStore` now detects writes from *other* connections
+  (SQLite `PRAGMA data_version`) and refreshes its in-memory mirror, so several MCP clients
+  (Claude Code + Claude Desktop + an IDE) pointed at one DB file see each other's captures live,
+  without restarts. The shared connection is also lock-guarded and usable from worker threads (how
+  MCP frameworks actually run sync tools).
+- **Namespaces (scoped memory)** — share one DB across projects/agents/users without cross-talk.
+  SDK: `recall`/`build_context`/`forget_matching` take `metadata_filter={...}` (equality scoping;
+  neighbour-window expansion respects it too — no leaks past the filter). MCP: `MIDAS_MCP_NAMESPACE`
+  env sets the server's default scope; every tool also takes a per-call `namespace`; `stats` reports
+  a `by_namespace` breakdown. Unscoped behaviour is unchanged.
+- **Topic-level erasure with audit** (`Memory.forget_matching`, MCP `forget_matching`) — "forget what
+  you know about X": matches by relevance, **dry-run by default** in MCP (preview what would be
+  deleted, then confirm with `dry_run=false`), returns the full list of removed records as the
+  erasure audit trail. Deliberately bypasses durability protections — an explicit erasure request
+  outranks retention. The right-to-be-forgotten lever, no LLM.
+- **Chain-safe single deletion** (`Memory.forget`, now used by the MCP `forget` tool) — deleting a
+  record mid-supersession-chain relinks the chain instead of orphaning it, so a query phrased like
+  the old value still resolves to the current belief.
+- **MCP `build_context` upgrades** — the context block now carries the measured temporal grounding
+  ("# Today is …" header + per-memory relative ages — the LLM-free signal that lifted temporal
+  recall@k 0.86→0.95 in the eval) and exposes `limit`, `hybrid`, and `namespace`.
+
+- **Hybrid recall is ~8× cheaper on a stable store** — the BM25 index is cached on the store's
+  change counter (rebuilt only after writes) and scores via per-term posting lists, so a query
+  touches only documents sharing a term with it. Stable 5k-record store: ~66 ms → **~8 ms/query**;
+  identical scores and eval metrics (conflicts-v1 and LongMemEval-`s` reproduce exactly).
+- **Measured negative (hybrid stays opt-in)** — on LongMemEval-`s` (n=40, bge-base, deterministic)
+  hybrid BM25+RRF *hurts* retrieval: multi-session recall@k 0.97→0.81, temporal 0.95→0.86
+  (fact 0.89→0.90, within noise). Lexical rank-fusion displaces buried semantic evidence on
+  paraphrased queries. Hybrid therefore stays **off by default** and is recommended only for
+  exact-identifier lookups (error codes, ticket ids, function names), where BM25 catches what the
+  bi-encoder ranks low.
 - **Eval methodology doc** (`docs/methodology.md`) — anti-cheating checklist (no query rewriting, no
   LLM at ingest, seeded sampling), verbatim MCP-injected policy, how conflicting memories are handled
   (supersession chains + gating), dumb-reader ablation, conflicts-v1 results, and publishable failure

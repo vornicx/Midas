@@ -90,6 +90,25 @@ python -m eval.runner --dataset longmemeval --variant s --local \
   --max-questions 40 --limit 20 --seed 0
 ```
 
+### Hybrid retrieval (BM25+RRF) — measured, kept opt-in
+
+Fusing a lexical BM25 ranking with semantic recall (`recall(hybrid=True)`, reciprocal-rank fusion)
+is the standard "push past the embedding ceiling" lever — so we measured it instead of defaulting
+it. On **conversational long-horizon data it is a negative**: LongMemEval-`s` (n=40, bge-base,
+deterministic A/B) drops multi-session recall@k **0.97 → 0.81** and temporal **0.95 → 0.86** (fact
+0.89 → 0.90, noise) — lexical rank-fusion displaces buried semantic evidence on paraphrased
+queries. On synthetic and conflicts-v1 it ties at recall@k 1.00. So hybrid stays **off by
+default**; turn it on per-query when the query is an exact identifier (an error code, a ticket id,
+a function name) rather than a paraphrase — the case where BM25 catches what the bi-encoder ranks
+low. The BM25 index is cached on the store's change counter with per-term posting lists, so on a
+stable 5k-record store a hybrid query costs **~8 ms** (vs ~66 ms when it was rebuilt per query);
+eval metrics are bit-identical to the uncached version.
+
+```bash
+python -m eval.runner --dataset longmemeval --variant s --local --midas-no-rerank \
+  --max-questions 40 --limit 20 --seed 0 --midas-only --midas-hybrid   # the A/B
+```
+
 ## 2. Cost / latency — the no-LLM edge (memory layer only)
 
 Measured with the runner's cost instrumentation; excludes the shared reader/judge LLM (identical

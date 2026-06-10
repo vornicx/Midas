@@ -240,6 +240,9 @@ class Memory:
         self._abstention_relevance_floor = abstention_relevance_floor
         self._abstention_entailment_floor = abstention_entailment_floor
         self._include_provenance = include_provenance
+        # Cached BM25 lexical index for hybrid recall, keyed by the store's change counter —
+        # rebuilding it per query made hybrid ~35x slower at LongMemEval scale (66 ms vs 1.9 ms).
+        self._bm25_cache: tuple[int, Any] | None = None
 
     def remember(
         self,
@@ -478,6 +481,7 @@ class Memory:
         hybrid: bool = False,
         fusion: str = "rrf",
         now: float | None = None,
+        metadata_filter: dict[str, Any] | None = None,
     ) -> list[RecallHit]:
         q_emb = self.embedder.embed(query)
         # `now` is the query's reference time (e.g. when the question is asked); recency decays
@@ -490,6 +494,11 @@ class Memory:
                 return False
             if min_importance is not None and record.importance < min_importance:
                 return False
+            if metadata_filter:
+                # Equality scoping (namespace / user / agent / project): every key must match.
+                for key, value in metadata_filter.items():
+                    if record.metadata.get(key) != value:
+                        return False
             return True
 
         # Vector prefilter to a candidate pool, then score and (optionally) rerank.
@@ -551,11 +560,15 @@ class Memory:
         lexical rankings — rank-based, so it sidesteps the cosine/BM25 scale mismatch that made the
         older fusion="max" (max of cosine and max-normalised BM25) displace true gold at tight budgets.
         """
-        from .bm25 import BM25
-
         semantic = self.store.search(q_emb, limit=pool, predicate=predicate)
         records = [r for r in self.store.all() if predicate(r)]
-        bm_scores = BM25(records).scores(query)
+        allowed = {r.id for r in records}
+        # Score with the cached whole-store index, then keep only predicate-passing records. (IDF is
+        # corpus-wide either way at the default no-filter recall; rebuilding a filtered index per
+        # query was the 35x latency hole.)
+        bm_scores = {
+            rid: s for rid, s in self._bm25_index().scores(query).items() if rid in allowed
+        }
         bm_ranked = sorted(bm_scores, key=bm_scores.get, reverse=True)
 
         by_id: dict[str, tuple[float, MemoryRecord]] = {rec.id: (cos, rec) for cos, rec in semantic}
@@ -583,6 +596,20 @@ class Memory:
                 rid: max(max(0.0, by_id[rid][0]), bm_scores.get(rid, 0.0) / max_bm) for rid in by_id
             }
         return list(by_id.values()), relevance_map
+
+    def _bm25_index(self):
+        """The BM25 index over the whole store, rebuilt only when the store has changed (keyed by
+        the store's `version` counter). Falls back to a per-call build for custom stores without
+        a counter."""
+        from .bm25 import BM25
+
+        records = self.store.all()  # for SQLiteStore this also refreshes from other processes
+        version = getattr(self.store, "version", None)
+        if version is None:
+            return BM25(records)
+        if self._bm25_cache is None or self._bm25_cache[0] != version:
+            self._bm25_cache = (version, BM25(records))
+        return self._bm25_cache[1]
 
     def recall_confidence(self, query: str, **recall_kwargs: Any) -> tuple[list[RecallHit], float]:
         """Recall with confidence score.
@@ -754,6 +781,9 @@ class Memory:
                 window=window,
                 thread_key=thread_key,
                 min_importance=neighbor_min_importance,
+                # Neighbour expansion must respect the recall scope, or a same-thread record from
+                # another namespace would leak past the filter.
+                metadata_filter=recall_kwargs.get("metadata_filter"),
             )
 
         # Filter out superseded records if enabled
@@ -843,11 +873,16 @@ class Memory:
         window: int,
         thread_key: str,
         min_importance: int | None = None,
+        metadata_filter: dict[str, Any] | None = None,
     ) -> list[MemoryRecord]:
         """Expand each hit with its ±window same-thread neighbours, in hit-priority order.
         Threads are grouped by `record.metadata[thread_key]`, ordered by insertion."""
         threads: dict[Any, list[MemoryRecord]] = {}
         for record in self.store.all():
+            if metadata_filter and any(
+                record.metadata.get(k) != v for k, v in metadata_filter.items()
+            ):
+                continue
             threads.setdefault(record.metadata.get(thread_key), []).append(record)
         index: dict[str, tuple[Any, int]] = {}
         for key, recs in threads.items():
@@ -884,6 +919,7 @@ class Memory:
         window: int,
         thread_key: str,
         min_importance: int | None = None,
+        metadata_filter: dict[str, Any] | None = None,
     ) -> list[MemoryRecord]:
         """Keep direct hits first, then append same-thread neighbours in hit-priority order."""
         direct_ids = {record.id for record in records}
@@ -894,6 +930,7 @@ class Memory:
             window=window,
             thread_key=thread_key,
             min_importance=min_importance,
+            metadata_filter=metadata_filter,
         ):
             if nb.id in seen or nb.id in direct_ids:
                 continue
@@ -996,6 +1033,53 @@ class Memory:
                 surviving -= 1
 
         return [rid for rid in to_drop if self.store.delete(rid)]
+
+    def forget(self, record_id: str) -> bool:
+        """Delete one memory by id, repairing any supersession chain that runs through it.
+
+        A record mid-chain may be the `superseded_by` target of older records; deleting it naively
+        would make `_resolve_head` dead-end on a missing id (a query phrased like the old value
+        resolves to nothing). Relinking those pointers to the deleted record's own successor keeps
+        every chain walkable. Explicit deletion ignores the forgetting protections on purpose —
+        "forget this" from a user outranks retention policy."""
+        target = self.store.get(record_id)
+        if target is None:
+            return False
+        for record in self.store.all():
+            if record.superseded_by == record_id:
+                record.superseded_by = target.superseded_by
+                self.store.put(record)
+        return self.store.delete(record_id)
+
+    def forget_matching(
+        self,
+        query: str,
+        *,
+        min_relevance: float = 0.5,
+        limit: int = 20,
+        kind: MemoryKind | None = None,
+        metadata_filter: dict[str, Any] | None = None,
+        dry_run: bool = False,
+    ) -> list[MemoryRecord]:
+        """Topic-level erasure (right-to-be-forgotten): delete every memory matching `query` at
+        relevance >= `min_relevance`, returning the matched records as the audit trail.
+
+        With `dry_run=True` nothing is deleted — the returned records are a reviewable preview, the
+        safe default for agent-driven erasure. Deletion uses `forget`, so supersession chains stay
+        walkable, and it bypasses the durability protections: an explicit "remove what you know
+        about X" must also remove protected facts about X. No LLM."""
+        hits = self.recall(
+            query,
+            limit=limit,
+            kind=kind,
+            min_relevance=min_relevance,
+            metadata_filter=metadata_filter,
+        )
+        matched = [h.record for h in hits if h.relevance >= min_relevance]
+        if not dry_run:
+            for record in matched:
+                self.forget(record.id)
+        return matched
 
     def consolidate(
         self,

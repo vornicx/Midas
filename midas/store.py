@@ -35,10 +35,14 @@ class InMemoryStore:
         self._matrix = None
         self._matrix_recs: list[MemoryRecord] = []
         self._dirty = True
+        # Monotonic change counter: bumps on every mutation. Lets callers cache derived indexes
+        # (e.g. the BM25 lexical index for hybrid recall) and invalidate them cheaply.
+        self.version = 0
 
     def put(self, record: MemoryRecord) -> None:
         self._records[record.id] = record
         self._dirty = True
+        self.version += 1
 
     def get(self, record_id: str) -> MemoryRecord | None:
         return self._records.get(record_id)
@@ -47,6 +51,7 @@ class InMemoryStore:
         existed = self._records.pop(record_id, None) is not None
         if existed:
             self._dirty = True
+            self.version += 1
         return existed
 
     def all(self) -> list[MemoryRecord]:
@@ -57,6 +62,7 @@ class InMemoryStore:
         self._matrix = None
         self._matrix_recs = []
         self._dirty = True
+        self.version += 1
 
     def _ensure_matrix(self, np) -> None:
         """(Re)build the cached embedding matrix + aligned record list when records have changed."""

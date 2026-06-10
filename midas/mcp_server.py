@@ -17,6 +17,8 @@ Config (env):
     MIDAS_MCP_MIN_IMPORTANCE = relevance floor for `capture` (1-5); turns scoring below it are skipped
                              (default: 2 — keeps anything with a real fact/name/number, drops chit-chat)
     MIDAS_MCP_ACTOR        = actor id stamped on MCP memories (default: midas-mcp)
+    MIDAS_MCP_NAMESPACE    = default namespace stamped on writes and applied to reads — lets many
+                             projects/agents share one DB file with scoped memory (default: none)
     MIDAS_MCP_SUPERSEDE    = 1/0 typed belief revision for stale facts (default: 1)
     MIDAS_MCP_SUPERSEDE_CONVO = 1 enables strict-cue chat revision (default: 0)
     MIDAS_MCP_NLI          = 1 gates revision with the local NLI model (default: 0)
@@ -25,6 +27,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from dataclasses import asdict
 
 from midas import (
@@ -38,6 +41,23 @@ _MAX_RECORDS = int(os.getenv("MIDAS_MCP_MAX_RECORDS", "0")) or None
 # The relevance parameters Midas imposes on `capture` (the no-LLM "what's worth keeping" gate).
 _POLICY = MemoryPolicy(min_importance=int(os.getenv("MIDAS_MCP_MIN_IMPORTANCE", "2")))
 _ACTOR = os.getenv("MIDAS_MCP_ACTOR", "midas-mcp")
+# Default scope for this server instance. A per-call `namespace` argument overrides it; empty means
+# unscoped (reads see everything, writes carry no namespace) — fully backward compatible.
+_NAMESPACE = os.getenv("MIDAS_MCP_NAMESPACE", "")
+
+
+def _ns(namespace: str) -> str:
+    return namespace or _NAMESPACE
+
+
+def _ns_metadata(namespace: str, session: str) -> dict:
+    ns = _ns(namespace)
+    return {"session": session, **({"namespace": ns} if ns else {})}
+
+
+def _ns_filter(namespace: str) -> dict | None:
+    ns = _ns(namespace)
+    return {"namespace": ns} if ns else None
 _SUPERSEDE = os.getenv("MIDAS_MCP_SUPERSEDE", "1") != "0"
 _SUPERSEDE_CONVO = os.getenv("MIDAS_MCP_SUPERSEDE_CONVO", "0") == "1"
 _USE_NLI = os.getenv("MIDAS_MCP_NLI", "0") == "1"
@@ -103,6 +123,7 @@ def remember(
     session: str = "default",
     provenance: str = "observation",
     actor: str = "",
+    namespace: str = "",
 ) -> str:
     """Store a memory for later recall.
 
@@ -114,6 +135,7 @@ def remember(
     provenance: planning | action | observation | user_confirmation. Use user_confirmation only when
         the user explicitly confirmed the content; external actions may rely only on that provenance.
     actor: agent/process that produced the memory (default: MIDAS_MCP_ACTOR).
+    namespace: scope tag (e.g. a project or user id); defaults to MIDAS_MCP_NAMESPACE.
     """
     imp = int(importance) or None  # 0 -> derive importance from content
     rec = _mem.remember(
@@ -123,7 +145,7 @@ def remember(
         source=f"mcp:{session}",
         provenance=provenance,
         actor=actor or _ACTOR,
-        metadata={"session": session},
+        metadata=_ns_metadata(namespace, session),
     )
     if _MAX_RECORDS and len(_mem.store.all()) > _MAX_RECORDS:
         _mem.forget_decayed(max_records=_MAX_RECORDS)  # keep memory bounded (no LLM)
@@ -140,6 +162,7 @@ def capture(
     session: str = "default",
     provenance: str = "observation",
     actor: str = "",
+    namespace: str = "",
 ) -> dict:
     """Offer a turn to memory; Midas decides whether to keep it (no LLM).
 
@@ -154,7 +177,7 @@ def capture(
         source=f"mcp:{session}",
         provenance=provenance,
         actor=actor or _ACTOR,
-        metadata={"session": session},
+        metadata=_ns_metadata(namespace, session),
     )
     if result.stored and _MAX_RECORDS and len(_mem.store.all()) > _MAX_RECORDS:
         _mem.forget_decayed(max_records=_MAX_RECORDS)
@@ -233,11 +256,14 @@ def recall(
     fusion: str = "rrf",
     pool: int = 0,
     explain: bool = True,
+    namespace: str = "",
 ) -> list[dict]:
     """Retrieve relevant memories with deterministic, source-traceable evidence.
 
     Returns exact stored text plus provenance/source/timestamps and, by default, score components
     (relevance, importance_norm, recency). No LLM rewrites or rationales are generated.
+    Set hybrid=true to fuse BM25 lexical matching with semantic recall — useful when the query is
+    an exact identifier (an error code, a function name) rather than a paraphrase.
     """
     return [
         _serialize_recall_hit(h, explain=bool(explain))
@@ -250,6 +276,7 @@ def recall(
             hybrid=bool(hybrid),
             fusion=fusion,
             pool=int(pool) or None,
+            metadata_filter=_ns_filter(namespace),
         )
     ]
 
@@ -270,13 +297,31 @@ def inspect_memory(memory_id: str) -> dict:
     title="Build context",
     annotations=ToolAnnotations(title="Build context", readOnlyHint=True, openWorldHint=False),
 )
-def build_context(query: str, token_budget: int = 512) -> str:
+def build_context(
+    query: str,
+    token_budget: int = 512,
+    limit: int = 6,
+    hybrid: bool = False,
+    namespace: str = "",
+) -> str:
     """Assemble a budgeted, prompt-ready context block for a query.
 
     Highest-value memories first, with same-session neighbours pulled in, trimmed to token_budget.
-    Drop the returned string straight into an LLM prompt.
+    Drop the returned string straight into an LLM prompt. Each memory line is dated and the header
+    anchors today's date, so the reader can resolve relative time ("how long ago...") by reading.
     """
-    return _mem.assemble(query, token_budget=int(token_budget), window=1, thread_key="session")
+    return _mem.assemble(
+        query,
+        token_budget=int(token_budget),
+        limit=int(limit),
+        window=1,
+        thread_key="session",
+        hybrid=bool(hybrid),
+        metadata_filter=_ns_filter(namespace),
+        # The "Today is ..." anchor + per-memory relative ages — the LLM-free temporal grounding
+        # that lifted temporal recall@k 0.86 -> 0.95 in the eval; identical recency scoring.
+        now=time.time(),
+    )
 
 
 @server.tool(
@@ -302,6 +347,7 @@ def check_memory_use(
     intended_use: str = "planning",
     limit: int = 5,
     acting_agent: str = "",
+    namespace: str = "",
 ) -> dict:
     """Decide whether recalled memory may justify the intended use.
 
@@ -313,6 +359,7 @@ def check_memory_use(
         intended_use=intended_use,
         acting_agent=acting_agent or _ACTOR,
         limit=int(limit),
+        metadata_filter=_ns_filter(namespace),
     )
     return asdict(decision)
 
@@ -322,8 +369,44 @@ def check_memory_use(
     annotations=ToolAnnotations(title="Forget memory", readOnlyHint=False, destructiveHint=True),
 )
 def forget(memory_id: str) -> str:
-    """Delete a single memory by id (ids come from `recall`)."""
-    return "forgotten" if _mem.store.delete(memory_id) else f"no memory with id {memory_id}"
+    """Delete a single memory by id (ids come from `recall`). Supersession chains through the
+    deleted record are relinked, so belief-revision history stays walkable."""
+    return "forgotten" if _mem.forget(memory_id) else f"no memory with id {memory_id}"
+
+
+@server.tool(
+    title="Forget matching",
+    annotations=ToolAnnotations(title="Forget matching", readOnlyHint=False, destructiveHint=True),
+)
+def forget_matching(
+    query: str,
+    min_relevance: float = 0.5,
+    limit: int = 20,
+    dry_run: bool = True,
+    namespace: str = "",
+) -> dict:
+    """Topic-level erasure ("forget what you know about X") with a reviewable audit.
+
+    Matches memories at relevance >= min_relevance. By default this is a DRY RUN: it returns what
+    *would* be deleted so you (or the user) can review; call again with dry_run=false to delete.
+    Deletion bypasses durability protections — an explicit erasure request outranks retention —
+    and returns the full list of removed memories as the audit trail.
+    """
+    matched = _mem.forget_matching(
+        query,
+        min_relevance=float(min_relevance),
+        limit=int(limit),
+        metadata_filter=_ns_filter(namespace),
+        dry_run=bool(dry_run),
+    )
+    return {
+        "dry_run": bool(dry_run),
+        "matched": len(matched),
+        "records": [_serialize_record(r) for r in matched],  # the erasure audit trail
+        "note": "dry run — nothing deleted; repeat with dry_run=false to erase"
+        if dry_run
+        else "deleted",
+    }
 
 
 @server.tool(
@@ -379,23 +462,32 @@ def maintain(consolidate_threshold: float = 0.0, max_records: int = 0, min_value
     title="Memory stats",
     annotations=ToolAnnotations(title="Memory stats", readOnlyHint=True, openWorldHint=False),
 )
-def stats() -> dict:
-    """Memory stats: total count, breakdown by kind, and the temporal-tier distribution.
+def stats(namespace: str = "") -> dict:
+    """Memory stats: total count, breakdown by kind, namespace, and the temporal-tier distribution.
 
     tiers: short (<= 1 day) / medium (<= 1 week) / long (older) — the short/medium/multi-day horizons.
+    Pass namespace to scope the counts to one project/agent scope.
     """
+    ns = _ns(namespace)
     by_kind: dict[str, int] = {}
     by_provenance: dict[str, int] = {p: 0 for p in MEMORY_PROVENANCE}
     by_tier: dict[str, int] = {"short": 0, "medium": 0, "long": 0}
+    by_namespace: dict[str, int] = {}
     for record in _mem.store.all():
+        rec_ns = record.metadata.get("namespace") or "(none)"
+        by_namespace[rec_ns] = by_namespace.get(rec_ns, 0) + 1
+        if ns and record.metadata.get("namespace") != ns:
+            continue
         by_kind[record.kind] = by_kind.get(record.kind, 0) + 1
         by_provenance[record.provenance] = by_provenance.get(record.provenance, 0) + 1
         by_tier[_mem.tier(record)] += 1
     return {
         "total": sum(by_kind.values()),
+        "namespace": ns or None,
         "by_kind": by_kind,
         "by_provenance": by_provenance,
         "by_tier": by_tier,
+        "by_namespace": by_namespace,
         "guard_uses": list(MEMORY_USES),
     }
 

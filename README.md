@@ -213,12 +213,22 @@ actions. Before relying on memory to act outside the chat, call `check_memory_us
 `intended_use="external_action"` or `"destructive_action"`. Those actions require
 `user_confirmation` provenance; otherwise the agent must ask the user to confirm in the current turn.
 
+**One memory, many clients.** Point Claude Code, Claude Desktop, Cursor, etc. at the **same**
+`MIDAS_MCP_DB` file and they share one live memory: each server detects the others' writes (SQLite
+`data_version`) and refreshes, so a fact captured in your IDE is recallable from your chat app
+moments later — no restarts. Use `MIDAS_MCP_NAMESPACE` (or the per-call `namespace` argument every
+tool accepts) to keep projects, agents, or users scoped inside that shared DB.
+
 **Tools it exposes:** `remember`, `capture` (policy-gated auto-store), `recall` (source-traceable),
-`build_context` (budgeted prompt block), `check_memory_use` (Guard provenance boundary),
-`memory_policy` (exact injected policy text), `maintain` (dedup + forgetting, returns a deletion
-audit), `stats` (counts + provenance + short/medium/long tiers), `forget` / `forget_all`. **Env knobs:**
+`build_context` (budgeted prompt block, dated and anchored to today so the agent can resolve
+relative time), `check_memory_use` (Guard provenance boundary), `memory_policy` (exact injected
+policy text), `maintain` (dedup + forgetting, returns a deletion audit), `stats` (counts +
+provenance + short/medium/long tiers + namespaces), `forget` (chain-safe single delete),
+`forget_matching` (topic-level erasure: dry-run preview by default, then delete with a full audit),
+`forget_all`. **Env knobs:**
 `MIDAS_MCP_DB` (persist to a SQLite file), `MIDAS_MCP_EMBEDDER` (`local` or `hashing`),
-`MIDAS_MCP_MAX_RECORDS`, `MIDAS_MCP_MIN_IMPORTANCE`, `MIDAS_MCP_SUPERSEDE=0` to disable typed belief
+`MIDAS_MCP_MAX_RECORDS`, `MIDAS_MCP_MIN_IMPORTANCE`, `MIDAS_MCP_NAMESPACE` (default scope for this
+server's reads/writes), `MIDAS_MCP_SUPERSEDE=0` to disable typed belief
 revision, `MIDAS_MCP_SUPERSEDE_CONVO=1` to allow strict-cue chat revision, `MIDAS_MCP_NLI=1` to gate
 revision with the local NLI model.
 
@@ -266,11 +276,22 @@ mem = Memory(embedder=LocalEmbedder(), supersede=True, supersede_conversational=
 mem.forget_decayed(max_records=50_000)      # evict lowest value (importance × recency); protects facts
 mem.consolidate(similarity_threshold=0.95)  # collapse near-duplicate restatements (keeps provenance)
 mem.tier(record)                            # 'short' (≤1d) | 'medium' (≤1w) | 'long'
+
+# Topic-level erasure (right-to-be-forgotten): preview, then delete — returns the audit trail.
+mem.forget_matching("the user's home address", dry_run=True)   # what WOULD be deleted
+mem.forget_matching("the user's home address")                 # delete it (bypasses protections)
+
+# Scoped memory: share one store across projects/users without cross-talk.
+mem.remember("the gateway is Kong", kind="fact", metadata={"namespace": "proj-a"})
+mem.recall("api gateway", metadata_filter={"namespace": "proj-a"})
 ```
 
 Forgetting returns the removed ids as a **deletion audit trail** and never drops the durable tier
-(facts/preferences/constraints, high importance). **Durable storage:** `Memory(store=SQLiteStore(
-"memory.db"), embedder=LocalEmbedder())` — a local file, no native extension.
+(facts/preferences/constraints, high importance) — while `forget_matching` deliberately bypasses
+those protections, because an explicit erasure request outranks retention. **Durable storage:**
+`Memory(store=SQLiteStore("memory.db"), embedder=LocalEmbedder())` — a local file, no native
+extension, safe to share across threads and processes (writers are lock-guarded; other processes'
+writes are picked up live via SQLite's `data_version`).
 
 ### Use with LangGraph
 
@@ -305,6 +326,27 @@ with `gpt-4o`, Midas scores **0.84** on LongMemEval-`s` — **matching** the LLM
 Memory) while doing **no LLM at ingest** — and on a ~500-session haystack (~4,944 turns) it assembles a
 bounded ~480-token context (recall@k 0.78), where keep-every-observation-in-context designs do not fit
 by construction. (Same-reader, within-harness comparison — not a leaderboard rank; see BENCHMARKS.md.)
+
+### Where Midas stands
+
+Compared by *architecture class*, since that is what fixes the cost/privacy/auditability structure
+(examples of each class: Mem0, Mastra Observational Memory, Hindsight — LLM-at-ingest; Zep —
+hosted graph memory):
+
+| | **Midas** | LLM-at-ingest memory | hosted memory services |
+|---|---|---|---|
+| LLM calls at ingest/query | **0** | ≥1 per session | varies |
+| Marginal cost per message | **$0** | $/token, forever | subscription + egress |
+| Conversation leaves the box | **never** | yes (to the LLM) | yes (to the service) |
+| Recall traceable to source turns | **yes, verbatim** | no (LLM-rewritten facts) | partial |
+| Extraction can hallucinate | **no extraction step** | yes, silently | yes, at ingest |
+| Bounded memory (selective forgetting + audit) | **yes, no LLM** | LLM compaction | provider-managed |
+| Action guard on provenance | **yes** (`check_memory_use`) | — | — |
+
+The honest trade: LLM-at-ingest systems buy *curated observations* with those tokens, which helps
+the strongest readers squeeze out a few more points on benchmarks (OM 0.95 vs Midas 0.87–0.89 with
+gpt-5-mini). Midas's bet is that **$0/message, zero egress, and auditable recall** is the right
+default for a memory that runs forever next to your agent.
 
 ## The eval harness
 
