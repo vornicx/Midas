@@ -11,8 +11,9 @@ plus the verbatim MCP policy, failure-case traces, and how conflicting memories 
 Midas isolates and wins the two axes that actually measure a *memory layer* (as opposed to the
 reader LLM stacked on top):
 
-- **Retrieval** — on LongMemEval-`s` (evidence buried among distractors), Midas retrieves the
-  supporting turns at **recall@k 0.95** vs a recency-window baseline's **0.03**.
+- **Retrieval** — on the **full** LongMemEval-`s` set (evidence buried among distractors, all 500
+  questions), Midas retrieves the supporting turns at **recall@k 0.92** vs a recency-window
+  baseline's **0.01**.
 - **Cost** — Midas does **0 LLM calls, $0 API spend, and 0 data egress at ingest** (local embeddings
   only), versus LLM-at-ingest memory systems that call an LLM per session to extract facts.
 
@@ -33,11 +34,12 @@ no LLM), so it reproduces exactly.
 
 | dataset | setting | baseline-raw | **Midas** |
 |---|---|---:|---:|
-| **LongMemEval-`s`** (buried evidence, hard retrieval) | n=40, bge-base, no rerank, seed 0 | 0.03 | **0.95** |
+| **LongMemEval-`s`** (FULL set: 500 questions, 246,750 turns ingested) | n=500, bge-base, no rerank, seed 0 | 0.01 | **0.92** |
 | **LoCoMo** (FULL public set: 10 conversations, 5,882 turns) | n=1,540, bge-base, no rerank, seed 0 | 0.05 | **0.73** |
 
-Across **both** datasets Midas retrieves the supporting turns at **0.73–0.95** while a recency window
-gets **≤0.05** — the wedge holds beyond a single benchmark.
+Across **both** full datasets Midas retrieves the supporting turns at **0.73–0.92** while a recency
+window gets **≤0.05** — the wedge holds beyond a single benchmark, with **no sampling caveat left**:
+these are the complete public question sets.
 
 > **Correction (2026-06-10).** An earlier version of this table reported LoCoMo recall@k **0.85**
 > on an n=50 sample. That number does **not reproduce** against the publicly downloadable
@@ -46,12 +48,14 @@ gets **≤0.05** — the wedge holds beyond a single benchmark.
 > runner's old LoCoMo-specific `min_relevance=0.75` floor — tuned on that early sample — prunes
 > most gold turns on the full set (recall@k **0.18** with it, **0.73** without), so it has been
 > removed; the SDK's scale-free ratio floor replaces it. The number above is the full public set,
-> nothing held out, reproducible with the command below. On LongMemEval-`s` (n=40) the per-category
-recall@k is strong across the board: fact 0.89 · multi-session 0.97 · knowledge-update 1.00 ·
-temporal 0.95 · preference 1.00. A recency window finds essentially **none** of the buried evidence;
-Midas finds ~9 in 10 — exactly the multi-session setting where retrieval quality decides whether the
-answer is even *possible*. (`min_relevance` parsimony is a separate cost/quality knob; the numbers
-above are pure retrieval, no pruning.)
+> nothing held out, reproducible with the command below.
+
+On the full LongMemEval-`s` set the per-category recall@k is strong across the board: fact **0.97**
+(n=126) · knowledge-update **0.93** (n=78) · temporal **0.91** (n=133) · multi-session **0.89**
+(n=133) · preference **0.89** (n=30). A recency window finds essentially **none** of the buried
+evidence; Midas finds ~9 in 10 — exactly the multi-session setting where retrieval quality decides
+whether the answer is even *possible*. (Full-run cost, measured on the same CPU box: 246,750 turns
+ingested at ~61 ms/event, ~30 ms/query, zero LLM calls and $0.)
 
 The harness also reports **`precision@k`**: the fraction of retrieved source turns that are actually
 gold supporting evidence. This is the false-positive stress metric for agent loops: a memory layer can
@@ -96,7 +100,7 @@ ingest/query edge. (fact dips 0.92 → 0.89, within n=13 noise and with no effec
 # Place longmemeval_s_cleaned.json at data/longmemeval_s.json (or use --longmemeval-path)
 python -m eval.runner --dataset longmemeval --variant s --local \
   --local-max-text-chars 600 --local-batch-size 16 --midas-no-rerank \
-  --max-questions 40 --limit 20 --seed 0
+  --max-questions 500 --limit 20 --seed 0      # full set; ~4 h cold on a modest CPU box
 
 # LoCoMo, FULL public set (download data/locomo10.json from github.com/snap-research/locomo)
 python -m eval.runner --dataset locomo --max-convs 10 --local --midas-no-rerank --seed 0
@@ -388,9 +392,10 @@ Therefore: **`recall@k`, `precision@k` (deterministic, reader-independent) and i
 bars, and never as a headline.
 
 ### Honest caveats
-- **Sample** is n=40 on LongMemEval-`s`; LoCoMo is now the **full public set** (10 conversations,
-  n=1,540 answerable questions). `recall@k` is deterministic, so the samples are real; the full
-  LongMemEval run is in progress and will replace the n=40 figures.
+- **Retrieval headlines carry no sampling caveat**: LongMemEval-`s` is the full 500-question set
+  and LoCoMo is the full public set (10 conversations, n=1,540). Judged answer-correctness
+  (sections below) remains n=40 — it needs a hosted reader/judge per question, which is
+  cost-bound, not methodology-bound.
 - **Latency is hardware/provider-dependent** (the ~668 ms for the LLM-at-ingest class includes API
   round-trip). The durable, hardware-independent claim is the **0-LLM / $0 / no-egress** column.
 - **baseline-raw** = "stuff recent turns into the window" (the naive big-context approach).
