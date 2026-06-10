@@ -27,8 +27,8 @@ class Question:
     text: str
     answer: str | None = None  # gold answer (for correctness); None = unanswerable (should abstain)
     gold_event_ids: list[str] = field(default_factory=list)  # supporting events (recall@k)
-    category: str = "fact"  # fact | current | stable | unanswerable  (multi-day failure detector)
-    stale_answer: str | None = None  # for category 'current': the outdated value (= a staleness failure)
+    category: str = "fact"  # fact | current | stable | unanswerable | confusable | temporal | …
+    stale_answer: str | None = None  # for 'current'/'confusable': outdated or wrong-entity trap value
     metadata: dict[str, Any] = field(default_factory=dict)  # e.g. {"asked_at": epoch} for time-aware recall
 
 

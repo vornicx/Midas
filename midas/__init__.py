@@ -14,11 +14,21 @@ from .embeddings import (
     cosine,
     tokenize,
 )
+from .guard import (
+    MEMORY_USES,
+    Armorer,
+    EvidenceRef,
+    Guard,
+    MemoryUse,
+    MemoryUseDecision,
+    ProvenanceStamp,
+    decide_memory_use,
+)
 from .importance import ContentImportance, StructuralImportance
 from .memory import CaptureResult, ContextBlock, Memory, Reranker, approx_tokens, format_record
 from .policy import AGENT_MEMORY_INSTRUCTIONS, DEFAULT_POLICY, MemoryPolicy, policy_summary
 from .store import InMemoryStore
-from .types import MEMORY_KINDS, MemoryKind, MemoryRecord, RecallHit
+from .types import MEMORY_KINDS, MEMORY_PROVENANCE, MemoryKind, MemoryProvenance, MemoryRecord, RecallHit
 
 try:
     from .sqlite_store import SQLiteStore
@@ -32,6 +42,14 @@ except ImportError:
 
 __all__ = [
     "Memory",
+    "Armorer",
+    "Guard",
+    "ProvenanceStamp",
+    "EvidenceRef",
+    "MemoryUseDecision",
+    "MemoryUse",
+    "MEMORY_USES",
+    "decide_memory_use",
     "ContentImportance",
     "StructuralImportance",
     "MemoryPolicy",
@@ -47,6 +65,8 @@ __all__ = [
     "RecallHit",
     "MemoryKind",
     "MEMORY_KINDS",
+    "MemoryProvenance",
+    "MEMORY_PROVENANCE",
     "Embedder",
     "DiskCachedEmbedder",
     "HashingEmbedder",

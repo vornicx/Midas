@@ -1,0 +1,99 @@
+{
+  "manifest_version": "0.3",
+  "name": "midas-memory",
+  "display_name": "Midas — Local Agent Memory",
+  "version": "0.0.2",
+  "description": "Local-first, source-traceable memory for Claude — no LLM at ingest, fully offline.",
+  "long_description": "Midas gives Claude a persistent, **local** memory. Everything is stored on your own machine in a SQLite file, recall returns the **exact source text** (no LLM rewriting at ingest or query, so every memory is auditable), and capture/forget run with **no network calls** — your memories never leave your computer. Midas auto-scores what is worth keeping (facts, decisions, preferences, constraints, corrections) and drops chit-chat and duplicates, and it keeps the store bounded by forgetting low-value memories without an LLM. Install it and Claude starts remembering across sessions on its own via the recall → work → capture loop.",
+  "author": {
+    "name": "Vadim Vornic",
+    "url": "https://github.com/vornicx"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vornicx/Midas.git"
+  },
+  "homepage": "https://github.com/vornicx/Midas",
+  "documentation": "https://github.com/vornicx/Midas#readme",
+  "support": "https://github.com/vornicx/Midas/issues",
+  "license": "MIT",
+  "keywords": ["memory", "agent", "local-first", "offline", "rag", "long-horizon", "privacy"],
+  "privacy_policies": ["https://github.com/vornicx/Midas/blob/main/PRIVACY.md"],
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "python": ">=3.11"
+    }
+  },
+  "server": {
+    "type": "python",
+    "entry_point": "server/main.py",
+    "mcp_config": {
+      "command": "uvx",
+      "args": ["midas-memory-mcp"],
+      "env": {
+        "MIDAS_MCP_DB": "${user_config.db_path}",
+        "MIDAS_MCP_EMBEDDER": "${user_config.embedder}",
+        "MIDAS_MCP_MIN_IMPORTANCE": "${user_config.min_importance}",
+        "MIDAS_MCP_MAX_RECORDS": "${user_config.max_records}"
+      }
+    }
+  },
+  "user_config": {
+    "db_path": {
+      "type": "string",
+      "title": "Memory database file",
+      "description": "Path to the local SQLite file Midas persists memories in (created if missing). Leave the default to keep memory across restarts.",
+      "required": false,
+      "default": "${HOME}/.midas/memory.db"
+    },
+    "embedder": {
+      "type": "string",
+      "title": "Embedding backend",
+      "description": "'local' = offline semantic embeddings (BGE ONNX; one-time model download on first run). 'hashing' = pure-stdlib, zero download, lexical.",
+      "required": false,
+      "default": "local"
+    },
+    "min_importance": {
+      "type": "number",
+      "title": "Capture relevance floor (1-5)",
+      "description": "Auto-capture keeps only turns scoring at or above this. Higher = stricter (less is remembered). 2 keeps real facts/names/numbers and drops chit-chat.",
+      "required": false,
+      "default": 2,
+      "min": 1,
+      "max": 5
+    },
+    "max_records": {
+      "type": "number",
+      "title": "Max stored memories (0 = unbounded)",
+      "description": "When set above 0, the lowest-value memories are auto-forgotten (no LLM) once the store grows past this cap, so memory stays bounded.",
+      "required": false,
+      "default": 0,
+      "min": 0
+    }
+  },
+  "tools": [
+    { "name": "remember", "description": "Store a memory (fact, decision, preference, or conversation turn) for later recall." },
+    { "name": "capture", "description": "Offer a turn to memory; Midas decides (no LLM) whether it is durable enough to keep." },
+    { "name": "recall", "description": "Retrieve relevant memories with source-traceable score/provenance evidence." },
+    { "name": "inspect_memory", "description": "Inspect one stored memory by id without search, mutation, or embedding exposure." },
+    { "name": "build_context", "description": "Assemble a budgeted, prompt-ready context block from memory for a query." },
+    { "name": "memory_policy", "description": "Return the exact MCP-injected memory policy text and guard parameters." },
+    { "name": "check_memory_use", "description": "Decide whether recalled memory may justify a planning, answer, external, or destructive use." },
+    { "name": "forget", "description": "Delete a single memory by id." },
+    { "name": "forget_all", "description": "Clear all stored memories (fresh start)." },
+    { "name": "maintain", "description": "Run a no-LLM retention pass (dedup / bound / prune) and return the deletion audit." },
+    { "name": "stats", "description": "Memory stats: total count, breakdown by kind, and temporal-tier distribution." }
+  ],
+  "tools_generated": false,
+  "prompts": [
+    {
+      "name": "memory_session",
+      "description": "Switch Claude into Midas auto-memory mode for a session.",
+      "arguments": ["goal"],
+      "text": "Start a Midas memory session for: ${arguments.goal}"
+    }
+  ],
+  "prompts_generated": false
+}

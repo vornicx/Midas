@@ -23,14 +23,20 @@ pip install midas-memory-mcp
 claude mcp add midas -s user -- midas-memory-mcp
 ```
 
-On connect, Midas injects a short memory policy into the agent and starts remembering on its own —
-it scores importance locally (no LLM), keeps what matters, and drops trivia and duplicates.
+On connect, Midas injects a short memory policy into the agent and starts remembering on its own:
+recall first, capture durable memory with provenance (`planning`, `action`, `observation`,
+`user_confirmation`), and call `check_memory_use` before relying on memory for external/destructive
+actions. Those actions require `user_confirmation`; otherwise the agent must ask the user to confirm.
+Midas scores importance locally (no LLM), keeps what matters, revises typed stale beliefs, and drops
+trivia and duplicates.
 
 Optional environment variables: `MIDAS_MCP_DB` (SQLite path to persist across restarts),
-`MIDAS_MCP_MAX_RECORDS`, `MIDAS_MCP_MIN_IMPORTANCE`, `MIDAS_MCP_EMBEDDER`.
+`MIDAS_MCP_MAX_RECORDS`, `MIDAS_MCP_MIN_IMPORTANCE`, `MIDAS_MCP_EMBEDDER`,
+`MIDAS_MCP_SUPERSEDE`, `MIDAS_MCP_SUPERSEDE_CONVO`, `MIDAS_MCP_NLI`, `MIDAS_MCP_ACTOR`.
 
-For Cursor / Codex / Windsurf / Claude Desktop config, the Python SDK, and reproducible benchmarks,
-see the main repo: **https://github.com/vornicx/Midas**
+For Cursor / Codex / Windsurf / Claude Desktop config, the Python SDK, reproducible benchmarks, and the
+full eval methodology (anti-cheating checklist, failure cases, verbatim policy text), see the main repo:
+**https://github.com/vornicx/Midas** — especially [`docs/methodology.md`](https://github.com/vornicx/Midas/blob/main/docs/methodology.md).
 
 > Tip: if you installed the SDK directly (`uv tool install "midas-memory[mcp,local]"`), the same
 > server is also available as the shorter `midas-mcp` command.

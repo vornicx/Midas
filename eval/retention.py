@@ -12,15 +12,14 @@ per the project's eval-first rule), not "forgetting vs not" (which trivially los
   - random        : evict at random (the floor)
 
 Reported per policy: recall@k (gold supporting turns retrieved), ctx_current (gold ANSWER present in
-the assembled context), avg context tokens, and store size. On uniform-importance conversational data
-(LoCoMo/LongMemEval default importance=1) value-based forgetting reduces to recency and should match
-fifo and beat random; on data with real importance/durable kinds (multiday) the durable-tier
-protection is what separates it. Both are honest, measured outcomes.
+the assembled context), avg context tokens, and store size. Add `--trace` for a per-question forgetting
+audit (which gold turns survived eviction, value-vs-fifo wins and failures) — publishable markdown.
 
     uv run --no-sync python -m eval.retention --dataset locomo --max-convs 1 --local
     uv run --no-sync python -m eval.retention --dataset multiday --local --no-rerank
+    uv run --no-sync python -m eval.retention --dataset multiday --trace
     uv run --no-sync python -m eval.retention --dataset longmemeval --variant s --local --no-rerank \
-        --local-max-text-chars 600 --max-questions 15
+        --local-max-text-chars 600 --max-questions 40
 """
 from __future__ import annotations
 
@@ -79,7 +78,7 @@ def _measure(adapter: MidasAdapter, sample, *, budget: int) -> dict[str, float]:
 
 
 def _run_policy(make_adapter, sample, *, budget: int, policy: str, frac: float, seed: int,
-                rank_only: bool = False) -> dict:
+                rank_only: bool = False, trace_sink: list | None = None) -> dict:
     adapter = make_adapter()
     adapter.reset()
     adapter.ingest(sample.events)
@@ -100,18 +99,96 @@ def _run_policy(make_adapter, sample, *, budget: int, policy: str, frac: float, 
     elif policy == "random":
         _evict_random(adapter._mem.store, target, seed)
     # "none": no eviction
+    if trace_sink is not None:
+        trace_sink.extend(_trace_rows(adapter, sample, policy=policy, frac=frac, budget=budget))
     return _measure(adapter, sample, budget=budget)
 
 
-def _run_policy_multi(make_adapter, samples, **kw) -> dict:
+def _trace_rows(adapter: MidasAdapter, sample, *, policy: str, frac: float, budget: int) -> list[dict]:
+    """Per-question forgetting audit AFTER eviction: did the gold supporting turns survive, and did
+    retrieval still find them? These are the publishable success/failure examples — 'selective
+    forgetting kept the fact fifo dropped' or 'forgetting evicted the gold' — not just an average."""
+    survived = {
+        r.metadata.get("event_id") for r in adapter._mem.store.all() if r.metadata.get("event_id")
+    }
+    rows: list[dict] = []
+    for q in sample.questions:
+        if not q.gold_event_ids:
+            continue
+        result = adapter.query(q.text, token_budget=budget)
+        evicted = [g for g in q.gold_event_ids if g not in survived]
+        recall = recall_at_k(result, q)
+        rows.append(
+            {
+                "policy": policy,
+                "keep": frac,
+                "sample": sample.id,
+                "qid": q.id,
+                "gold": list(q.gold_event_ids),
+                "evicted_gold": evicted,
+                "recall": recall,
+                "verdict": "GOLD EVICTED" if evicted else ("ok" if (recall or 0) > 0 else "kept but not retrieved"),
+            }
+        )
+    return rows
+
+
+def _run_policy_multi(make_adapter, samples, *, trace_sink: list | None = None, **kw) -> dict:
     """Average a policy's metrics over many samples (e.g. each LongMemEval instance = one buried-fact
     question) — so recall@k under forgetting is measured over N questions, not a single noisy one."""
-    runs = [_run_policy(make_adapter, s, **kw) for s in samples]
+    runs = [_run_policy(make_adapter, s, trace_sink=trace_sink, **kw) for s in samples]
     out = {}
     for key in runs[0]:
         vals = [r[key] for r in runs if r[key] == r[key]]  # drop NaN (questions without gold)
         out[key] = sum(vals) / len(vals) if vals else float("nan")
     return out
+
+
+def _print_trace(trace_rows: list[dict], samples) -> None:
+    """Markdown forgetting trace: the per-question audit table plus the value-vs-fifo diff —
+    concrete examples of where selective forgetting worked and where it failed."""
+    event_content = {e.id: e.content for s in samples for e in s.events}
+
+    print("\nFORGETTING TRACE (per question, after eviction)")
+    print("\n| policy | keep | question | gold | evicted gold | recall@k | verdict |")
+    print("| --- | --- | --- | --- | --- | --- | --- |")
+    for row in trace_rows:
+        gold = ", ".join(row["gold"][:4])
+        evicted = ", ".join(row["evicted_gold"][:4]) or "-"
+        recall = "n/a" if row["recall"] is None else f"{row['recall']:.2f}"
+        print(
+            f"| {row['policy']} | {int(row['keep'] * 100)}% | {row['qid']} | {gold} | "
+            f"{evicted} | {recall} | {row['verdict']} |"
+        )
+
+    # The value-vs-fifo diff at each retained fraction: where did the importance×recency rank
+    # keep a fact that age-based eviction dropped (win), and where did value evict gold (failure)?
+    by_key: dict[tuple, dict[str, dict]] = {}
+    for row in trace_rows:
+        by_key.setdefault((row["keep"], row["sample"], row["qid"]), {})[row["policy"]] = row
+    wins, losses = [], []
+    for (keep, _sample_id, qid), policies in sorted(by_key.items()):
+        value, fifo = policies.get("value"), policies.get("fifo")
+        if not value or not fifo:
+            continue
+        if not value["evicted_gold"] and fifo["evicted_gold"]:
+            wins.append((keep, qid, fifo["evicted_gold"]))
+        if value["evicted_gold"]:
+            losses.append((keep, qid, value["evicted_gold"]))
+    if wins:
+        print("\nWhere selective forgetting WORKED (value kept the gold turn fifo evicted):")
+        for keep, qid, evicted in wins:
+            for gid in evicted[:2]:
+                snippet = " ".join(event_content.get(gid, "?").split())[:110]
+                print(f"  - keep {int(keep * 100)}%, {qid}: fifo dropped {gid} ('{snippet}')")
+    if losses:
+        print("\nWhere selective forgetting FAILED (value itself evicted a gold turn):")
+        for keep, qid, evicted in losses:
+            for gid in evicted[:2]:
+                snippet = " ".join(event_content.get(gid, "?").split())[:110]
+                print(f"  - keep {int(keep * 100)}%, {qid}: value dropped {gid} ('{snippet}')")
+    if not wins and not losses:
+        print("\nNo value-vs-fifo divergence on gold turns at these fractions (both kept the gold).")
 
 
 def main() -> None:
@@ -133,6 +210,7 @@ def main() -> None:
     parser.add_argument("--reinforce", action="store_true", help="reinforcement: a restated/near-duplicate turn boosts the matched memory's importance + recency (repetition ⇒ salience)")
     parser.add_argument("--value-rank-only", action="store_true", help="evict purely by value-rank to the exact target (protections off) — the apples-to-apples ranking test vs fifo")
     parser.add_argument("--consolidate", type=float, default=0.0, help="instead of the eviction sweep, measure extractive consolidation (dedup) at this cosine threshold, e.g. 0.95")
+    parser.add_argument("--trace", action="store_true", help="per-question forgetting audit: which gold turns survived/were evicted under each policy, plus value-vs-fifo win/failure examples (markdown)")
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
@@ -201,14 +279,19 @@ def main() -> None:
     print("\n| policy | keep | " + " | ".join(cols) + " |")
     print("| --- | --- | " + " | ".join("---" for _ in cols) + " |")
 
+    trace_rows: list[dict] | None = [] if args.trace else None
     base = _run_policy_multi(make_adapter, samples, budget=budget, policy="none", frac=1.0, seed=args.seed)
     print(f"| none | 100% | " + " | ".join(_fmt(base[c]) for c in cols) + " |")
     for frac in fractions:
         for policy in ("value", "fifo", "random"):
             m = _run_policy_multi(make_adapter, samples, budget=budget, policy=policy, frac=frac,
-                                  seed=args.seed, rank_only=args.value_rank_only)
+                                  seed=args.seed, rank_only=args.value_rank_only,
+                                  trace_sink=trace_rows)
             label = "value (Midas)" if policy == "value" else policy
             print(f"| {label} | {int(frac*100)}% | " + " | ".join(_fmt(m[c]) for c in cols) + " |")
+
+    if trace_rows is not None:
+        _print_trace(trace_rows, samples)
 
     print(
         "\nReading: recall@k & ctx_current higher=better; avg_tokens lower=better; store = records kept "

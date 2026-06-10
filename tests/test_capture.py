@@ -30,6 +30,23 @@ def test_capture_skips_near_duplicate() -> None:
     assert len(m.store.all()) == 1
 
 
+def test_duplicate_capture_can_upgrade_provenance() -> None:
+    m = Memory()
+    m.capture("Deploy target is staging.", kind="constraint", provenance="observation")
+    r = m.capture(
+        "Deploy target is staging.",
+        kind="constraint",
+        provenance="user_confirmation",
+        actor="user",
+    )
+
+    assert not r.stored and "provenance upgraded" in r.reason
+    assert len(m.store.all()) == 1
+    rec = m.store.all()[0]
+    assert rec.provenance == "user_confirmation"
+    assert m.guard_reliance("deploy target", intended_use="external_action").allowed
+
+
 def test_capture_respects_accept_kinds() -> None:
     m = Memory(policy=MemoryPolicy(accept_kinds=("fact",)))
     r = m.capture("The budget ceiling is 2000 euros per month.", kind="chat")  # chat not accepted

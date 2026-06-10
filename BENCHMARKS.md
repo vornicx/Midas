@@ -3,7 +3,8 @@
 Honest, reproducible benchmarks for the Midas agentic-memory SDK. Every number here comes from a
 real run with the command to reproduce it. We deliberately **lead with reader-independent metrics**
 (retrieval + cost) and treat end-to-end answer correctness as a secondary, noisy signal — see
-*Methodology* for why that is the honest choice, not a convenient one.
+[`docs/methodology.md`](docs/methodology.md) for why that is the honest choice, not a convenient one,
+plus the verbatim MCP policy, failure-case traces, and how conflicting memories are handled.
 
 ## TL;DR
 
@@ -15,7 +16,17 @@ reader LLM stacked on top):
 - **Cost** — Midas does **0 LLM calls, $0 API spend, and 0 data egress at ingest** (local embeddings
   only), versus LLM-at-ingest memory systems that call an LLM per session to extract facts.
 
-## 1. Retrieval quality — `recall@k` (deterministic)
+## 1. Retrieval quality — `recall@k` + `precision@k` (deterministic)
+
+| dataset | loader | what it stress-tests |
+|---|---|---|
+| `synthetic-v0` | `eval.datasets.synthetic` | needles in chatter; offline, zero setup |
+| `locomo10` | `eval.datasets.locomo` | real long conversations (LoCoMo) |
+| `longmemeval-{s,m,oracle}` | `eval.datasets.longmemeval` | buried evidence, multi-session, temporal (ICLR 2025); use [cleaned HF release](https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned) → `data/longmemeval_s.json` |
+| `multiday-v1-adversarial` | `eval.datasets.multiday` | evolving facts, stale answers, unanswerable Qs |
+| `conflicts-v1` | `eval.datasets.conflicts` | near-duplicates, temporal conflicts, entity-confusable pairs |
+
+All loaders share one schema (`eval/schema.py`); the same runner, multiday, and retention harnesses apply.
 
 Fraction of gold supporting turns retrieved into the context. Fully deterministic (local embeddings,
 no LLM), so it reproduces exactly.
@@ -33,6 +44,36 @@ Midas finds ~9 in 10 — exactly the multi-session setting where retrieval quali
 answer is even *possible*. (`min_relevance` parsimony is a separate cost/quality knob; the numbers
 above are pure retrieval, no pruning.)
 
+The harness also reports **`precision@k`**: the fraction of retrieved source turns that are actually
+gold supporting evidence. This is the false-positive stress metric for agent loops: a memory layer can
+hit the buried fact and still hurt the agent if it packs tempting distractors beside it. Use
+`--trace-questions --trace-snippets` to publish concrete gold-vs-retrieved examples, including failure
+cases.
+
+### Dumb-reader ablation — proving the numbers aren't reader-inflated
+
+A standing critique of memory benchmarks is that a capable reader does "heroic recovery", making weak
+retrieval look strong. The `--dumb-reader` flag adds a **deterministic extractive reader** (no LLM):
+it picks the single retrieved turn with the most content-word overlap with the question and scores it
+against gold (verbatim hit = 1.0, else token F1). It cannot reason, combine turns, or paraphrase — so
+`answer_dumb` can only move with retrieval quality:
+
+| dataset (offline, hashing embedder) | adapter | recall@k | answer_dumb |
+|---|---|---:|---:|
+| synthetic-v0 | baseline-raw | 0.50 | 0.38 |
+| synthetic-v0 | **Midas** | **1.00** | **1.00** |
+| conflicts-v1 | baseline-raw | 0.78 | 0.49 |
+| conflicts-v1 | **Midas** | **1.00** | 0.82 |
+
+`answer_dumb` tracks `recall@k` for both systems — the gap between systems is the memory layer, not
+the reader. See [docs/methodology.md](docs/methodology.md) for the per-question failure cases this
+ablation exposes (the dumb reader quoting a stale repetition is the best argument for supersession).
+
+```bash
+python -m eval.runner --dataset synthetic --dumb-reader
+python -m eval.runner --dataset conflicts --dumb-reader --midas-supersede
+```
+
 **Time-aware retrieval (LLM-free).** Memories carry real **event time** (parsed from the dataset's
 session timestamps), so recency and chronological context reflect *when things happened*, not load
 order — the bitemporal signal long-horizon memory needs. Turning it on lifts **temporal recall@k
@@ -42,9 +83,11 @@ ingest/query edge. (fact dips 0.92 → 0.89, within n=13 noise and with no effec
 
 ```bash
 # reproduce (deterministic; downloads LongMemEval-s on first run)
+# Dataset: https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned
+# Place longmemeval_s_cleaned.json at data/longmemeval_s.json (or use --longmemeval-path)
 python -m eval.runner --dataset longmemeval --variant s --local \
   --local-max-text-chars 600 --local-batch-size 16 --midas-no-rerank \
-  --max-questions 15 --limit 20 --seed 0
+  --max-questions 40 --limit 20 --seed 0
 ```
 
 ## 2. Cost / latency — the no-LLM edge (memory layer only)
@@ -159,6 +202,46 @@ python -m eval.retention --dataset longmemeval --variant s --local --no-rerank \
   --structural-importance --value-rank-only --max-questions 40 --fractions 0.5,0.25
 ```
 
+**Per-question forgetting traces (`--trace`).** Averages hide which facts died. The `--trace` flag
+prints a per-question audit after eviction — which gold turns survived, which were evicted, and the
+value-vs-fifo diff — yielding publishable success *and failure* examples. From a real run (multiday,
+offline): at keep 25–75% fifo evicts old-but-durable facts that value keeps (`'The primary database
+is PostgreSQL.'`); and in the pure rank-only configuration (protections off) value itself evicts the
+**buried low-importance updates** (`"we'll actually go live the first week of October instead"`) —
+the measured reason the shipping config protects the durable tier. Full traces in
+[docs/methodology.md](docs/methodology.md).
+
+```bash
+python -m eval.retention --dataset multiday --trace                     # shipping behaviour
+python -m eval.retention --dataset multiday --trace --value-rank-only   # exposes the failure mode
+```
+
+## 5b. Adversarial near-duplicates & temporal conflicts — `conflicts-v1`
+
+Local embedding memory often looks clean until the corpus contains *"same fact, different date"* or a
+repeated plan with one constraint changed. `conflicts-v1` encodes those traps deliberately: the stale
+value is repeated 2–3× with near-identical prominent phrasing while the update appears once, buried;
+a multi-clause deploy plan is restated verbatim except one number; and entity-confusable pairs
+(Apollo/PostgreSQL vs Artemis/MySQL) where **both facts are true and both are asked** — wrongly
+superseding one with the other fails a question. Deterministic (no LLM, `--context-only`):
+
+| adapter | ctx_current | ctx_stale | ctx_contradict | avg_tokens |
+|---|---:|---:|---:|---:|
+| Midas (supersede=on) | 1.00 | **0.86** | **0.86** | **94** |
+| Midas (supersede=off) | 1.00 | 1.00 | 1.00 | 113 |
+
+With belief revision off, every updated fact drags its stale twin into context (the adversarial
+construction works). Supersession retires stale copies (0.86) and shrinks context **without losing a
+single current value and with zero wrongful entity supersessions** (all four confusable questions
+keep recall@k 1.00) — because revision is gated on entity overlap + ambiguity margin, not cosine
+alone. The residual 0.86 is the honest gap. `ctx_stale`/`ctx_contradict` also surface in the main
+runner leaderboard for any dataset annotating outdated values.
+
+```bash
+python -m eval.multiday --dataset conflicts --context-only --ab-supersede --midas-only
+python -m eval.runner --dataset conflicts --dumb-reader --midas-supersede
+```
+
 ## 6. Correctness with a fixed strong reader (secondary)
 
 `recall@k` measures the memory layer directly; *answer correctness* additionally depends on the reader
@@ -229,7 +312,9 @@ python -m eval.runner --dataset longmemeval --variant s --local \
 ## Methodology — why reader-independent metrics
 
 End-to-end "answer correctness" on these benchmarks is **dominated by the reader LLM, not the memory
-layer**:
+layer** (full write-up, anti-cheating checklist, dumb-reader ablation, conflicts-v1 stress tests,
+forgetting traces, supersession mechanics, and verbatim MCP policy text:
+[`docs/methodology.md`](docs/methodology.md)):
 
 - Holding the reader fixed, a memory layer's lift is real; but swapping in a bigger reader moves the
   *headline* far more than the memory does. (Public SOTA on LongMemEval reports ~39% → ~83% from the
@@ -240,9 +325,9 @@ layer**:
   reader is too weak to *use* good context — so correctness still does not cleanly isolate memory
   quality.
 
-Therefore: **`recall@k` (deterministic, reader-independent) and ingest cost (structural) are our
-primary metrics.** We report correctness only with a fixed reader and wide error bars, and never as a
-headline.
+Therefore: **`recall@k`, `precision@k` (deterministic, reader-independent) and ingest cost
+(structural) are our primary metrics.** We report correctness only with a fixed reader and wide error
+bars, and never as a headline.
 
 ### Honest caveats
 - **Sample** is n=40 on LongMemEval-`s` and n=50 across 5 LoCoMo conversations. `recall@k` is
@@ -257,4 +342,23 @@ headline.
   (0.88 → 0.88): it reorders the records that already fit the budget (which can help the *reader*) but
   does not change *which* evidence fits. So it is not on the retrieval-quality path here.
 
-*All commands run from the repo root. `recall@k` requires no API key; `--judge*` flags do.*
+### Failure-case traces and policy text
+
+For useful external review, publish the trace table, not just aggregate scores:
+
+```bash
+python -m eval.runner --dataset longmemeval --variant s --local --midas-no-rerank \
+  --trace-questions --trace-snippets --max-questions 40
+```
+
+The trace shows `gold`, `retrieved`, `recall@k`, `precision@k`, and snippets for each question, so
+selective-forgetting wins and failures are inspectable instead of hidden behind an average. The exact
+MCP-injected memory policy is also exposed at runtime via the `memory_policy` tool; it includes the
+provenance labels and the Guard rule that external/destructive actions require `user_confirmation`.
+
+**[docs/methodology.md](docs/methodology.md)** collects all of this in one place: what the pipeline
+does *not* do (no query rewriting, no LLM at ingest, no gold leakage, seeded sampling), the
+dumb-reader ablation, the conflicts-v1 results, how conflicting memories are handled (supersession
+chains + gating), real failure cases with traces, and the **verbatim MCP-injected policy text**.
+
+*All commands run from the repo root. `recall@k` / `precision@k` require no API key; `--judge*` flags do.*

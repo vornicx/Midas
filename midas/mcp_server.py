@@ -16,15 +16,20 @@ Config (env):
                              (no LLM) so memory stays bounded out of the box (default: unbounded)
     MIDAS_MCP_MIN_IMPORTANCE = relevance floor for `capture` (1-5); turns scoring below it are skipped
                              (default: 2 — keeps anything with a real fact/name/number, drops chit-chat)
+    MIDAS_MCP_ACTOR        = actor id stamped on MCP memories (default: midas-mcp)
+    MIDAS_MCP_SUPERSEDE    = 1/0 typed belief revision for stale facts (default: 1)
+    MIDAS_MCP_SUPERSEDE_CONVO = 1 enables strict-cue chat revision (default: 0)
+    MIDAS_MCP_NLI          = 1 gates revision with the local NLI model (default: 0)
 """
 from __future__ import annotations
 
 import os
 import sys
+from dataclasses import asdict
 
 from midas import (
-    AGENT_MEMORY_INSTRUCTIONS, HashingEmbedder, Memory, MemoryPolicy, StructuralImportance,
-    __version__, policy_summary,
+    AGENT_MEMORY_INSTRUCTIONS, MEMORY_PROVENANCE, MEMORY_USES, HashingEmbedder, Memory,
+    MemoryPolicy, StructuralImportance, __version__, policy_summary,
 )
 
 # Auto-retention cap: when set, the store is kept at or below this many records by no-LLM selective
@@ -32,6 +37,10 @@ from midas import (
 _MAX_RECORDS = int(os.getenv("MIDAS_MCP_MAX_RECORDS", "0")) or None
 # The relevance parameters Midas imposes on `capture` (the no-LLM "what's worth keeping" gate).
 _POLICY = MemoryPolicy(min_importance=int(os.getenv("MIDAS_MCP_MIN_IMPORTANCE", "2")))
+_ACTOR = os.getenv("MIDAS_MCP_ACTOR", "midas-mcp")
+_SUPERSEDE = os.getenv("MIDAS_MCP_SUPERSEDE", "1") != "0"
+_SUPERSEDE_CONVO = os.getenv("MIDAS_MCP_SUPERSEDE_CONVO", "0") == "1"
+_USE_NLI = os.getenv("MIDAS_MCP_NLI", "0") == "1"
 
 
 def build_memory() -> Memory:
@@ -55,14 +64,23 @@ def build_memory() -> Memory:
 
         store = SQLiteStore(db)
         print(f"[midas-mcp] persisting memory to {db}", file=sys.stderr)
+    nli = None
+    if _USE_NLI:
+        from midas.nli import LocalNLI
+
+        nli = LocalNLI()
     return Memory(
         embedder=embedder, reranker=reranker, store=store,
         importance_scorer=StructuralImportance(), policy=_POLICY,  # measured-better fact-vs-question
+        supersede=_SUPERSEDE or _SUPERSEDE_CONVO,
+        supersede_conversational=_SUPERSEDE_CONVO,
+        nli=nli,
     )
 
 
 try:
     from mcp.server.fastmcp import FastMCP
+    from mcp.types import ToolAnnotations
 except ImportError as exc:  # pragma: no cover
     raise SystemExit('Midas MCP server needs the MCP SDK: uv pip install -e ".[mcp]"') from exc
 
@@ -74,8 +92,18 @@ server = FastMCP("midas-memory", instructions=AGENT_MEMORY_INSTRUCTIONS)
 server._mcp_server.version = __version__
 
 
-@server.tool()
-def remember(content: str, kind: str = "note", importance: int = 0, session: str = "default") -> str:
+@server.tool(
+    title="Remember",
+    annotations=ToolAnnotations(title="Remember", readOnlyHint=False, destructiveHint=False),
+)
+def remember(
+    content: str,
+    kind: str = "note",
+    importance: int = 0,
+    session: str = "default",
+    provenance: str = "observation",
+    actor: str = "",
+) -> str:
     """Store a memory for later recall.
 
     content: text to remember (a fact, decision, preference, or conversation turn).
@@ -83,16 +111,36 @@ def remember(content: str, kind: str = "note", importance: int = 0, session: str
     importance: 1-5 (higher is weighted up in recall and protected from forgetting). 0 = auto-derive
         from content (no LLM) — concrete facts score higher than chit-chat.
     session: conversation/thread id used to group related memories.
+    provenance: planning | action | observation | user_confirmation. Use user_confirmation only when
+        the user explicitly confirmed the content; external actions may rely only on that provenance.
+    actor: agent/process that produced the memory (default: MIDAS_MCP_ACTOR).
     """
     imp = int(importance) or None  # 0 -> derive importance from content
-    rec = _mem.remember(content, kind=kind, importance=imp, metadata={"session": session})
+    rec = _mem.remember(
+        content,
+        kind=kind,
+        importance=imp,
+        source=f"mcp:{session}",
+        provenance=provenance,
+        actor=actor or _ACTOR,
+        metadata={"session": session},
+    )
     if _MAX_RECORDS and len(_mem.store.all()) > _MAX_RECORDS:
         _mem.forget_decayed(max_records=_MAX_RECORDS)  # keep memory bounded (no LLM)
     return f"remembered ({rec.id})"
 
 
-@server.tool()
-def capture(content: str, kind: str = "chat", session: str = "default") -> dict:
+@server.tool(
+    title="Capture turn",
+    annotations=ToolAnnotations(title="Capture turn", readOnlyHint=False, destructiveHint=False),
+)
+def capture(
+    content: str,
+    kind: str = "chat",
+    session: str = "default",
+    provenance: str = "observation",
+    actor: str = "",
+) -> dict:
     """Offer a turn to memory; Midas decides whether to keep it (no LLM).
 
     Forward anything that might be durable — a fact, decision, preference, constraint, or correction.
@@ -100,7 +148,14 @@ def capture(content: str, kind: str = "chat", session: str = "default") -> dict:
     duplicate, so you can capture freely without polluting memory. Returns whether it was stored and
     why (so you learn the bar). This is the workhorse for hands-off, automatic remembering.
     """
-    result = _mem.capture(content, kind=kind, metadata={"session": session})
+    result = _mem.capture(
+        content,
+        kind=kind,
+        source=f"mcp:{session}",
+        provenance=provenance,
+        actor=actor or _ACTOR,
+        metadata={"session": session},
+    )
     if result.stored and _MAX_RECORDS and len(_mem.store.all()) > _MAX_RECORDS:
         _mem.forget_decayed(max_records=_MAX_RECORDS)
     return {
@@ -108,28 +163,113 @@ def capture(content: str, kind: str = "chat", session: str = "default") -> dict:
         "reason": result.reason,
         "importance": result.importance,
         "id": result.record.id if result.record else None,
+        "provenance": result.record.provenance if result.record else None,
+        "actor": result.record.actor if result.record else None,
     }
 
 
-@server.tool()
-def recall(query: str, limit: int = 5) -> list[dict]:
-    """Retrieve the most relevant memories for a query.
+def _round_score(value: float) -> float:
+    return round(float(value), 3)
 
-    Returns source-traceable hits (id, score, kind, original content) — no LLM rewriting, so each
-    result is auditable back to the exact stored text.
+
+def _serialize_record(record) -> dict:
+    """Human-auditable memory evidence. Deliberately omits the embedding."""
+    return {
+        "id": record.id,
+        "kind": record.kind,
+        "importance": record.importance,
+        "provenance": record.provenance,
+        "actor": record.actor,
+        "source": record.source,
+        "metadata": record.metadata,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+        "superseded_by": record.superseded_by,
+        "content": record.content,
+    }
+
+
+def _serialize_recall_hit(hit, *, explain: bool = True) -> dict:
+    """Structured, source-traceable recall evidence for MCP clients.
+
+    Keep this separate from `build_context`: agents need compact prompt context by default, while audit
+    workflows need the deterministic retrieval signals that explain why a record surfaced.
+    """
+    record = hit.record
+    item = {
+        **_serialize_record(record),
+        "score": _round_score(hit.score),
+    }
+    if explain:
+        item["explanation"] = {
+            "score": _round_score(hit.score),
+            "relevance": _round_score(hit.relevance),
+            "importance_norm": _round_score(hit.importance_norm),
+            "recency": _round_score(hit.recency),
+            "formula": "score = relevance + 0.3*importance_norm + 0.2*recency",
+        }
+        # Keep the raw components at the top level too so simple clients can filter/sort without digging.
+        item.update(
+            {
+                "relevance": _round_score(hit.relevance),
+                "importance_norm": _round_score(hit.importance_norm),
+                "recency": _round_score(hit.recency),
+            }
+        )
+    return item
+
+
+@server.tool(
+    title="Recall",
+    annotations=ToolAnnotations(title="Recall", readOnlyHint=True, openWorldHint=False),
+)
+def recall(
+    query: str,
+    limit: int = 5,
+    kind: str | None = None,
+    min_importance: int = 0,
+    min_relevance: float = 0.0,
+    hybrid: bool = False,
+    fusion: str = "rrf",
+    pool: int = 0,
+    explain: bool = True,
+) -> list[dict]:
+    """Retrieve relevant memories with deterministic, source-traceable evidence.
+
+    Returns exact stored text plus provenance/source/timestamps and, by default, score components
+    (relevance, importance_norm, recency). No LLM rewrites or rationales are generated.
     """
     return [
-        {
-            "id": h.record.id,
-            "score": round(float(h.score), 3),
-            "kind": h.record.kind,
-            "content": h.record.content,
-        }
-        for h in _mem.recall(query, limit=int(limit))
+        _serialize_recall_hit(h, explain=bool(explain))
+        for h in _mem.recall(
+            query,
+            limit=int(limit),
+            kind=kind or None,
+            min_importance=int(min_importance) or None,
+            min_relevance=float(min_relevance) or None,
+            hybrid=bool(hybrid),
+            fusion=fusion,
+            pool=int(pool) or None,
+        )
     ]
 
 
-@server.tool()
+@server.tool(
+    title="Inspect memory",
+    annotations=ToolAnnotations(title="Inspect memory", readOnlyHint=True, openWorldHint=False),
+)
+def inspect_memory(memory_id: str) -> dict:
+    """Inspect one stored memory by id without search, mutation, or embedding exposure."""
+    record = _mem.store.get(memory_id)
+    if record is None:
+        return {"found": False, "id": memory_id}
+    return {"found": True, **_serialize_record(record)}
+
+
+@server.tool(
+    title="Build context",
+    annotations=ToolAnnotations(title="Build context", readOnlyHint=True, openWorldHint=False),
+)
 def build_context(query: str, token_budget: int = 512) -> str:
     """Assemble a budgeted, prompt-ready context block for a query.
 
@@ -139,13 +279,57 @@ def build_context(query: str, token_budget: int = 512) -> str:
     return _mem.assemble(query, token_budget=int(token_budget), window=1, thread_key="session")
 
 
-@server.tool()
+@server.tool(
+    title="Memory policy",
+    annotations=ToolAnnotations(title="Memory policy", readOnlyHint=True, openWorldHint=False),
+)
+def memory_policy() -> dict:
+    """Return the exact MCP-injected memory policy text and guard parameters."""
+    return {
+        "instructions": AGENT_MEMORY_INSTRUCTIONS,
+        "relevance_policy": policy_summary(_POLICY),
+        "provenance": list(MEMORY_PROVENANCE),
+        "guard_uses": list(MEMORY_USES),
+    }
+
+
+@server.tool(
+    title="Check memory use",
+    annotations=ToolAnnotations(title="Check memory use", readOnlyHint=True, openWorldHint=False),
+)
+def check_memory_use(
+    query: str,
+    intended_use: str = "planning",
+    limit: int = 5,
+    acting_agent: str = "",
+) -> dict:
+    """Decide whether recalled memory may justify the intended use.
+
+    intended_use: planning | answer | external_action | destructive_action.
+    External/destructive actions require user_confirmation provenance; otherwise ask the user first.
+    """
+    decision = _mem.guard_reliance(
+        query,
+        intended_use=intended_use,
+        acting_agent=acting_agent or _ACTOR,
+        limit=int(limit),
+    )
+    return asdict(decision)
+
+
+@server.tool(
+    title="Forget memory",
+    annotations=ToolAnnotations(title="Forget memory", readOnlyHint=False, destructiveHint=True),
+)
 def forget(memory_id: str) -> str:
     """Delete a single memory by id (ids come from `recall`)."""
     return "forgotten" if _mem.store.delete(memory_id) else f"no memory with id {memory_id}"
 
 
-@server.tool()
+@server.tool(
+    title="Forget all",
+    annotations=ToolAnnotations(title="Forget all", readOnlyHint=False, destructiveHint=True),
+)
 def forget_all() -> str:
     """Clear all stored memories (fresh start)."""
     n = len(_mem.store.all())
@@ -153,7 +337,10 @@ def forget_all() -> str:
     return f"cleared {n} memories"
 
 
-@server.tool()
+@server.tool(
+    title="Maintain memory",
+    annotations=ToolAnnotations(title="Maintain memory", readOnlyHint=False, destructiveHint=True),
+)
 def maintain(consolidate_threshold: float = 0.0, max_records: int = 0, min_value: float = 0.0) -> dict:
     """Run a no-LLM memory-maintenance pass and return the deletion audit.
 
@@ -188,18 +375,29 @@ def maintain(consolidate_threshold: float = 0.0, max_records: int = 0, min_value
     }
 
 
-@server.tool()
+@server.tool(
+    title="Memory stats",
+    annotations=ToolAnnotations(title="Memory stats", readOnlyHint=True, openWorldHint=False),
+)
 def stats() -> dict:
     """Memory stats: total count, breakdown by kind, and the temporal-tier distribution.
 
     tiers: short (<= 1 day) / medium (<= 1 week) / long (older) — the short/medium/multi-day horizons.
     """
     by_kind: dict[str, int] = {}
+    by_provenance: dict[str, int] = {p: 0 for p in MEMORY_PROVENANCE}
     by_tier: dict[str, int] = {"short": 0, "medium": 0, "long": 0}
     for record in _mem.store.all():
         by_kind[record.kind] = by_kind.get(record.kind, 0) + 1
+        by_provenance[record.provenance] = by_provenance.get(record.provenance, 0) + 1
         by_tier[_mem.tier(record)] += 1
-    return {"total": sum(by_kind.values()), "by_kind": by_kind, "by_tier": by_tier}
+    return {
+        "total": sum(by_kind.values()),
+        "by_kind": by_kind,
+        "by_provenance": by_provenance,
+        "by_tier": by_tier,
+        "guard_uses": list(MEMORY_USES),
+    }
 
 
 @server.prompt()

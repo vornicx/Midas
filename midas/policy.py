@@ -55,7 +55,17 @@ AGENT_MEMORY_INSTRUCTIONS = (
     "   - the user's stated preferences  (kind=\"preference\")\n"
     "   - hard requirements / constraints  (kind=\"constraint\")\n"
     "   - corrections — when the user overrides or changes something said earlier\n"
+    "   Tag provenance on every `remember`/`capture` call:\n"
+    "   - provenance=\"planning\" for internal plans, hypotheses, or proposed next steps.\n"
+    "   - provenance=\"action\" for completed agent/tool actions and their observed result.\n"
+    "   - provenance=\"observation\" for passive observations from files, tools, logs, or retrieved data.\n"
+    "   - provenance=\"user_confirmation\" only when the user explicitly confirms the content.\n"
     "   Skip pure small talk and acknowledgements; Midas enforces the relevance floor regardless.\n\n"
+    "3) GUARD MEMORY BEFORE ACTION. Memory can guide planning, but it cannot by itself authorize "
+    "external or destructive actions. Before relying on recalled memory to act outside the chat, call "
+    "`check_memory_use` with intended_use=\"external_action\" or \"destructive_action\". If the decision "
+    "is not allowed, ask the user to confirm in the current turn. External/destructive actions may rely "
+    "only on user_confirmation provenance.\n\n"
     "Everything is stored verbatim with its source, so recall is auditable, and memory is bounded "
     "automatically (low-value, stale items are forgotten) — so capturing freely is safe and cheap."
 )
@@ -66,5 +76,6 @@ def policy_summary(policy: MemoryPolicy) -> str:
     return (
         f"keep items scoring importance >= {policy.min_importance}/5, "
         f"kinds {list(policy.accept_kinds)}, "
-        f"skip near-duplicates (cosine >= {policy.dedup_threshold})"
+        f"skip near-duplicates (cosine >= {policy.dedup_threshold}); "
+        "guard external/destructive actions to user_confirmation provenance"
     )

@@ -10,9 +10,12 @@ os.environ["MIDAS_MCP_EMBEDDER"] = "hashing"  # must be set before importing the
 from midas.mcp_server import (  # noqa: E402
     build_context,
     capture,
+    check_memory_use,
     forget,
     forget_all,
+    inspect_memory,
     maintain,
+    memory_policy,
     recall,
     remember,
     server,
@@ -28,9 +31,90 @@ def test_remember_recall_roundtrip():
 
     hits = recall("which database did we pick?", limit=2)
     assert isinstance(hits, list) and hits, "recall should return hits"
-    # source-traceable shape
-    assert all({"id", "score", "kind", "content"} <= set(h) for h in hits)
+    # source-traceable, auditable shape
+    required = {
+        "id",
+        "score",
+        "relevance",
+        "importance_norm",
+        "recency",
+        "explanation",
+        "kind",
+        "importance",
+        "provenance",
+        "actor",
+        "source",
+        "metadata",
+        "created_at",
+        "updated_at",
+        "superseded_by",
+        "content",
+    }
+    assert all(required <= set(h) for h in hits)
+    assert all("embedding" not in h for h in hits)
+    assert all(
+        {"score", "relevance", "importance_norm", "recency", "formula"} <= set(h["explanation"])
+        for h in hits
+    )
     assert any("PostgreSQL" in h["content"] for h in hits), "relevant memory should surface"
+
+
+def test_recall_supports_audit_filters_and_compact_mode():
+    forget_all()
+    remember("The primary database is PostgreSQL.", kind="constraint", importance=5)
+    remember("The team lunch is at noon.", kind="note", importance=1)
+
+    hits = recall("database", kind="constraint", min_importance=5, min_relevance=0.0, limit=5)
+    assert hits and all(h["kind"] == "constraint" for h in hits)
+    assert all(h["importance"] >= 5 for h in hits)
+
+    compact = recall("database", explain=False, limit=1)
+    assert compact and "explanation" not in compact[0]
+    assert "relevance" not in compact[0]
+    assert "score" in compact[0]
+
+
+def test_recall_accepts_hybrid_parameters():
+    forget_all()
+    remember("Redis backs the queue worker.", kind="fact", importance=4)
+    hits = recall("queue worker", hybrid=True, fusion="rrf", pool=5, limit=1)
+    assert hits and "Redis" in hits[0]["content"]
+    assert "explanation" in hits[0]
+
+
+def test_inspect_memory_by_id_is_read_only_and_auditable():
+    forget_all()
+    out = remember(
+        "Decision: deploy from the release branch.",
+        kind="constraint",
+        importance=5,
+        session="release",
+        provenance="user_confirmation",
+        actor="user",
+    )
+    rid = out.split("(", 1)[1].rstrip(")")
+
+    before = stats()
+    inspected = inspect_memory(rid)
+
+    assert inspected["found"] is True
+    assert inspected["id"] == rid
+    assert inspected["content"] == "Decision: deploy from the release branch."
+    assert inspected["kind"] == "constraint"
+    assert inspected["importance"] == 5
+    assert inspected["provenance"] == "user_confirmation"
+    assert inspected["actor"] == "user"
+    assert inspected["source"] == "mcp:release"
+    assert inspected["metadata"] == {"session": "release"}
+    assert inspected["superseded_by"] is None
+    assert "created_at" in inspected and "updated_at" in inspected
+    assert "embedding" not in inspected
+    assert stats() == before
+
+
+def test_inspect_memory_not_found():
+    forget_all()
+    assert inspect_memory("missing") == {"found": False, "id": "missing"}
 
 
 def test_build_context_returns_budgeted_prompt():
@@ -48,12 +132,19 @@ def test_forget_all_clears():
 
 def test_stats_and_forget_by_id():
     forget_all()
-    out = remember("Decision: use PostgreSQL.", kind="constraint", importance=5)
+    out = remember(
+        "Decision: use PostgreSQL.",
+        kind="constraint",
+        importance=5,
+        provenance="user_confirmation",
+        actor="user",
+    )
     rid = out.split("(", 1)[1].rstrip(")")  # "remembered (<id>)"
     remember("a chat turn", kind="chat")
 
     s = stats()
     assert s["total"] == 2 and s["by_kind"].get("constraint") == 1
+    assert s["by_provenance"]["user_confirmation"] == 1
     assert forget(rid) == "forgotten"
     assert stats()["total"] == 1
 
@@ -97,6 +188,32 @@ def test_capture_tool_gates_by_policy():
     assert stats()["total"] == 1  # only the fact was kept
 
 
+def test_guard_blocks_action_until_user_confirmation():
+    forget_all()
+    remember("Deploy target is staging.", kind="constraint", importance=5, provenance="observation")
+    blocked = check_memory_use("deploy target", intended_use="external_action")
+    assert blocked["allowed"] is False
+
+    forget_all()
+    remember(
+        "User confirmed deploy target is staging.",
+        kind="constraint",
+        importance=5,
+        provenance="user_confirmation",
+        actor="user",
+    )
+    allowed = check_memory_use("deploy target", intended_use="external_action")
+    assert allowed["allowed"] is True
+
+
+def test_memory_policy_exposes_injected_text_and_guard_options():
+    out = memory_policy()
+    assert "RECALL FIRST" in out["instructions"]
+    assert "user_confirmation" in out["provenance"]
+    assert "external_action" in out["guard_uses"]
+
+
 def test_server_injects_memory_instructions():
     # The injected prompt is how installing Midas makes an agent start remembering on its own.
     assert server.instructions and "capture" in server.instructions.lower()
+    assert "check_memory_use" in server.instructions

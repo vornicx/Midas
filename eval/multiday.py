@@ -1,18 +1,20 @@
 """Multi-day failure detector — the eval-first step for long-horizon memory.
 
 Single-conversation correctness misses the failures that define *multi-day* sessions. This
-detector runs a synthetic multi-session stream with EVOLVING facts (see `datasets.multiday`)
-and measures three things the design doc (docs/long-horizon-memory.md) calls out:
+detector runs a synthetic multi-session stream with EVOLVING facts and measures:
 
-  - current_acc    : answered with the UP-TO-DATE value          (higher = better)
-  - stale_rate     : answered with the OLD, superseded value      (LOWER = better)
-  - abstention_acc : abstained on unanswerable Qs vs confabulated  (higher = better)
+  - ctx_current / ctx_stale / ctx_contradict  — deterministic context diagnostics (--context-only)
+  - current_acc / stale_rate / abstention_acc — LLM-judged (needs key from .env)
+
+Datasets:
+  - multiday   — evolving facts, stale answers, unanswerable Qs (`datasets.multiday`)
+  - conflicts  — adversarial near-duplicates + temporal conflicts (`datasets.conflicts`)
 
     uv run --no-sync python -m eval.multiday --local
+    uv run --no-sync python -m eval.multiday --dataset conflicts --context-only --ab-supersede --midas-only
 
-Needs an LLM (key from .env): it answers from each adapter's context, then classifies the answer.
-This establishes the BASELINE for the 'Current' + 'Calibrated' work — it is the metric those
-mechanisms will be built against.
+Use `--context-only` for a fully offline, deterministic run (no judge). `--ab-supersede` runs Midas
+with belief revision on and off in the same table.
 """
 from __future__ import annotations
 
@@ -24,8 +26,9 @@ from .adapters.base import RetrievalResult
 from .adapters.baseline_raw import BaselineRawAdapter
 from .adapters.mem0_adapter import Mem0Adapter
 from .adapters.midas_adapter import MidasAdapter
-from .datasets import multiday
+from .datasets import conflicts, multiday
 from .llm import from_env, load_dotenv
+from .metrics import contains_answer as _contains, has_stale_conflict as _has_stale_conflict
 from .schema import Question
 
 _ANSWER_SYS = (
@@ -79,21 +82,6 @@ def _verdict(llm, question: Question, context: str) -> tuple[str, str]:
     if question.category == "unanswerable":
         return ("unanswerable", _classify_abstain(llm, predicted))
     return (question.category, _classify_value(llm, predicted, question.answer or "", question.stale_answer))
-
-
-def _contains(text: str, needle: str | None) -> bool:
-    return bool(needle) and needle.lower() in text.lower()
-
-
-def _has_stale_conflict(context: str, current: str | None, stale: str | None) -> bool:
-    if not stale:
-        return False
-    for line in context.splitlines():
-        has_stale = _contains(line, stale)
-        has_current = _contains(line, current)
-        if has_stale and not has_current:
-            return True
-    return False
 
 
 def context_quality(pairs: list[tuple[Question, RetrievalResult]]) -> dict[str, float]:
@@ -200,9 +188,11 @@ def collect_context_details(adapter, sample, *, token_budget: int) -> list[dict[
 def main() -> None:
     load_dotenv()
     parser = argparse.ArgumentParser(description="Midas multi-day failure detector")
+    parser.add_argument("--dataset", choices=["multiday", "conflicts"], default="multiday", help="multiday = evolving facts; conflicts = adversarial near-duplicates + temporal conflicts")
     parser.add_argument("--budget", type=int, default=256, help="token budget (tight, to create retrieval pressure)")
     parser.add_argument("--local", action="store_true", help="use local fastembed embeddings for Midas")
     parser.add_argument("--no-supersede", action="store_true", help="disable Midas belief-revision (for A/B)")
+    parser.add_argument("--ab-supersede", action="store_true", help="run Midas twice — supersede on AND off — in the same table (the belief-revision A/B)")
     parser.add_argument("--context-only", action="store_true", help="skip LLM judge; report deterministic context diagnostics")
     parser.add_argument("--midas-only", action="store_true", help="only run Midas; useful for fast R&D loops")
     parser.add_argument("--details", action="store_true", help="print per-question context diagnostics")
@@ -217,19 +207,27 @@ def main() -> None:
         embedder_label = f"local:{embedder.model_name}"
 
     llm = None if args.context_only else from_env()
-    dataset = multiday()
+    dataset = conflicts() if args.dataset == "conflicts" else multiday()
     sample = dataset.samples[0]
 
-    midas = MidasAdapter(
-        embedder=embedder,
-        limit=8,
-        min_relevance=0.15 if isinstance(embedder, type(None)) or isinstance(embedder, HashingEmbedder) else 0.65,
-        neighbor_min_importance=2,
-        supersede=not args.no_supersede,
-        supersede_same_kind_only=False,
-        exclude_superseded_from_context=True,
-    )
-    adapters = [midas] if args.midas_only else [BaselineRawAdapter(), midas, Mem0Adapter()]
+    def make_midas(supersede: bool, name: str = "midas") -> MidasAdapter:
+        adapter = MidasAdapter(
+            embedder=embedder,
+            limit=8,
+            min_relevance=0.15 if isinstance(embedder, type(None)) or isinstance(embedder, HashingEmbedder) else 0.65,
+            neighbor_min_importance=2,
+            supersede=supersede,
+            supersede_same_kind_only=False,
+            exclude_superseded_from_context=True,
+        )
+        adapter.name = name
+        return adapter
+
+    if args.ab_supersede:
+        midas_variants = [make_midas(True, "midas(supersede=on)"), make_midas(False, "midas(supersede=off)")]
+    else:
+        midas_variants = [make_midas(not args.no_supersede)]
+    adapters = midas_variants if args.midas_only else [BaselineRawAdapter(), *midas_variants, Mem0Adapter()]
     if args.context_only:
         results = {
             a.name: run_adapter_context_only(a, sample, token_budget=args.budget)
@@ -245,9 +243,10 @@ def main() -> None:
     if not args.context_only:
         cols += ["current_acc", "stale_rate", "abstention_acc"]
     print(f"\nDataset: {dataset.name}  |  events: {len(sample.events)}  |  questions: {len(sample.questions)}")
+    supersede_label = "A/B (on vs off)" if args.ab_supersede else ("off" if args.no_supersede else "on")
     print(
         f"Budget: {args.budget}  |  embedder: {embedder_label}  |  "
-        f"midas supersede: {'off' if args.no_supersede else 'on'}  |  "
+        f"midas supersede: {supersede_label}  |  "
         f"judge: {'skipped' if args.context_only else llm.model}\n"
     )
     print("| adapter | " + " | ".join(cols) + " |")

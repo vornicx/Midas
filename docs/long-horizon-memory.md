@@ -83,6 +83,12 @@ guessing. 2025–26 work (behavioral calibration, "Rewarding Doubt") shows rewar
 hallucination as much as better recall. **Almost no memory system does this** — differentiation
 lives here. *Produces: Calibrated.*
 
+**5b. Provenance guard — the action boundary.**
+Not every true memory is equally safe to act on. Midas tags memories as `planning`, `action`,
+`observation`, or `user_confirmation`; Guard checks the intended use. Any provenance can guide
+planning, but external/destructive actions require `user_confirmation` or fresh approval in the
+current turn. This separates memory recall from authorization. *Produces: Calibrated + Safe.*
+
 **6. Selective forgetting + temporal tiers — THE bounded-growth core.** *(built + measured 2026-06-04)*
 Memory cannot grow forever: an agent that runs for weeks accumulates a hoard that costs storage *and*
 dilutes retrieval (the budget sweep showed volume hurts answers). The fix is a **value** on every
@@ -307,7 +313,22 @@ honest.
   is healthy. The structural token-bound + this recall@k + the consolidation-yield are the measured wins
   (full multi-question is still CPU-bound on a modest box). Data: `data/longmemeval_m.json`;
   `eval/retention.py --dataset longmemeval --variant m`.
-- [ ] **Calibrated**: provenance in the assembled block + a low-confidence abstention signal.
+- [x] **Eval methodology published** ([`docs/methodology.md`](methodology.md), 2026-06-09): anti-cheating
+  checklist (no query rewriting, no LLM at ingest, seeded sampling, verbatim MCP policy), dumb-reader
+  ablation (`--dumb-reader` / `answer_dumb`), conflicts-v1 adversarial benchmark, retention forgetting
+  traces (`--trace`), and documented failure cases (stale repetition in context, value-rank eviction of
+  buried updates). Linked from README and BENCHMARKS.md.
+- [x] **Adversarial conflicts benchmark (`conflicts-v1`)** — same fact/different date, same plan/one
+  constraint changed, entity-confusable near-duplicates (Apollo/Artemis). Deterministic ctx_* metrics;
+  supersede on drops ctx_stale 1.00 → 0.86 without losing ctx_current. `eval.multiday --dataset
+  conflicts --context-only --ab-supersede`; `eval.runner --dataset conflicts --dumb-reader`.
+- [~] **Calibrated — provenance + Guard BUILT** (2026-06): four provenance tags on every memory
+  (`planning`, `action`, `observation`, `user_confirmation`); MCP `check_memory_use` / SDK
+  `guard_reliance` enforce that external/destructive actions require `user_confirmation`; mixed recall
+  bundles exclude invalid hits instead of vetoing the whole decision. Policy injected via MCP
+  `instructions` (verbatim in methodology.md). **Not yet measured end-to-end in eval** — compliance
+  is unit-tested (`tests/test_guard.py`) but not a leaderboard metric. Abstention / confabulation
+  from spurious neighbours remains the open frontier (see §7).
 
 ---
 

@@ -40,6 +40,8 @@ class SQLiteStore(InMemoryStore):
                 kind TEXT NOT NULL,
                 importance INTEGER NOT NULL,
                 source TEXT,
+                provenance TEXT NOT NULL DEFAULT 'observation',
+                actor TEXT,
                 metadata_json TEXT NOT NULL DEFAULT '{}',
                 created_at REAL NOT NULL,
                 updated_at REAL NOT NULL,
@@ -48,12 +50,22 @@ class SQLiteStore(InMemoryStore):
             )
             """
         )
+        self._migrate()
         self._conn.commit()
         self._load()
 
+    def _migrate(self) -> None:
+        columns = {row[1] for row in self._conn.execute("PRAGMA table_info(memories)").fetchall()}
+        if "provenance" not in columns:
+            self._conn.execute(
+                "ALTER TABLE memories ADD COLUMN provenance TEXT NOT NULL DEFAULT 'observation'"
+            )
+        if "actor" not in columns:
+            self._conn.execute("ALTER TABLE memories ADD COLUMN actor TEXT")
+
     def _load(self) -> None:
         cur = self._conn.execute(
-            "SELECT id, content, kind, importance, source, metadata_json, "
+            "SELECT id, content, kind, importance, source, provenance, actor, metadata_json, "
             "created_at, updated_at, superseded_by, embedding FROM memories"
         )
         for row in cur.fetchall():
@@ -61,7 +73,7 @@ class SQLiteStore(InMemoryStore):
 
     @staticmethod
     def _row_to_record(row) -> MemoryRecord:
-        (id_, content, kind, importance, source, metadata_json,
+        (id_, content, kind, importance, source, provenance, actor, metadata_json,
          created_at, updated_at, superseded_by, emb_blob) = row
         embedding = None
         if emb_blob is not None:
@@ -73,6 +85,7 @@ class SQLiteStore(InMemoryStore):
                 embedding = list(struct.unpack(f"<{len(emb_blob) // 4}f", emb_blob))
         return MemoryRecord(
             id=id_, content=content, kind=kind, importance=importance, source=source,
+            provenance=provenance or "observation", actor=actor,
             metadata=json.loads(metadata_json) if metadata_json else {},
             created_at=created_at, updated_at=updated_at,
             superseded_by=superseded_by, embedding=embedding,
@@ -87,18 +100,20 @@ class SQLiteStore(InMemoryStore):
         )
         self._conn.execute(
             """
-            INSERT INTO memories (id, content, kind, importance, source, metadata_json,
+            INSERT INTO memories (id, content, kind, importance, source, provenance, actor,
+                                  metadata_json,
                                   created_at, updated_at, superseded_by, embedding)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 content=excluded.content, kind=excluded.kind, importance=excluded.importance,
-                source=excluded.source, metadata_json=excluded.metadata_json,
+                source=excluded.source, provenance=excluded.provenance, actor=excluded.actor,
+                metadata_json=excluded.metadata_json,
                 created_at=excluded.created_at, updated_at=excluded.updated_at,
                 superseded_by=excluded.superseded_by, embedding=excluded.embedding
             """,
             (record.id, record.content, record.kind, record.importance, record.source,
-             json.dumps(record.metadata or {}), record.created_at, record.updated_at,
-             record.superseded_by, emb_blob),
+             record.provenance, record.actor, json.dumps(record.metadata or {}),
+             record.created_at, record.updated_at, record.superseded_by, emb_blob),
         )
         self._conn.commit()
 

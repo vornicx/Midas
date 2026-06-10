@@ -6,6 +6,22 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- **Eval methodology doc** (`docs/methodology.md`) — anti-cheating checklist (no query rewriting, no
+  LLM at ingest, seeded sampling), verbatim MCP-injected policy, how conflicting memories are handled
+  (supersession chains + gating), dumb-reader ablation, conflicts-v1 results, and publishable failure
+  traces for selective forgetting.
+- **Dumb-reader ablation** (`--dumb-reader` on `eval.runner`) — deterministic extractive reader (no
+  LLM); adds `answer_dumb` to the leaderboard. If it tracks `recall@k`, headline numbers are not
+  reader-inflated.
+- **`conflicts-v1` benchmark** — adversarial near-duplicates + temporal conflicts
+  (`eval/datasets.conflicts`, `eval.multiday --dataset conflicts`, `eval.runner --dataset conflicts`).
+  Reports `ctx_stale` / `ctx_contradict` on the main leaderboard when the dataset annotates outdated
+  values.
+- **Retention forgetting traces** (`eval.retention --trace`) — per-question audit after eviction
+  (gold survived vs evicted, value-vs-fifo wins and failures).
+- **Guard / provenance control-plane** — `Armorer` + `Guard` (`midas/guard.py`); four provenance tags;
+  MCP `check_memory_use`; mixed-recall bundles allow actions when at least one hit satisfies policy
+  (invalid hits reported in `blocked_ids`, not a whole-decision veto).
 - **MCP server distribution** — new `midas-memory-mcp` launcher on PyPI, listed on the **official
   MCP registry** (`io.github.vornicx/midas`); run install-free with `uvx midas-memory-mcp`. The MCP
   server now reports its own version in the handshake (previously the MCP SDK version).
@@ -90,12 +106,14 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
   prompt): recall-then-`capture`. `Memory.capture()` + `MemoryPolicy` impose the relevance parameters —
   it scores each turn's importance, enforces a floor (`MIDAS_MCP_MIN_IMPORTANCE`, default 2) and skips
   duplicates, and reports stored/skipped + why. The agent captures freely; Midas decides what's kept.
-- **Eval harness** (`eval/`, dev-only) — LoCoMo + LongMemEval loaders, deterministic `recall@k`,
-  per-adapter cost/latency instrumentation, and an optional LLM judge (hosted or local Ollama,
-  seed-pinned + serialized for reproducibility). **Reader and judge models are decoupled**
-  (`--reader-model` vs `--judge-model`) so correctness can be measured with a fixed judge while
-  sweeping readers — the apples-to-apples protocol published leaderboards use (e.g. gpt-4o judge).
+- **Eval harness** (`eval/`, dev-only) — LoCoMo + LongMemEval + **multiday** + **conflicts-v1**
+  loaders; deterministic `recall@k` / `precision@k`; optional **`answer_dumb`** (`--dumb-reader`);
+  optional **`ctx_stale` / `ctx_contradict`**; per-adapter cost/latency instrumentation; optional LLM
+  judge (hosted or local Ollama, seed-pinned + serialized for reproducibility). **Reader and judge
+  models are decoupled** (`--reader-model` vs `--judge-model`). Retention harness with **`--trace`**
+  forgetting audits. See [`docs/methodology.md`](docs/methodology.md).
 - **Artifacts** — `BENCHMARKS.md` (reader-independent results + reproduce commands),
+  `docs/methodology.md` (anti-cheating + failure cases + verbatim policy),
   `docs/research-notes.md` (measured findings), a coding-agent demo, PEP 561 typing (`py.typed`),
   and an MIT license.
 
@@ -114,5 +132,6 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
 - In-memory recall latency ~0.2 µs/record after matrix caching (~70× the naive Python scan).
 
 ### Notes
-- Reader-independent metrics (`recall@k`, cost) are primary; end-to-end answer correctness is
-  reader-dominated and reported as secondary/noisy — see `docs/research-notes.md`.
+- Reader-independent metrics (`recall@k`, `precision@k`, `answer_dumb`, cost) are primary; end-to-end
+  answer correctness is reader-dominated and reported as secondary/noisy — see
+  [`docs/methodology.md`](docs/methodology.md) and `docs/research-notes.md`.
