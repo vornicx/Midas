@@ -219,6 +219,12 @@ actions. Before relying on memory to act outside the chat, call `check_memory_us
 moments later — no restarts. Use `MIDAS_MCP_NAMESPACE` (or the per-call `namespace` argument every
 tool accepts) to keep projects, agents, or users scoped inside that shared DB.
 
+<p align="center">
+  <img src="docs/demo-multi-client.gif" alt="Two live processes share one Midas DB: a recall that finds nothing, a capture from a different process, then the same never-restarted session recalls it" width="820">
+</p>
+
+<p align="center"><sub>Real run, reconstructed chrome: the recall/capture lines are the verbatim output of two separate processes sharing one SQLite file — the second recall succeeds without restarting anything.</sub></p>
+
 **Tools it exposes:** `remember`, `capture` (policy-gated auto-store), `recall` (source-traceable),
 `build_context` (compact budgeted prompt block, dated and anchored to today so the agent can resolve
 relative time; use `recall`/`inspect_memory` for full provenance), `check_memory_use` (Guard provenance boundary), `memory_policy` (exact injected
