@@ -199,6 +199,7 @@ class Memory:
         supersede_same_kind_only: bool = True,
         supersede_conversational: bool = False,
         supersede_contradiction_threshold: float = 0.5,
+        min_relevance_ratio: float = 0.3,  # drop hits < ratio*top-hit relevance (0 disables)
         exclude_superseded_from_context: bool = True,
         abstention_threshold: float = 0.3,
         abstention_relevance_floor: float = 0.0,  # >0: abstain when top-hit relevance is below this
@@ -210,7 +211,7 @@ class Memory:
         reinforce: bool = False,  # a restated memory gains importance + recency (repetition ⇒ salience)
         reinforce_threshold: float = 0.85,
         reinforce_bump: int = 1,
-        include_provenance: bool = True,
+        include_provenance: bool = False,
     ) -> None:
         self.store = store if store is not None else InMemoryStore()
         self.embedder = embedder if embedder is not None else HashingEmbedder()
@@ -228,6 +229,12 @@ class Memory:
         self._supersede_same_kind_only = supersede_same_kind_only
         self._supersede_conversational = supersede_conversational
         self._supersede_contradiction_threshold = supersede_contradiction_threshold
+        # Scale-free parsimony default. Measured (deterministic, all offline datasets + LongMemEval):
+        # at 0.3 it never evicted a gold turn anywhere, while doubling precision@k and cutting ~30%
+        # of context tokens on spread-scale embedders; 0.4+ starts evicting buried updates (multiday
+        # recall 1.00 -> 0.80). On bge's compressed cosine scale 0.3 is a no-op — it only prunes
+        # what is *far* below the query's own best hit.
+        self._min_relevance_ratio = max(0.0, min_relevance_ratio or 0.0)
         self._nli = nli
         self._importance_scorer = importance_scorer
         self._policy = policy or DEFAULT_POLICY
@@ -477,6 +484,7 @@ class Memory:
         kind: MemoryKind | None = None,
         min_importance: int | None = None,
         min_relevance: float | None = None,
+        min_relevance_ratio: float | None = None,
         pool: int | None = None,
         hybrid: bool = False,
         fusion: str = "rrf",
@@ -527,10 +535,19 @@ class Memory:
         else:
             relevances = [max(0.0, cos) for cos, _ in candidates]
 
+        # Relative parsimony floor: drop hits far below the query's own best hit. Unlike the
+        # absolute `min_relevance` (whose useful value depends on the embedder's cosine scale),
+        # the ratio is scale-free, so one default transfers across embedders and queries.
+        # None falls back to the instance default (0.3, measured-safe); pass 0 to disable.
+        ratio = self._min_relevance_ratio if min_relevance_ratio is None else min_relevance_ratio
+        ratio_floor = ratio * max(relevances) if ratio and relevances else None
+
         hits: list[RecallHit] = []
         for (_, record), relevance in zip(candidates, relevances):
             if min_relevance is not None and relevance < min_relevance:
                 continue  # parsimony: drop low-value memories rather than pad the budget
+            if ratio_floor is not None and relevance < ratio_floor:
+                continue
             importance_norm = (record.importance - 1) / 4
             age_days = max(0.0, (now - record.updated_at) / 86_400.0)
             recency = math.exp(-age_days / RECENCY_HALF_LIFE_DAYS)
@@ -770,6 +787,7 @@ class Memory:
         max_record_chars: int = 600,
         include_abstention: bool = True,
         context_order: str = "relevance",
+        include_provenance: bool | None = None,
         now: float | None = None,
         **recall_kwargs: Any,
     ) -> ContextBlock:
@@ -793,37 +811,37 @@ class Memory:
                 if self._resolve_head(r).id == r.id  # Only keep current heads
             ]
 
-        # Fill the budget in priority order (highest-value first).
-        chosen: list[MemoryRecord] = []
+        # Fill the budget in priority order (highest-value first). Build-context defaults to lean lines
+        # because Memory(include_provenance=False) is now the default; full provenance/source remains one
+        # `recall()`/`inspect_memory(id)` away, and callers can opt into audit-mode lines explicitly.
+        use_provenance = self._include_provenance if include_provenance is None else include_provenance
+        chosen: list[tuple[MemoryRecord, str, int]] = []
         used = 0
         for record in records:
-            cost = approx_tokens(format_record(record, max_chars=max_record_chars, include_provenance=self._include_provenance, now=now))
+            line = format_record(
+                record,
+                max_chars=max_record_chars,
+                include_provenance=use_provenance,
+                now=now,
+            )
+            if use_provenance and record.source:
+                line = f"{line} [source: {record.source}]"
+            cost = approx_tokens(line)
             if used + cost > token_budget:
                 break
-            chosen.append(record)
+            chosen.append((record, line, cost))
             used += cost
         if not chosen:
             return ContextBlock(text="", records=[], tokens=0)
 
         if context_order == "chronological":
-            chosen.sort(key=lambda r: r.created_at)
+            chosen.sort(key=lambda item: item[0].created_at)
         elif context_order == "recency":
-            chosen.sort(key=lambda r: r.created_at, reverse=True)
+            chosen.sort(key=lambda item: item[0].created_at, reverse=True)
         elif context_order != "relevance":
             raise ValueError("context_order must be 'relevance', 'chronological', or 'recency'")
-        
-        # Build body with provenance if enabled
-        if self._include_provenance:
-            body_lines = []
-            for r in chosen:
-                line = format_record(r, max_chars=max_record_chars, include_provenance=True, now=now)
-                # Add source if available
-                if r.source:
-                    line = f"{line} [source: {r.source}]"
-                body_lines.append(line)
-            body = "\n".join(body_lines)
-        else:
-            body = "\n".join(format_record(r, max_chars=max_record_chars, now=now) for r in chosen)
+        chosen_records = [record for record, _, _ in chosen]
+        body = "\n".join(line for _, line, _ in chosen)
         
         # Calibrated (abstention). The top hit's RELEVANCE is the calibration signal: with the
         # cross-encoder reranker on it cleanly separates answerable (~0.93) from unanswerable (~0.17)
@@ -839,12 +857,12 @@ class Memory:
             # answer to the question? Tests answer-PRESENCE directly — answerable median 0.98 vs
             # unanswerable 0.37, where cosine/relevance both fail (~0.7 vs ~0.64). Local, no LLM.
             ent = None
-            if self._nli is not None and self._abstention_entailment_floor > 0 and chosen:
+            if self._nli is not None and self._abstention_entailment_floor > 0 and chosen_records:
                 hyp = f"This passage answers the question: {query}"
-                ent = max((self._nli.entailment(r.content, hyp) for r in chosen), default=0.0)
+                ent = max((self._nli.entailment(r.content, hyp) for r in chosen_records), default=0.0)
             cal = None
-            if self._calibration_reranker is not None and self._abstention_relevance_floor > 0 and chosen:
-                raw = self._calibration_reranker.rerank(query, [r.content for r in chosen])
+            if self._calibration_reranker is not None and self._abstention_relevance_floor > 0 and chosen_records:
+                raw = self._calibration_reranker.rerank(query, [r.content for r in chosen_records])
                 cal = max((_sigmoid(s) for s in raw), default=0.0)
             top_conf = min(1.0, max(0.0, hits[0].score / (
                 self.w_relevance + self.w_importance + self.w_recency)))
@@ -864,7 +882,7 @@ class Memory:
             if now is not None:
                 head += f"\n# Today is {_fmt_date(now)}"
             body = head + "\n" + body
-        return ContextBlock(text=body, records=chosen, tokens=used)
+        return ContextBlock(text=body, records=chosen_records, tokens=used)
 
     def _expand_neighbors(
         self,

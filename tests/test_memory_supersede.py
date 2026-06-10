@@ -149,6 +149,28 @@ def test_context_can_limit_record_body_length() -> None:
     assert "gamma" not in context
 
 
+def test_build_context_can_omit_provenance_for_lean_reader_prompts() -> None:
+    mem = Memory(abstention_threshold=0.0)
+    mem.remember(
+        "Decision: use PostgreSQL for the primary database.",
+        kind="constraint",
+        importance=5,
+        source="mcp:test-session",
+        provenance="user_confirmation",
+        actor="user",
+    )
+
+    lean = mem.build_context("primary database", token_budget=100)
+    audit = mem.build_context("primary database", token_budget=100, include_provenance=True)
+
+    assert "PostgreSQL" in lean.text
+    assert "id:" not in lean.text
+    assert "source:" not in lean.text
+    assert lean.tokens < audit.tokens
+    assert "id:" in audit.text
+    assert "source: mcp:test-session" in audit.text
+
+
 def test_context_packs_direct_hits_before_neighbors() -> None:
     mem = Memory(embedder=NeighborPackingEmbedder(), abstention_threshold=0.0)
     mem.remember("hit one", kind="fact", metadata={"session": "s1"})
@@ -157,7 +179,7 @@ def test_context_packs_direct_hits_before_neighbors() -> None:
 
     context = mem.assemble(
         "query",
-        token_budget=35,
+        token_budget=15,  # two lean lines (~7 tokens each) fit; the neighbour must not
         limit=2,
         window=1,
         thread_key="session",
@@ -169,7 +191,9 @@ def test_context_packs_direct_hits_before_neighbors() -> None:
 
 
 def test_context_defaults_to_relevance_order() -> None:
-    mem = Memory(embedder=FixedEmbedder())
+    # ratio=0: this test checks ORDERING, so keep the low-relevance record in instead of
+    # letting the default parsimony floor prune it.
+    mem = Memory(embedder=FixedEmbedder(), min_relevance_ratio=0)
 
     mem.remember("old launch", kind="fact")
     mem.remember("database", kind="constraint")
@@ -181,7 +205,10 @@ def test_context_defaults_to_relevance_order() -> None:
 
 def test_context_can_order_records_by_recency() -> None:
     times = iter([1.0, 2.0, 3.0])
-    mem = Memory(embedder=FixedEmbedder(), now=lambda: next(times), abstention_threshold=0.0)
+    mem = Memory(  # ratio=0: ordering test — don't let parsimony prune the weaker record
+        embedder=FixedEmbedder(), now=lambda: next(times), abstention_threshold=0.0,
+        min_relevance_ratio=0,
+    )
 
     mem.remember("old launch", kind="fact")
     mem.remember("database", kind="constraint")

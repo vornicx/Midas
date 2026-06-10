@@ -219,9 +219,15 @@ actions. Before relying on memory to act outside the chat, call `check_memory_us
 moments later — no restarts. Use `MIDAS_MCP_NAMESPACE` (or the per-call `namespace` argument every
 tool accepts) to keep projects, agents, or users scoped inside that shared DB.
 
+<p align="center">
+  <img src="docs/demo-multi-client.gif" alt="Two live processes share one Midas DB: a recall that finds nothing, a capture from a different process, then the same never-restarted session recalls it" width="820">
+</p>
+
+<p align="center"><sub>Real run, reconstructed chrome: the recall/capture lines are the verbatim output of two separate processes sharing one SQLite file — the second recall succeeds without restarting anything.</sub></p>
+
 **Tools it exposes:** `remember`, `capture` (policy-gated auto-store), `recall` (source-traceable),
-`build_context` (budgeted prompt block, dated and anchored to today so the agent can resolve
-relative time), `check_memory_use` (Guard provenance boundary), `memory_policy` (exact injected
+`build_context` (compact budgeted prompt block, dated and anchored to today so the agent can resolve
+relative time; use `recall`/`inspect_memory` for full provenance), `check_memory_use` (Guard provenance boundary), `memory_policy` (exact injected
 policy text), `maintain` (dedup + forgetting, returns a deletion audit), `stats` (counts +
 provenance + short/medium/long tiers + namespaces), `forget` (chain-safe single delete),
 `forget_matching` (topic-level erasure: dry-run preview by default, then delete with a full audit),
@@ -316,7 +322,7 @@ verbatim MCP policy in [docs/methodology.md](docs/methodology.md)):
 | | baseline (recency window) | **Midas** |
 |---|---:|---:|
 | **Retrieval** — LongMemEval-`s` recall@k (evidence buried among distractors, n=40) | 0.03 | **0.95** |
-| **Retrieval** — LoCoMo recall@k (5 conversations, n=50) | 0.02 | **0.85** |
+| **Retrieval** — LoCoMo recall@k (full public set: 10 conversations, n=1,540) | 0.05 | **0.73** |
 | **Answer** — LongMemEval-`s` correctness (reader = gpt-4.1-mini, n=40) | 0.05 | **0.82** |
 | **Ingest cost** | — | **0 LLM calls · $0 API · 0 data egress** |
 

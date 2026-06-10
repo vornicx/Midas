@@ -5,6 +5,30 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- **LoCoMo benchmark corrected to the full public set: recall@k 0.73 vs baseline 0.05 (n=1,540).**
+  The previously published **0.85 (n=50) did not reproduce** against the publicly downloadable
+  `locomo10.json` (verified not to be code drift: the v0.0.1 harness gives the same 0.28 on that
+  sample today). Root cause of the full-set gap: the runner's old LoCoMo-specific
+  `min_relevance=0.75` absolute floor — tuned on the early sample — pruned most gold turns at
+  scale (recall@k **0.18 with it, 0.73 without**). The floor is removed; the SDK's scale-free
+  `min_relevance_ratio` is the safe replacement. BENCHMARKS.md carries the correction notice.
+
+### Added
+- **Scale-free context parsimony, default on** (`Memory(min_relevance_ratio=0.3)`; per-call
+  override; `0` disables; runner flag `--midas-min-relevance-ratio`) — recall drops any hit whose
+  relevance is below 0.3× the query's own top hit. Measured (deterministic): **zero gold evicted on
+  any dataset**, ~**2× precision@k**, ~**30–40% fewer context tokens** on spread-scale embedders
+  (synthetic 102→87, conflicts 207→121, multiday 174→126 avg tokens), and a verified **no-op on
+  bge-base** (LongMemEval-`s` recall@k 0.95 and tokens identical). Honest boundary documented:
+  0.4+ evicts multiday's buried update (recall 1.00→0.80), so the default stays at 0.3. Unlike the
+  absolute `min_relevance` floor, the ratio transfers across embedders because it is relative to
+  each query's best hit.
+
+## [0.0.3] — 2026-06-10
+
+Consolidates everything since 0.0.1 (0.0.1 and 0.0.2 were cut without per-release sections).
+
 ### Added
 - **Live multi-process memory sharing** — `SQLiteStore` now detects writes from *other* connections
   (SQLite `PRAGMA data_version`) and refreshes its in-memory mirror, so several MCP clients
@@ -28,6 +52,14 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
   ("# Today is …" header + per-memory relative ages — the LLM-free signal that lifted temporal
   recall@k 0.86→0.95 in the eval) and exposes `limit`, `hybrid`, and `namespace`.
 
+- **Token-lean by default** — the context an agent actually pays for is now compact. The injected
+  MCP policy text shrank **442 → 198 approx tokens (−55%)** (kind/provenance taxonomies live in the
+  `remember`/`capture` tool descriptions instead of being repeated); `build_context` emits lean
+  memory lines by default (`- [kind | date] …`, **−42%/line** vs the audit format —
+  `Memory(include_provenance=False)` is the new default, with a per-call `include_provenance`
+  override), and the budget accounting now charges the `[source: …]` suffix it previously appended
+  for free. Full provenance/source evidence stays one `recall`/`inspect_memory` call away; eval
+  adapters already ran lean, so benchmark numbers are unchanged.
 - **Hybrid recall is ~8× cheaper on a stable store** — the BM25 index is cached on the store's
   change counter (rebuilt only after writes) and scores via per-term posting lists, so a query
   touches only documents sharing a term with it. Stable 5k-record store: ~66 ms → **~8 ms/query**;

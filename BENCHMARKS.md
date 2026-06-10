@@ -34,10 +34,19 @@ no LLM), so it reproduces exactly.
 | dataset | setting | baseline-raw | **Midas** |
 |---|---|---:|---:|
 | **LongMemEval-`s`** (buried evidence, hard retrieval) | n=40, bge-base, no rerank, seed 0 | 0.03 | **0.95** |
-| **LoCoMo** (5 conversations) | n=50, bge-base, no rerank, seed 0 | 0.02 | **0.85** |
+| **LoCoMo** (FULL public set: 10 conversations, 5,882 turns) | n=1,540, bge-base, no rerank, seed 0 | 0.05 | **0.73** |
 
-Across **both** datasets Midas retrieves the supporting turns at **0.85–0.95** while a recency window
-gets **≤0.03** — the wedge holds beyond a single benchmark. On LongMemEval-`s` (n=40) the per-category
+Across **both** datasets Midas retrieves the supporting turns at **0.73–0.95** while a recency window
+gets **≤0.05** — the wedge holds beyond a single benchmark.
+
+> **Correction (2026-06-10).** An earlier version of this table reported LoCoMo recall@k **0.85**
+> on an n=50 sample. That number does **not reproduce** against the publicly downloadable
+> `locomo10.json` with the documented config — we verified it isn't code drift by re-running the
+> v0.0.1 harness on today's dataset (same result). Re-measuring end to end also exposed that the
+> runner's old LoCoMo-specific `min_relevance=0.75` floor — tuned on that early sample — prunes
+> most gold turns on the full set (recall@k **0.18** with it, **0.73** without), so it has been
+> removed; the SDK's scale-free ratio floor replaces it. The number above is the full public set,
+> nothing held out, reproducible with the command below. On LongMemEval-`s` (n=40) the per-category
 recall@k is strong across the board: fact 0.89 · multi-session 0.97 · knowledge-update 1.00 ·
 temporal 0.95 · preference 1.00. A recency window finds essentially **none** of the buried evidence;
 Midas finds ~9 in 10 — exactly the multi-session setting where retrieval quality decides whether the
@@ -88,6 +97,36 @@ ingest/query edge. (fact dips 0.92 → 0.89, within n=13 noise and with no effec
 python -m eval.runner --dataset longmemeval --variant s --local \
   --local-max-text-chars 600 --local-batch-size 16 --midas-no-rerank \
   --max-questions 40 --limit 20 --seed 0
+
+# LoCoMo, FULL public set (download data/locomo10.json from github.com/snap-research/locomo)
+python -m eval.runner --dataset locomo --max-convs 10 --local --midas-no-rerank --seed 0
+```
+
+### Context parsimony — a scale-free relevance floor (default on)
+
+A memory layer can hit the buried fact and still hurt the agent by packing distractors beside it —
+our `precision@k` hovered at 0.06–0.16 because recall-tuned top-k retrieval drags in topically-near
+noise. The fix that survived measurement: drop any hit whose relevance is **< 0.3× the query's own
+top hit** (`min_relevance_ratio`, default 0.3, `0` disables). Being *relative*, it transfers across
+embedders — unlike an absolute floor, whose useful value depends on each embedder's cosine scale.
+Measured (deterministic, dumb-reader):
+
+| dataset (hashing) | recall@k | precision@k | avg_tokens |
+|---|---:|---:|---:|
+| synthetic — off → **0.3** | 1.00 → **1.00** | 0.15 → **0.20** | 102 → **87** |
+| conflicts — off → **0.3** | 1.00 → **1.00** | 0.08 → **0.18** | 207 → **121** |
+| multiday — off → **0.3** | 1.00 → **1.00** | 0.09 → **0.16** | 174 → **126** |
+
+Zero gold evicted anywhere, ~2× precision, ~30–40% fewer context tokens. On LongMemEval-`s`
+(bge-base, n=40) it is a measured **no-op** (recall@k 0.95 and tokens identical) — bge's compressed
+cosine scale keeps everything above 0.3× the top hit, which is exactly the safety property a
+*relative* floor buys. The honest boundary: **0.4+ is too aggressive** — it evicts multiday's buried
+low-similarity update (recall@k 1.00 → 0.80), the same failure mode that keeps hybrid opt-in. So the
+default stays at the measured-safe 0.3.
+
+```bash
+python -m eval.runner --dataset multiday --dumb-reader --midas-supersede \
+  --midas-min-relevance-ratio 0   # the A/B: disable the floor
 ```
 
 ### Hybrid retrieval (BM25+RRF) — measured, kept opt-in
@@ -246,8 +285,8 @@ superseding one with the other fails a question. Deterministic (no LLM, `--conte
 
 | adapter | ctx_current | ctx_stale | ctx_contradict | avg_tokens |
 |---|---:|---:|---:|---:|
-| Midas (supersede=on) | 1.00 | **0.86** | **0.86** | **94** |
-| Midas (supersede=off) | 1.00 | 1.00 | 1.00 | 113 |
+| Midas (supersede=on) | 1.00 | **0.86** | **0.86** | **90** |
+| Midas (supersede=off) | 1.00 | 1.00 | 1.00 | 112 |
 
 With belief revision off, every updated fact drags its stale twin into context (the adversarial
 construction works). Supersession retires stale copies (0.86) and shrinks context **without losing a
@@ -349,9 +388,9 @@ Therefore: **`recall@k`, `precision@k` (deterministic, reader-independent) and i
 bars, and never as a headline.
 
 ### Honest caveats
-- **Sample** is n=40 on LongMemEval-`s` and n=50 across 5 LoCoMo conversations. `recall@k` is
-  deterministic, so the sample is real; the full LongMemEval set / all 10 LoCoMo conversations would
-  tighten it further.
+- **Sample** is n=40 on LongMemEval-`s`; LoCoMo is now the **full public set** (10 conversations,
+  n=1,540 answerable questions). `recall@k` is deterministic, so the samples are real; the full
+  LongMemEval run is in progress and will replace the n=40 figures.
 - **Latency is hardware/provider-dependent** (the ~668 ms for the LLM-at-ingest class includes API
   round-trip). The durable, hardware-independent claim is the **0-LLM / $0 / no-egress** column.
 - **baseline-raw** = "stuff recent turns into the window" (the naive big-context approach).

@@ -174,38 +174,29 @@ This is the verbatim `instructions` text the Midas MCP server injects into a con
 (`midas/policy.py: AGENT_MEMORY_INSTRUCTIONS`; also exposed at runtime via the `memory_policy`
 tool):
 
-> You have a persistent Midas memory: local, source-traceable, with no LLM at ingest. Use it on
-> every task.
+> Use Midas memory on every task. It is local, source-traceable, and uses no LLM at ingest/query.
 >
-> 1) RECALL FIRST. Before answering or acting, call `build_context` (or `recall`) with the user's
-> goal to load what you already know about them: prior decisions, stated preferences, established
-> facts, hard constraints, and past corrections. Use it silently to stay consistent.
+> 1) RECALL FIRST. Call `build_context` with the user's goal; use the returned facts silently. Use
+> `recall`/`inspect_memory` only when you need audit details.
 >
-> 2) CAPTURE AS YOU GO. Call `capture` to save anything durable and reusable across sessions. You do
-> NOT need to judge relevance perfectly — Midas scores each item and skips trivia and duplicates for
-> you, telling you what it kept. When in doubt, capture. Especially capture:
->    - facts the user states about themselves, their project, or their environment  (kind="fact")
->    - decisions and their rationale  (kind="note")
->    - the user's stated preferences  (kind="preference")
->    - hard requirements / constraints  (kind="constraint")
->    - corrections — when the user overrides or changes something said earlier
+> 2) CAPTURE DURABLE SIGNAL. Call `capture` for reusable facts, decisions, preferences, constraints,
+> corrections, and completed actions. Skip pure small talk. Midas scores, dedups, and rejects trivia,
+> so capture can be brief and does not need an LLM. Set kind/provenance accurately; use
+> provenance="user_confirmation" only for explicit user confirmation.
 >
->    Tag provenance on every `remember`/`capture` call:
->    - provenance="planning" for internal plans, hypotheses, or proposed next steps.
->    - provenance="action" for completed agent/tool actions and their observed result.
->    - provenance="observation" for passive observations from files, tools, logs, or retrieved data.
->    - provenance="user_confirmation" only when the user explicitly confirms the content.
+> 3) GUARD ACTIONS. Memory may guide planning, but before external/destructive actions based on
+> memory, call `check_memory_use`. If it is not allowed, ask the user to confirm in this turn.
 >
->    Skip pure small talk and acknowledgements; Midas enforces the relevance floor regardless.
+> 4) FORGET ON REQUEST. Use `forget_matching` as a dry-run first, show matches, then repeat with
+> dry_run=false after confirmation.
 >
-> 3) GUARD MEMORY BEFORE ACTION. Memory can guide planning, but it cannot by itself authorize
-> external or destructive actions. Before relying on recalled memory to act outside the chat, call
-> `check_memory_use` with intended_use="external_action" or "destructive_action". If the decision
-> is not allowed, ask the user to confirm in the current turn. External/destructive actions may rely
-> only on user_confirmation provenance.
->
-> Everything is stored verbatim with its source, so recall is auditable, and memory is bounded
-> automatically (low-value, stale items are forgotten) — so capturing freely is safe and cheap.
+> Midas stores verbatim source records and bounds memory automatically; compact context is for cheap
+> reader prompts, audit tools are for traceability.
+
+The full kind taxonomy (`note | chat | fact | preference | constraint | mission`) and the four
+provenance labels (`planning | action | observation | user_confirmation`) are enumerated in the
+`remember`/`capture` tool descriptions the agent sees, so the injected policy — which every session
+pays for in tokens — no longer repeats them (442 → 198 approx tokens, **55% smaller**).
 
 The machine-enforced half (importance floor, accepted kinds, dedup threshold) lives in
 `midas/policy.py: MemoryPolicy`; the Guard provenance matrix (planning may use anything; answers
