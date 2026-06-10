@@ -149,6 +149,28 @@ def test_context_can_limit_record_body_length() -> None:
     assert "gamma" not in context
 
 
+def test_build_context_can_omit_provenance_for_lean_reader_prompts() -> None:
+    mem = Memory(abstention_threshold=0.0)
+    mem.remember(
+        "Decision: use PostgreSQL for the primary database.",
+        kind="constraint",
+        importance=5,
+        source="mcp:test-session",
+        provenance="user_confirmation",
+        actor="user",
+    )
+
+    lean = mem.build_context("primary database", token_budget=100)
+    audit = mem.build_context("primary database", token_budget=100, include_provenance=True)
+
+    assert "PostgreSQL" in lean.text
+    assert "id:" not in lean.text
+    assert "source:" not in lean.text
+    assert lean.tokens < audit.tokens
+    assert "id:" in audit.text
+    assert "source: mcp:test-session" in audit.text
+
+
 def test_context_packs_direct_hits_before_neighbors() -> None:
     mem = Memory(embedder=NeighborPackingEmbedder(), abstention_threshold=0.0)
     mem.remember("hit one", kind="fact", metadata={"session": "s1"})
@@ -157,7 +179,7 @@ def test_context_packs_direct_hits_before_neighbors() -> None:
 
     context = mem.assemble(
         "query",
-        token_budget=35,
+        token_budget=15,  # two lean lines (~7 tokens each) fit; the neighbour must not
         limit=2,
         window=1,
         thread_key="session",

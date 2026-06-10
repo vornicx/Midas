@@ -95,6 +95,7 @@ def build_memory() -> Memory:
         supersede=_SUPERSEDE or _SUPERSEDE_CONVO,
         supersede_conversational=_SUPERSEDE_CONVO,
         nli=nli,
+        include_provenance=False,
     )
 
 
@@ -170,6 +171,8 @@ def capture(
     Midas scores its importance and keeps it only if it clears the relevance policy and isn't a
     duplicate, so you can capture freely without polluting memory. Returns whether it was stored and
     why (so you learn the bar). This is the workhorse for hands-off, automatic remembering.
+    kind: note | chat | fact | preference | constraint | mission.
+    provenance: planning | action | observation | user_confirmation.
     """
     result = _mem.capture(
         content,
@@ -307,8 +310,9 @@ def build_context(
     """Assemble a budgeted, prompt-ready context block for a query.
 
     Highest-value memories first, with same-session neighbours pulled in, trimmed to token_budget.
-    Drop the returned string straight into an LLM prompt. Each memory line is dated and the header
-    anchors today's date, so the reader can resolve relative time ("how long ago...") by reading.
+    Drop the returned string straight into an LLM prompt. It uses lean memory lines by default;
+    call `recall` or `inspect_memory` when you need full provenance/source evidence. Each line is dated
+    and the header anchors today's date so the reader can resolve relative time.
     """
     return _mem.assemble(
         query,

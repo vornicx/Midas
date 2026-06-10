@@ -125,6 +125,29 @@ def test_build_context_returns_budgeted_prompt():
     assert isinstance(ctx, str) and "September 14" in ctx
 
 
+def test_build_context_is_lean_while_recall_keeps_audit_details():
+    forget_all()
+    remember(
+        "Decision: use PostgreSQL for the primary database.",
+        kind="constraint",
+        importance=5,
+        provenance="user_confirmation",
+        actor="user",
+        session="db",
+    )
+
+    ctx = build_context("primary database", token_budget=100)
+    hits = recall("primary database", limit=1)
+
+    assert "PostgreSQL" in ctx
+    assert "id:" not in ctx
+    assert "actor:" not in ctx
+    assert "source:" not in ctx
+    assert hits and hits[0]["provenance"] == "user_confirmation"
+    assert hits[0]["source"] == "mcp:db"
+    assert "score" in hits[0]
+
+
 def test_forget_all_clears():
     remember("ephemeral note", kind="note")
     forget_all()

@@ -220,8 +220,8 @@ moments later — no restarts. Use `MIDAS_MCP_NAMESPACE` (or the per-call `names
 tool accepts) to keep projects, agents, or users scoped inside that shared DB.
 
 **Tools it exposes:** `remember`, `capture` (policy-gated auto-store), `recall` (source-traceable),
-`build_context` (budgeted prompt block, dated and anchored to today so the agent can resolve
-relative time), `check_memory_use` (Guard provenance boundary), `memory_policy` (exact injected
+`build_context` (compact budgeted prompt block, dated and anchored to today so the agent can resolve
+relative time; use `recall`/`inspect_memory` for full provenance), `check_memory_use` (Guard provenance boundary), `memory_policy` (exact injected
 policy text), `maintain` (dedup + forgetting, returns a deletion audit), `stats` (counts +
 provenance + short/medium/long tiers + namespaces), `forget` (chain-safe single delete),
 `forget_matching` (topic-level erasure: dry-run preview by default, then delete with a full audit),
