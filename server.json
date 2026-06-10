@@ -1,13 +1,13 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.vornicx/midas",
-  "description": "Local-first, source-traceable agent memory — no LLM at ingest, fully offline",
+  "description": "Local-first, source-traceable agent memory \u2014 no LLM at ingest, fully offline",
   "title": "Midas",
   "repository": {
     "url": "https://github.com/vornicx/Midas",
     "source": "github"
   },
-  "version": "0.0.1",
+  "version": "0.0.3",
   "packages": [
     {
       "registryType": "pypi",
