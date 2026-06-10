@@ -41,8 +41,10 @@ data in the first place.
 
 - You control retention. Memories persist in your local SQLite file until you remove them.
 - Midas can bound storage automatically by forgetting the lowest-value memories (no LLM involved).
-- You can delete a single memory (`forget`), run a retention/audit pass (`maintain`), or erase
-  everything (`forget_all`). Deleting the SQLite file removes all stored memories permanently.
+- You can delete a single memory (`forget`), erase everything about a topic (`forget_matching` —
+  dry-run preview first, and the deleted records are returned as an audit trail), run a
+  retention/audit pass (`maintain`), or erase everything (`forget_all`). Deleting the SQLite file
+  removes all stored memories permanently.
 
 ## Contact
 

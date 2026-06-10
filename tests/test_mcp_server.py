@@ -13,6 +13,7 @@ from midas.mcp_server import (  # noqa: E402
     check_memory_use,
     forget,
     forget_all,
+    forget_matching,
     inspect_memory,
     maintain,
     memory_policy,
@@ -211,6 +212,57 @@ def test_memory_policy_exposes_injected_text_and_guard_options():
     assert "RECALL FIRST" in out["instructions"]
     assert "user_confirmation" in out["provenance"]
     assert "external_action" in out["guard_uses"]
+
+
+def test_namespace_scopes_writes_and_reads():
+    forget_all()
+    remember("the gateway is Kong", kind="fact", importance=4, namespace="proj-a")
+    remember("the gateway is Envoy", kind="fact", importance=4, namespace="proj-b")
+
+    a = recall("gateway", namespace="proj-a", limit=5)
+    assert a and all(h["metadata"]["namespace"] == "proj-a" for h in a)
+    assert not any("Envoy" in h["content"] for h in a)
+
+    everything = recall("gateway", limit=5)  # unscoped reads still see all namespaces
+    assert len(everything) == 2
+
+    ctx = build_context("which gateway?", namespace="proj-b")
+    assert "Envoy" in ctx and "Kong" not in ctx
+
+    s = stats(namespace="proj-a")
+    assert s["total"] == 1 and s["by_namespace"] == {"proj-a": 1, "proj-b": 1}
+
+
+def test_capture_stamps_namespace():
+    forget_all()
+    out = capture("Deploy key expires on 2027-03-01.", kind="fact", namespace="proj-a")
+    assert out["stored"] is True
+    hit = recall("deploy key", namespace="proj-a", limit=1)
+    assert hit and hit[0]["metadata"]["namespace"] == "proj-a"
+
+
+def test_forget_matching_dry_run_then_delete():
+    forget_all()
+    remember("my badge PIN is 0042", kind="fact", importance=5)
+    remember("the standup is at 9:30", kind="note", importance=2)
+
+    preview = forget_matching("badge PIN", min_relevance=0.2)
+    assert preview["dry_run"] is True and preview["matched"] == 1
+    assert stats()["total"] == 2, "dry run must not delete"
+    assert any("badge PIN" in r["content"] for r in preview["records"])
+
+    erased = forget_matching("badge PIN", min_relevance=0.2, dry_run=False)
+    assert erased["matched"] == 1 and stats()["total"] == 1
+    assert recall("badge PIN", limit=3) == [] or all(
+        "0042" not in h["content"] for h in recall("badge PIN", limit=3)
+    )
+
+
+def test_build_context_anchors_today():
+    forget_all()
+    remember("Launch date moved to September 14.", kind="fact", importance=5)
+    ctx = build_context("when do we launch?", token_budget=120)
+    assert "# Today is" in ctx, "the temporal anchor should reach real agents"
 
 
 def test_server_injects_memory_instructions():

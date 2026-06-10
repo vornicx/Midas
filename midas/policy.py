@@ -66,6 +66,9 @@ AGENT_MEMORY_INSTRUCTIONS = (
     "`check_memory_use` with intended_use=\"external_action\" or \"destructive_action\". If the decision "
     "is not allowed, ask the user to confirm in the current turn. External/destructive actions may rely "
     "only on user_confirmation provenance.\n\n"
+    "4) FORGET ON REQUEST. When the user asks you to forget something, call `forget_matching` with a "
+    "query for it — first as the default dry run, show them what matched, then repeat with "
+    "dry_run=false once they confirm. It returns the deleted records as an audit trail.\n\n"
     "Everything is stored verbatim with its source, so recall is auditable, and memory is bounded "
     "automatically (low-value, stale items are forgotten) — so capturing freely is safe and cheap."
 )
