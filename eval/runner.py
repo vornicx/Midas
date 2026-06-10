@@ -617,9 +617,10 @@ def main() -> None:
     if max_q is not None:
         _resample_questions(dataset, seed=args.seed)
     embedder, embedder_label = _make_embedder(args)
+    # No per-dataset absolute floor: the old `0.75 for locomo+local` default was tuned on an early
+    # sample and, measured on the full public set, prunes most gold turns (recall@k 0.18 with it,
+    # 0.73 without). The SDK's scale-free min_relevance_ratio default is the safe replacement.
     midas_min_relevance = args.midas_min_relevance
-    if midas_min_relevance is None and (args.local or args.openai) and args.dataset == "locomo":
-        midas_min_relevance = 0.75
 
     llm = None          # reader/answerer
     judge_llm = None    # grader (may differ from reader, to fix the judge across reader sweeps)

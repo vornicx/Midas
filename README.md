@@ -322,7 +322,7 @@ verbatim MCP policy in [docs/methodology.md](docs/methodology.md)):
 | | baseline (recency window) | **Midas** |
 |---|---:|---:|
 | **Retrieval** — LongMemEval-`s` recall@k (evidence buried among distractors, n=40) | 0.03 | **0.95** |
-| **Retrieval** — LoCoMo recall@k (5 conversations, n=50) | 0.02 | **0.85** |
+| **Retrieval** — LoCoMo recall@k (full public set: 10 conversations, n=1,540) | 0.05 | **0.73** |
 | **Answer** — LongMemEval-`s` correctness (reader = gpt-4.1-mini, n=40) | 0.05 | **0.82** |
 | **Ingest cost** | — | **0 LLM calls · $0 API · 0 data egress** |
 

@@ -5,6 +5,15 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- **LoCoMo benchmark corrected to the full public set: recall@k 0.73 vs baseline 0.05 (n=1,540).**
+  The previously published **0.85 (n=50) did not reproduce** against the publicly downloadable
+  `locomo10.json` (verified not to be code drift: the v0.0.1 harness gives the same 0.28 on that
+  sample today). Root cause of the full-set gap: the runner's old LoCoMo-specific
+  `min_relevance=0.75` absolute floor — tuned on the early sample — pruned most gold turns at
+  scale (recall@k **0.18 with it, 0.73 without**). The floor is removed; the SDK's scale-free
+  `min_relevance_ratio` is the safe replacement. BENCHMARKS.md carries the correction notice.
+
 ### Added
 - **Scale-free context parsimony, default on** (`Memory(min_relevance_ratio=0.3)`; per-call
   override; `0` disables; runner flag `--midas-min-relevance-ratio`) — recall drops any hit whose
