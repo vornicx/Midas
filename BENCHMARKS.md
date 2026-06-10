@@ -90,6 +90,33 @@ python -m eval.runner --dataset longmemeval --variant s --local \
   --max-questions 40 --limit 20 --seed 0
 ```
 
+### Context parsimony — a scale-free relevance floor (default on)
+
+A memory layer can hit the buried fact and still hurt the agent by packing distractors beside it —
+our `precision@k` hovered at 0.06–0.16 because recall-tuned top-k retrieval drags in topically-near
+noise. The fix that survived measurement: drop any hit whose relevance is **< 0.3× the query's own
+top hit** (`min_relevance_ratio`, default 0.3, `0` disables). Being *relative*, it transfers across
+embedders — unlike an absolute floor, whose useful value depends on each embedder's cosine scale.
+Measured (deterministic, dumb-reader):
+
+| dataset (hashing) | recall@k | precision@k | avg_tokens |
+|---|---:|---:|---:|
+| synthetic — off → **0.3** | 1.00 → **1.00** | 0.15 → **0.20** | 102 → **87** |
+| conflicts — off → **0.3** | 1.00 → **1.00** | 0.08 → **0.18** | 207 → **121** |
+| multiday — off → **0.3** | 1.00 → **1.00** | 0.09 → **0.16** | 174 → **126** |
+
+Zero gold evicted anywhere, ~2× precision, ~30–40% fewer context tokens. On LongMemEval-`s`
+(bge-base, n=40) it is a measured **no-op** (recall@k 0.95 and tokens identical) — bge's compressed
+cosine scale keeps everything above 0.3× the top hit, which is exactly the safety property a
+*relative* floor buys. The honest boundary: **0.4+ is too aggressive** — it evicts multiday's buried
+low-similarity update (recall@k 1.00 → 0.80), the same failure mode that keeps hybrid opt-in. So the
+default stays at the measured-safe 0.3.
+
+```bash
+python -m eval.runner --dataset multiday --dumb-reader --midas-supersede \
+  --midas-min-relevance-ratio 0   # the A/B: disable the floor
+```
+
 ### Hybrid retrieval (BM25+RRF) — measured, kept opt-in
 
 Fusing a lexical BM25 ranking with semantic recall (`recall(hybrid=True)`, reciprocal-rank fusion)
@@ -246,8 +273,8 @@ superseding one with the other fails a question. Deterministic (no LLM, `--conte
 
 | adapter | ctx_current | ctx_stale | ctx_contradict | avg_tokens |
 |---|---:|---:|---:|---:|
-| Midas (supersede=on) | 1.00 | **0.86** | **0.86** | **94** |
-| Midas (supersede=off) | 1.00 | 1.00 | 1.00 | 113 |
+| Midas (supersede=on) | 1.00 | **0.86** | **0.86** | **90** |
+| Midas (supersede=off) | 1.00 | 1.00 | 1.00 | 112 |
 
 With belief revision off, every updated fact drags its stale twin into context (the adversarial
 construction works). Supersession retires stale copies (0.86) and shrinks context **without losing a

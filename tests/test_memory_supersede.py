@@ -191,7 +191,9 @@ def test_context_packs_direct_hits_before_neighbors() -> None:
 
 
 def test_context_defaults_to_relevance_order() -> None:
-    mem = Memory(embedder=FixedEmbedder())
+    # ratio=0: this test checks ORDERING, so keep the low-relevance record in instead of
+    # letting the default parsimony floor prune it.
+    mem = Memory(embedder=FixedEmbedder(), min_relevance_ratio=0)
 
     mem.remember("old launch", kind="fact")
     mem.remember("database", kind="constraint")
@@ -203,7 +205,10 @@ def test_context_defaults_to_relevance_order() -> None:
 
 def test_context_can_order_records_by_recency() -> None:
     times = iter([1.0, 2.0, 3.0])
-    mem = Memory(embedder=FixedEmbedder(), now=lambda: next(times), abstention_threshold=0.0)
+    mem = Memory(  # ratio=0: ordering test — don't let parsimony prune the weaker record
+        embedder=FixedEmbedder(), now=lambda: next(times), abstention_threshold=0.0,
+        min_relevance_ratio=0,
+    )
 
     mem.remember("old launch", kind="fact")
     mem.remember("database", kind="constraint")

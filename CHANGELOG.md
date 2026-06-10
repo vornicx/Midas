@@ -5,7 +5,16 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
 
 ## [Unreleased]
 
-(nothing yet)
+### Added
+- **Scale-free context parsimony, default on** (`Memory(min_relevance_ratio=0.3)`; per-call
+  override; `0` disables; runner flag `--midas-min-relevance-ratio`) — recall drops any hit whose
+  relevance is below 0.3× the query's own top hit. Measured (deterministic): **zero gold evicted on
+  any dataset**, ~**2× precision@k**, ~**30–40% fewer context tokens** on spread-scale embedders
+  (synthetic 102→87, conflicts 207→121, multiday 174→126 avg tokens), and a verified **no-op on
+  bge-base** (LongMemEval-`s` recall@k 0.95 and tokens identical). Honest boundary documented:
+  0.4+ evicts multiday's buried update (recall 1.00→0.80), so the default stays at 0.3. Unlike the
+  absolute `min_relevance` floor, the ratio transfers across embedders because it is relative to
+  each query's best hit.
 
 ## [0.0.3] — 2026-06-10
 

@@ -572,6 +572,7 @@ def main() -> None:
     parser.add_argument("--mem0", action="store_true", help="add the Mem0 competitor (needs mem0ai + groq + key)")
     parser.add_argument("--seed", type=int, default=0, help="seed for representative question sampling")
     parser.add_argument("--midas-min-relevance", type=float, default=None, help="drop Midas hits below this relevance")
+    parser.add_argument("--midas-min-relevance-ratio", type=float, default=None, help="drop Midas hits below RATIO x the query's top-hit relevance (scale-free parsimony)")
     parser.add_argument("--midas-max-record-chars", type=int, default=600, help="truncate Midas record bodies")
     parser.add_argument("--midas-only", action="store_true", help="only run Midas")
     parser.add_argument("--midas-supersede", action="store_true", help="enable Midas belief-revision (regression test)")
@@ -654,6 +655,7 @@ def main() -> None:
         limit=limit,
         rerank=midas_rerank,
         min_relevance=midas_min_relevance,
+        min_relevance_ratio=args.midas_min_relevance_ratio,
         max_record_chars=args.midas_max_record_chars,
         supersede=args.midas_supersede or args.midas_supersede_convo,
         supersede_conversational=args.midas_supersede_convo,
@@ -696,7 +698,7 @@ def main() -> None:
     )
     print(f"Budget: {budget} tokens  |  Midas top-k: {limit}  |  embedder: {embedder_label}")
     print(
-        f"Midas knobs: min_relevance={midas_min_relevance}  |  "
+        f"Midas knobs: min_relevance={midas_min_relevance} ratio={args.midas_min_relevance_ratio}  |  "
         f"max_record_chars={args.midas_max_record_chars}  |  "
         f"rerank={'on' if midas_rerank else 'off'}  |  "
         f"context_order={args.midas_context_order}"

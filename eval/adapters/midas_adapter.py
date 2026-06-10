@@ -28,6 +28,7 @@ class MidasAdapter:
         rerank: bool = True,
         pool: int = 40,
         min_relevance: float | None = None,
+        min_relevance_ratio: float | None = None,  # scale-free parsimony: drop hits < ratio*top
         neighbor_min_importance: int | None = None,
         max_record_chars: int = 600,
         supersede: bool = False,
@@ -57,6 +58,7 @@ class MidasAdapter:
         self._rerank = rerank and embedder is not None and os.getenv("MIDAS_RERANK", "1") != "0"
         self._pool = pool
         self._min_relevance = min_relevance
+        self._min_relevance_ratio = min_relevance_ratio
         self._neighbor_min_importance = neighbor_min_importance
         self._max_record_chars = max_record_chars
         self._supersede = supersede
@@ -168,6 +170,7 @@ class MidasAdapter:
             context_order=self._context_order,
             pool=self._pool,
             min_relevance=self._min_relevance,
+            min_relevance_ratio=self._min_relevance_ratio,
             hybrid=self._hybrid,
             fusion=self._hybrid_fusion,
             now=now if self._time_aware else None,  # recency decays from when the question is asked
@@ -178,6 +181,7 @@ class MidasAdapter:
         hits = self._mem.recall(
             question, limit=self._limit, now=now if self._time_aware else None,
             pool=self._pool, min_relevance=self._min_relevance,
+            min_relevance_ratio=self._min_relevance_ratio,
             hybrid=self._hybrid, fusion=self._hybrid_fusion,
         )
         top_texts = [h.record.content for h in hits]
