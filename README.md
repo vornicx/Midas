@@ -239,9 +239,11 @@ policy text), `maintain` (dedup + forgetting, returns a deletion audit), `stats`
 provenance + short/medium/long tiers + namespaces), `forget` (chain-safe single delete),
 `forget_matching` (topic-level erasure: dry-run preview by default, then delete with a full audit),
 `forget_all`. **Env knobs:**
-`MIDAS_MCP_DB` (persist to a SQLite file), `MIDAS_MCP_EMBEDDER` (`local` or `hashing`),
-`MIDAS_MCP_MAX_RECORDS`, `MIDAS_MCP_MIN_IMPORTANCE`, `MIDAS_MCP_NAMESPACE` (default scope for this
-server's reads/writes), `MIDAS_MCP_SUPERSEDE=0` to disable typed belief
+`MIDAS_MCP_DB` (persist to a SQLite file), `MIDAS_MCP_EMBEDDER` (`local`, `hashing`,
+`multilingual` — for non-English memory, where the English-only default silently degrades — or any
+fastembed model id), `MIDAS_MCP_MAX_RECORDS`, `MIDAS_MCP_MIN_IMPORTANCE`, `MIDAS_MCP_NAMESPACE`
+(default scope for this server's reads/writes), `MIDAS_MCP_ANN=1` (sub-linear IVF search for very
+large stores), `MIDAS_MCP_SUPERSEDE=0` to disable typed belief
 revision, `MIDAS_MCP_SUPERSEDE_CONVO=1` to allow strict-cue chat revision, `MIDAS_MCP_NLI=1` to gate
 revision with the local NLI model.
 

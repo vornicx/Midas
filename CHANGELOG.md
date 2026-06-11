@@ -16,9 +16,11 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
   semantic embeddings, NLI, reranker — the Python server stays the reference.
 - **Multilingual embeddings** — `MIDAS_MCP_EMBEDDER=multilingual` (or any fastembed model id)
   selects `paraphrase-multilingual-MiniLM-L12-v2`; runner gains `--local-model` and a
-  `synthetic-es` dataset. Measured: on Spanish content the English-only bge-base drops to
-  **answer_dumb 0.68** while the multilingual model scores **1.00** (both 1.00 on the English
-  twin). The English-trained cross-encoder reranker stays off in multilingual mode.
+  `synthetic-es` dataset. Measured both ways: on Spanish content the English-only bge-base drops
+  to **answer_dumb 0.68** while the multilingual model scores **1.00** (both 1.00 on the English
+  twin); on English LongMemEval-`s` (n=40) the multilingual model retrieves at **0.83 vs bge's
+  0.95** — switch only for non-English memory. The English-trained cross-encoder reranker stays
+  off in multilingual mode.
 - **Opt-in ANN for big stores** — `InMemoryStore(ann_threshold=…)` / `SQLiteStore(…)` /
   `MIDAS_MCP_ANN=1` route search through the numpy-only IVF index at ≥10k records (index cached on
   the store's change counter; predicate pushdown; approximate — recall ~0.95 at nprobe=16 per
