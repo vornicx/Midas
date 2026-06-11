@@ -490,6 +490,8 @@ class Memory:
         fusion: str = "rrf",
         now: float | None = None,
         metadata_filter: dict[str, Any] | None = None,
+        thread_cap: int = 0,
+        thread_key: str = "session",
     ) -> list[RecallHit]:
         q_emb = self.embedder.embed(query)
         # `now` is the query's reference time (e.g. when the question is asked); recency decays
@@ -558,6 +560,26 @@ class Memory:
             )
             hits.append(RecallHit(record, score, relevance, importance_norm, recency))
         hits.sort(key=lambda h: (h.score, h.record.updated_at), reverse=True)
+        if thread_cap and thread_cap > 0:
+            # Thread diversification: multi-evidence questions ("when did I first…?") have gold
+            # spread across sessions, and plain top-k lets consecutive turns of one session crowd
+            # the answer out. Greedily cap hits per thread, then backfill with the skipped
+            # overflow if the limit isn't reached — pure re-selection, no scoring change.
+            per_thread: dict[Any, int] = {}
+            diversified: list[RecallHit] = []
+            overflow: list[RecallHit] = []
+            for hit in hits:
+                key = hit.record.metadata.get(thread_key)
+                if key is not None and per_thread.get(key, 0) >= thread_cap:
+                    overflow.append(hit)
+                    continue
+                per_thread[key] = per_thread.get(key, 0) + 1
+                diversified.append(hit)
+                if len(diversified) >= limit:
+                    break
+            if len(diversified) < limit:
+                diversified.extend(overflow[: limit - len(diversified)])
+            return diversified
         return hits[:limit]
 
     def _hybrid_candidates(

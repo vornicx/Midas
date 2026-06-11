@@ -5,6 +5,39 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+- **TypeScript port (experimental)** — `packages/midas-ts`, `npx -y midas-memory-mcp`. Same MCP
+  tool surface, env knobs, injected policy, **and SQLite schema** as the Python server; the
+  hashing embedder is bit-comparable (md5 parity pinned by a Python-generated fixture), so a TS
+  and a Python server can **share one DB file live** (both probe `data_version`) — verified
+  bidirectionally in tests (13 node:test cases). Ships the core: ranking + parsimony floor,
+  BM25+RRF hybrid (cached), supersession chains, policy-gated capture, structural importance,
+  guard, lean `build_context`, selective forgetting, `forget_matching`. Not ported yet: ONNX
+  semantic embeddings, NLI, reranker — the Python server stays the reference.
+- **Multilingual embeddings** — `MIDAS_MCP_EMBEDDER=multilingual` (or any fastembed model id)
+  selects `paraphrase-multilingual-MiniLM-L12-v2`; runner gains `--local-model` and a
+  `synthetic-es` dataset. Measured: on Spanish content the English-only bge-base drops to
+  **answer_dumb 0.68** while the multilingual model scores **1.00** (both 1.00 on the English
+  twin). The English-trained cross-encoder reranker stays off in multilingual mode.
+- **Opt-in ANN for big stores** — `InMemoryStore(ann_threshold=…)` / `SQLiteStore(…)` /
+  `MIDAS_MCP_ANN=1` route search through the numpy-only IVF index at ≥10k records (index cached on
+  the store's change counter; predicate pushdown; approximate — recall ~0.95 at nprobe=16 per
+  BENCHMARKS §4, which is why exact scan stays the default).
+
+### Fixed
+- **`LocalEmbedder` hardcoded `dim=768`** — any non-default model (e.g. 384-d MiniLM) silently
+  poisoned the on-disk embedding cache with mislabelled rows that failed to decode in later
+  sessions. The dim now comes from the model registry (probe fallback), and `DiskCachedEmbedder`
+  refuses to write a vector that contradicts the declared dim (regression test).
+
+### Measured negative (kept opt-in)
+- **Thread-diversified recall** (`recall(thread_cap=…)`, `--midas-thread-cap`) — capping hits per
+  session-thread to help multi-evidence questions *hurts* across the board on full LongMemEval-`s`
+  (overall recall@k 0.92 → 0.84 at cap=3, 0.89 at cap=5): gold evidence is often consecutive turns
+  of one session, and the cap evicts it for other-session distractors. Trace analysis showed the
+  remaining temporal misses are multi-evidence spread (not query-date parsing), so no date-window
+  heuristic ships either.
+
 ### Measured
 - **Full-set retrieval headlines — no sampling caveat left.** LongMemEval-`s`, all **500**
   questions (246,750 turns ingested, deterministic, seed 0): Midas recall@k **0.92** vs

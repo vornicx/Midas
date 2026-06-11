@@ -1,0 +1,43 @@
+{
+  "name": "midas-memory-mcp",
+  "version": "0.0.3",
+  "description": "Midas \u2014 local-first, source-traceable agent memory over MCP (TypeScript port, experimental). No LLM at ingest or query.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "bin": {
+    "midas-mcp": "dist/bin/midas-mcp.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vornicx/Midas.git",
+    "directory": "packages/midas-ts"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "keywords": [
+    "mcp",
+    "agent",
+    "memory",
+    "local-first",
+    "llm"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "@types/node": "^22.0.0"
+  }
+}

@@ -197,6 +197,13 @@ Edit the config (Cascade → **MCP icon → Configure** opens it), paste the JSO
 
 Same pattern: point it at command `midas-mcp` with those env vars (JSON clients reuse the block above).
 
+### No Python? `npx` it (TypeScript port, experimental)
+
+A Node-native port lives at [`packages/midas-ts`](packages/midas-ts): `npx -y midas-memory-mcp`
+with the **same tools, env knobs, injected policy, and SQLite schema** — a TS server and a Python
+server can even share one DB file live (bit-comparable hashing embedder; verified both ways in
+tests). Caveat: no semantic ONNX embeddings yet — the Python server stays the reference.
+
 ### What happens once it's connected
 
 On connect, Midas **injects a short memory policy into the agent** (via the MCP `instructions`): *recall

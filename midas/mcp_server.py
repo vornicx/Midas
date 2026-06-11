@@ -63,27 +63,45 @@ _SUPERSEDE_CONVO = os.getenv("MIDAS_MCP_SUPERSEDE_CONVO", "0") == "1"
 _USE_NLI = os.getenv("MIDAS_MCP_NLI", "0") == "1"
 
 
+_MULTILINGUAL_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+
+
 def build_memory() -> Memory:
     """Local semantic memory by default (graceful fallback to the offline hashing embedder), with
     optional SQLite persistence via MIDAS_MCP_DB. Importance is derived from content (no LLM) when a
     caller doesn't supply it, so forgetting/tiering have a salience to work with."""
     embedder = HashingEmbedder()
     reranker = None
-    if os.getenv("MIDAS_MCP_EMBEDDER", "local").lower() != "hashing":
+    choice = os.getenv("MIDAS_MCP_EMBEDDER", "local").lower()
+    if choice != "hashing":
         try:
             from midas import LocalEmbedder, LocalReranker
 
-            embedder, reranker = LocalEmbedder(), LocalReranker()
+            if choice == "multilingual" or "/" in choice:
+                # Non-English memory: bge-base is English-only (measured: Spanish answer_dumb
+                # 0.68 vs 1.00 with the multilingual model). The cross-encoder reranker is
+                # English-trained (ms-marco), so it stays off for non-English models.
+                model = _MULTILINGUAL_MODEL if choice == "multilingual" else os.getenv("MIDAS_MCP_EMBEDDER")
+                embedder = LocalEmbedder(model_name=model)
+            else:
+                embedder, reranker = LocalEmbedder(), LocalReranker()
         except Exception as exc:  # fastembed missing or model load failed
             print(f"[midas-mcp] local embedder unavailable ({exc}); using hashing", file=sys.stderr)
 
     store = None
     db = os.getenv("MIDAS_MCP_DB")
+    # Opt-in sub-linear (IVF) search for very large stores — approximate (recall ~0.95 at the
+    # default nprobe; BENCHMARKS §4), so exact scan stays the default. Kicks in at >= 10k records.
+    ann = os.getenv("MIDAS_MCP_ANN", "0") == "1"
     if db:
         from midas.sqlite_store import SQLiteStore
 
-        store = SQLiteStore(db)
+        store = SQLiteStore(db, ann_threshold=10_000 if ann else None)
         print(f"[midas-mcp] persisting memory to {db}", file=sys.stderr)
+    elif ann:
+        from midas import InMemoryStore
+
+        store = InMemoryStore(ann_threshold=10_000)
     nli = None
     if _USE_NLI:
         from midas.nli import LocalNLI

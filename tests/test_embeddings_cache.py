@@ -77,3 +77,23 @@ def test_disk_cached_embedder_reuses_persisted_vectors(tmp_path) -> None:
     assert second_cached.embed_many(["beta", "alpha"]) == [[4.0, 1.0, 0.0], [5.0, 1.0, 0.0]]
     assert second_inner.batch_calls == 0
     assert second_inner.single_calls == 0
+
+
+def test_cache_refuses_mislabelled_dimension(tmp_path):
+    """An embedder lying about `dim` must fail at write time, not poison the disk cache."""
+    import pytest
+
+    from midas.embeddings import DiskCachedEmbedder
+
+    class LyingEmbedder:
+        dim = 768  # claims 768...
+
+        def embed(self, text):
+            return [0.1] * 384  # ...but produces 384
+
+        def embed_many(self, texts):
+            return [self.embed(t) for t in texts]
+
+    cached = DiskCachedEmbedder(LyingEmbedder(), path=tmp_path / "cache.sqlite3")
+    with pytest.raises(ValueError, match="dim"):
+        cached.embed("hello")
