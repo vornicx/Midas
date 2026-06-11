@@ -37,8 +37,10 @@ from .types import MemoryRecord
 class SQLiteStore(InMemoryStore):
     """In-memory store (fast vectorised search) mirrored to a SQLite file for persistence."""
 
-    def __init__(self, path: str | Path) -> None:
-        super().__init__()
+    def __init__(
+        self, path: str | Path, *, ann_threshold: int | None = None, ann_nprobe: int = 16
+    ) -> None:
+        super().__init__(ann_threshold=ann_threshold, ann_nprobe=ann_nprobe)
         self._path = Path(path)
         if self._path.parent and str(self._path.parent):
             self._path.parent.mkdir(parents=True, exist_ok=True)

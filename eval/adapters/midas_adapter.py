@@ -29,6 +29,7 @@ class MidasAdapter:
         pool: int = 40,
         min_relevance: float | None = None,
         min_relevance_ratio: float | None = None,  # scale-free parsimony: drop hits < ratio*top
+        thread_cap: int = 0,  # diversification: max hits per session-thread (0 = off)
         neighbor_min_importance: int | None = None,
         max_record_chars: int = 600,
         supersede: bool = False,
@@ -59,6 +60,7 @@ class MidasAdapter:
         self._pool = pool
         self._min_relevance = min_relevance
         self._min_relevance_ratio = min_relevance_ratio
+        self._thread_cap = thread_cap
         self._neighbor_min_importance = neighbor_min_importance
         self._max_record_chars = max_record_chars
         self._supersede = supersede
@@ -171,6 +173,7 @@ class MidasAdapter:
             pool=self._pool,
             min_relevance=self._min_relevance,
             min_relevance_ratio=self._min_relevance_ratio,
+            thread_cap=self._thread_cap,
             hybrid=self._hybrid,
             fusion=self._hybrid_fusion,
             now=now if self._time_aware else None,  # recency decays from when the question is asked
@@ -181,7 +184,7 @@ class MidasAdapter:
         hits = self._mem.recall(
             question, limit=self._limit, now=now if self._time_aware else None,
             pool=self._pool, min_relevance=self._min_relevance,
-            min_relevance_ratio=self._min_relevance_ratio,
+            min_relevance_ratio=self._min_relevance_ratio, thread_cap=self._thread_cap,
             hybrid=self._hybrid, fusion=self._hybrid_fusion,
         )
         top_texts = [h.record.content for h in hits]

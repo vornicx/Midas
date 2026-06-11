@@ -24,7 +24,7 @@ from .adapters.midas_adapter import MidasAdapter
 from .adapters.mem0_adapter import Mem0Adapter
 from .adapters.base import MemoryAdapter
 from .adapters.baseline_raw import BaselineRawAdapter
-from .datasets import conflicts, locomo, longmemeval, multiday, synthetic
+from .datasets import conflicts, locomo, longmemeval, multiday, synthetic, synthetic_es
 from .llm import from_env, load_dotenv
 from .metrics import (
     answer_recoverable,
@@ -43,6 +43,7 @@ DEFAULT_JUDGE_MAX_QUESTIONS = 40
 
 _DEFAULTS = {
     "synthetic": {"budget": 110, "limit": 5},
+    "synthetic-es": {"budget": 110, "limit": 5},
     "locomo": {"budget": 1024, "limit": 100},
     "longmemeval": {"budget": 2048, "limit": 50},
     "multiday": {"budget": 256, "limit": 8},
@@ -513,6 +514,8 @@ def _load(
 ) -> Dataset:
     if dataset == "synthetic":
         return synthetic()
+    if dataset == "synthetic-es":
+        return synthetic_es()
     if dataset == "multiday":
         return multiday()
     if dataset == "conflicts":
@@ -536,6 +539,7 @@ def _make_embedder(args: argparse.Namespace) -> tuple[object | None, str]:
         from midas.embeddings import DiskCachedEmbedder, LocalEmbedder
 
         emb = LocalEmbedder(
+            model_name=args.local_model,
             batch_size=args.local_batch_size,
             max_text_chars=args.local_max_text_chars,
         )
@@ -550,7 +554,7 @@ def _make_embedder(args: argparse.Namespace) -> tuple[object | None, str]:
 def main() -> None:
     load_dotenv()
     parser = argparse.ArgumentParser(description="Midas agentic-memory eval harness")
-    parser.add_argument("--dataset", choices=["synthetic", "locomo", "longmemeval", "multiday", "conflicts"], default="synthetic")
+    parser.add_argument("--dataset", choices=["synthetic", "synthetic-es", "locomo", "longmemeval", "multiday", "conflicts"], default="synthetic")
     parser.add_argument("--budget", type=int, default=None, help="token budget (per-dataset default if unset)")
     parser.add_argument("--limit", type=int, default=None, help="top-k (per-dataset default if unset)")
     parser.add_argument("--max-convs", type=int, default=2, help="LoCoMo: conversations to include")
@@ -559,6 +563,7 @@ def main() -> None:
     parser.add_argument("--longmemeval-path", type=str, default=None, help="Path to LongMemEval JSON file (overrides variant default)")
     parser.add_argument("--longmemeval-abstention", action="store_true", help="LongMemEval: load only the abstention (unanswerable) questions, to measure Calibrated/abstention")
     parser.add_argument("--local", action="store_true", help="use local fastembed semantic embeddings (no key)")
+    parser.add_argument("--local-model", type=str, default="BAAI/bge-base-en-v1.5", help="fastembed model for --local (e.g. sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2)")
     parser.add_argument("--local-batch-size", type=int, default=32, help="local embedder batch size")
     parser.add_argument("--local-max-text-chars", type=int, default=2000, help="truncate local embedding inputs")
     parser.add_argument("--no-local-embedding-cache", action="store_true", help="disable local SQLite embedding cache")
@@ -573,6 +578,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0, help="seed for representative question sampling")
     parser.add_argument("--midas-min-relevance", type=float, default=None, help="drop Midas hits below this relevance")
     parser.add_argument("--midas-min-relevance-ratio", type=float, default=None, help="drop Midas hits below RATIO x the query's top-hit relevance (scale-free parsimony)")
+    parser.add_argument("--midas-thread-cap", type=int, default=0, help="diversification: cap recall hits per session-thread (0 = off)")
     parser.add_argument("--midas-max-record-chars", type=int, default=600, help="truncate Midas record bodies")
     parser.add_argument("--midas-only", action="store_true", help="only run Midas")
     parser.add_argument("--midas-supersede", action="store_true", help="enable Midas belief-revision (regression test)")
@@ -657,6 +663,7 @@ def main() -> None:
         rerank=midas_rerank,
         min_relevance=midas_min_relevance,
         min_relevance_ratio=args.midas_min_relevance_ratio,
+        thread_cap=args.midas_thread_cap,
         max_record_chars=args.midas_max_record_chars,
         supersede=args.midas_supersede or args.midas_supersede_convo,
         supersede_conversational=args.midas_supersede_convo,

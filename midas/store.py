@@ -28,7 +28,7 @@ def _numpy():
 
 
 class InMemoryStore:
-    def __init__(self) -> None:
+    def __init__(self, *, ann_threshold: int | None = None, ann_nprobe: int = 16) -> None:
         self._records: dict[str, MemoryRecord] = {}
         # Cached embedding matrix for the vectorised scan; rebuilt only when records change so
         # repeated queries on a stable store skip the per-query array build.
@@ -38,6 +38,13 @@ class InMemoryStore:
         # Monotonic change counter: bumps on every mutation. Lets callers cache derived indexes
         # (e.g. the BM25 lexical index for hybrid recall) and invalidate them cheaply.
         self.version = 0
+        # Opt-in sub-linear search: at >= `ann_threshold` records, search via the numpy-only IVF
+        # index (midas/ann.py) instead of the exact scan. Approximate (recall ~0.95 vs exact at
+        # nprobe=16 on real embeddings — see BENCHMARKS §4), so it stays off unless asked for;
+        # the measured exact↔IVF crossover is ~10k records.
+        self._ann_threshold = ann_threshold
+        self._ann_nprobe = ann_nprobe
+        self._ann_cache: tuple[int, object, list[MemoryRecord]] | None = None
 
     def put(self, record: MemoryRecord) -> None:
         self._records[record.id] = record
@@ -84,9 +91,15 @@ class InMemoryStore:
 
         Cosine = dot product (embeddings are L2-normalized). For larger stores this uses a vectorised
         numpy scan over a cached embedding matrix (rebuilt only when records change), with a
-        pure-Python fallback that returns identical results. `Memory` stays store-agnostic, so an ANN
-        backend can replace this wholesale later."""
+        pure-Python fallback that returns identical results. With `ann_threshold` set and reached,
+        search goes through the numpy-only IVF index instead (sub-linear, approximate)."""
         np = _numpy()
+        if (
+            self._ann_threshold is not None
+            and np is not None
+            and len(self._records) >= self._ann_threshold
+        ):
+            return self._search_ann(embedding, limit=limit, predicate=predicate, np=np)
         if np is None or len(self._records) <= _VECTORIZE_THRESHOLD:
             records = [
                 r
@@ -118,3 +131,28 @@ class InMemoryStore:
         top = np.argpartition(-sims, k - 1)[:k]
         top = top[np.argsort(-sims[top], kind="stable")]
         return [(float(sims[i]), recs[i]) for i in top]
+
+    def _search_ann(
+        self,
+        embedding: list[float],
+        *,
+        limit: int,
+        predicate: Callable[[MemoryRecord], bool] | None,
+        np,
+    ) -> list[tuple[float, MemoryRecord]]:
+        """IVF search over the current records; the fitted index is cached on `version` so a
+        stable store pays the k-means build once, not per query."""
+        from .ann import IVFIndex
+
+        if self._ann_cache is None or self._ann_cache[0] != self.version:
+            recs = [r for r in self._records.values() if r.embedding is not None]
+            if not recs:
+                return []
+            index = IVFIndex().fit([r.embedding for r in recs])
+            self._ann_cache = (self.version, index, recs)
+        _, index, recs = self._ann_cache
+        allowed = None
+        if predicate is not None:
+            allowed = np.fromiter((predicate(r) for r in recs), dtype=bool, count=len(recs))
+        rows, scores = index.search(embedding, k=limit, nprobe=self._ann_nprobe, allowed=allowed)
+        return [(float(s), recs[i]) for i, s in zip(rows, scores)]

@@ -133,6 +133,22 @@ python -m eval.runner --dataset multiday --dumb-reader --midas-supersede \
   --midas-min-relevance-ratio 0   # the A/B: disable the floor
 ```
 
+### Multilingual embeddings — measured both ways (opt-in)
+
+The default `bge-base` is **English-only**, and that failure mode is silent: on a Spanish mirror of
+the synthetic dataset (`--dataset synthetic-es`) its deterministic extractive answer drops to
+**0.68**, while `paraphrase-multilingual-MiniLM-L12-v2` (`MIDAS_MCP_EMBEDDER=multilingual`, ~120 MB,
+384-d) scores **1.00** — and both score 1.00 on the English twin. The other side of the trade,
+measured on English LongMemEval-`s` (n=40, deterministic): the multilingual model retrieves at
+**recall@k 0.83 vs bge-base's 0.95**. So: work in English → keep the default; work in another
+language → switch to `multilingual`, where the default effectively fails. (The cross-encoder
+reranker is English-trained and stays off in multilingual mode.)
+
+```bash
+python -m eval.runner --dataset synthetic-es --local --dumb-reader --midas-no-rerank \
+  --local-model sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2   # vs default bge
+```
+
 ### Hybrid retrieval (BM25+RRF) — measured, kept opt-in
 
 Fusing a lexical BM25 ranking with semantic recall (`recall(hybrid=True)`, reciprocal-rank fusion)

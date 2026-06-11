@@ -68,6 +68,37 @@ def synthetic() -> Dataset:
     return Dataset(name="synthetic-v0", samples=[Sample("s1", events, questions)])
 
 
+def synthetic_es() -> Dataset:
+    """Spanish mirror of `synthetic()` (same ids, same gold structure): measures whether the
+    configured embedder actually retrieves by meaning in a non-English language — an
+    English-only embedder (bge-base) degrades here; a multilingual one should not."""
+    events = [
+        Event("e1", "El nombre en clave del proyecto es Polaris.", kind="fact", importance=4),
+        Event("e2", "Charlamos un rato sobre el fin de semana y el tiempo.", kind="chat"),
+        Event("e3", "Decisión: la base de datos principal es PostgreSQL, no MySQL.", kind="constraint", importance=5),
+        Event("e4", "Por cierto: acaban de abrir una cafetería buenísima en el centro.", kind="chat"),
+        Event("e5", "La fecha de lanzamiento se movió al 14 de septiembre.", kind="fact", importance=5),
+        Event("e6", "El usuario prefiere todas las respuestas en unidades métricas.", kind="preference", importance=3),
+        Event("e7", "Restricción: nunca almacenar PII de usuarios en texto plano, en ningún sitio.", kind="constraint", importance=5),
+        Event("e8", "Hablamos de películas favoritas y de una serie que todos están viendo.", kind="chat"),
+        Event("e9", "Decisión: las respuestas de la API deben mantenerse por debajo de 200ms en p95.", kind="constraint", importance=4),
+        Event("e10", "El techo de presupuesto mensual de infraestructura es de 2000 euros.", kind="fact", importance=4),
+        Event("e11", "Conversación trivial sobre unas vacaciones en la costa el mes que viene.", kind="chat"),
+        Event("e12", "La reunión diaria del equipo se movió a las 10 de la mañana los martes.", kind="note", importance=2),
+        Event("e13", "Recordatorio de comprar más café para la cocina de la oficina.", kind="chat"),
+        Event("e14", "La ingeniera backend principal de Polaris es Mara.", kind="fact", importance=3),
+    ]
+    questions = [
+        Question("q1", "¿Qué base de datos decidimos usar?", "PostgreSQL", ["e3"]),
+        Question("q2", "¿Cuándo es el lanzamiento?", "14 de septiembre", ["e5"]),
+        Question("q3", "¿Cuál es el presupuesto mensual de infraestructura?", "2000 euros", ["e10"]),
+        Question("q4", "¿Hay alguna regla sobre el manejo de datos de usuarios?", "nunca almacenar PII de usuarios en texto plano", ["e7"]),
+        Question("q5", "¿Cuál es el nombre en clave del proyecto?", "Polaris", ["e1"]),
+        Question("q6", "¿Quién es la ingeniera backend principal?", "Mara", ["e14"]),
+    ]
+    return Dataset(name="synthetic-es-v0", samples=[Sample("s1", events, questions)])
+
+
 def locomo(
     path: str | Path | None = None,
     *,

@@ -199,6 +199,16 @@ class DiskCachedEmbedder:
         return rows
 
     def _write_many(self, items) -> None:
+        items = list(items)
+        for _, vec in items:
+            if len(vec) != self.dim:
+                # Fail loudly at write time: an embedder lying about its `dim` (the old
+                # LocalEmbedder hardcoded 768 for every model) would otherwise poison the
+                # on-disk cache and only blow up sessions later, at read time.
+                raise ValueError(
+                    f"embedder produced a {len(vec)}-d vector but declares dim={self.dim}; "
+                    "refusing to write a mislabelled cache row"
+                )
         rows = [
             (self.namespace, key, self.dim, _encode_vector(vec))
             for key, vec in items
@@ -267,7 +277,17 @@ class LocalEmbedder:
 
         self._model = TextEmbedding(model_name=model_name, cache_dir=self.cache_dir)
         self.model_name = model_name
-        self.dim = 768
+        # Dimension from the model's own registry entry — hardcoding 768 poisoned the disk cache
+        # for any non-default model (e.g. multilingual MiniLM is 384-d: blobs were written with a
+        # wrong dim label and failed to decode on the next session).
+        self.dim = next(
+            (
+                int(m["dim"])
+                for m in TextEmbedding.list_supported_models()
+                if m["model"] == model_name
+            ),
+            0,
+        ) or len(next(iter(self._model.embed(["probe"], batch_size=1))))
         self.batch_size = batch_size
         self.max_text_chars = max_text_chars or self._MAX_TEXT_CHARS
 
