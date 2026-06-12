@@ -29,6 +29,16 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
   0.56 → **0.58**. The first detector iteration (which also pinned assistant-voiced advice) hurt
   across the board and is documented as the negative that set the user-voice-only rule.
 
+### Measured negative (kept opt-in, default off)
+- **Hit-anchored expansion / pseudo-relevance feedback** (`recall(anchor_boost=…)`,
+  `--midas-anchor-boost`) — letting records near a confirmed top hit earn `boost × cosine`
+  relevance was the natural attack on the multi-evidence categories (event-ordering 0.24 on
+  BEAM-100K), and it *hurts monotonically*: overall recall@k 0.56 → 0.44 (boost 0.7) → 0.28
+  (0.85), with the target category itself dropping to 0.17. Anchor-similar records are
+  conversational near-duplicates, not gold. Third member of the same measured family (hybrid
+  fusion, thread-cap): **reshuffling bge's dense ranking only ever degraded it** — the remaining
+  aggregation-category gap is a reader/structure problem, not a retrieval-reordering one.
+
 ### Fixed
 - **Belief revision did not survive restarts on SQLite-backed stores** — supersession mutated the
   in-memory mirror without persisting (`store.put`), so `superseded_by` silently vanished on
