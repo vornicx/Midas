@@ -138,13 +138,21 @@ python -m eval.runner --dataset multiday --dumb-reader --midas-supersede \
 [BEAM](https://arxiv.org/abs/2510.27246) (ICLR 2026) is the field's successor to LoCoMo/LongMemEval:
 coherent conversations at **128K–10M tokens** where context-stuffing is physically impossible, with
 ten memory abilities and `source_chat_ids` evidence — so the deterministic `recall@k` applies (see
-[`docs/frontier-2026.md`](docs/frontier-2026.md) for the landscape). First tier, full set
-(20 conversations, 5,732 turns, 400 questions, bge-base, no rerank, seed 0):
+[`docs/frontier-2026.md`](docs/frontier-2026.md) for the landscape). Full tiers measured so far
+(every conversation, every question; bge-base, no rerank, seed 0, no pinning — the conservative
+config):
 
-| BEAM 100K (deterministic) | baseline-raw | **Midas** |
-|---|---:|---:|
-| recall@k (overall) | 0.00 | **0.56** |
-| ingest cost | — | ~91 ms/turn local, **0 LLM, $0** |
+| BEAM tier (deterministic recall@k) | turns ingested | n | baseline-raw | **Midas** |
+|---|---:|---:|---:|---:|
+| **100K** (20 conversations) | 5,732 | 400 | 0.00 | **0.56** |
+| **500K** (35 conversations) | 38,058 | 700 | 0.00 | **0.51** |
+
+The wedge **holds at 5× scale** (0.56 → 0.51 — graceful degradation while the recency baseline
+stays at literal zero), and the belief categories stay strong as the haystack grows:
+contradiction-resolution **0.80 → 0.80** · knowledge-update 0.89 → 0.76 · temporal 0.90 → 0.73 ·
+multi-session actually *rises* 0.51 → **0.63**. Ingest stays embed-bound at ~104 ms/turn,
+**0 LLM calls, $0, zero egress** — at this tier an LLM-at-ingest pipeline pays for ~500K tokens of
+extraction *per conversation*.
 
 Per-category recall@k tells an honest structural story. Midas is strongest exactly where its
 belief machinery lives — **temporal 0.90 · knowledge-update 0.89 · contradiction-resolution
@@ -152,7 +160,7 @@ belief machinery lives — **temporal 0.90 · knowledge-update 0.89 · contradic
 weak on the aggregation abilities (**instruction-following 0.26 · event-ordering 0.24 ·
 summarization 0.18**), which need *the whole conversation*, not the top-k turns — the documented
 cost of the no-LLM/no-summarization trade. A recency window retrieves **0.00 across every
-category**: at 100K tokens there is no naive fallback. The 500K/1M/10M tiers are next (ingest is
+category**: at these scales there is no naive fallback. The 1M and 10M tiers are next (ingest is
 embed-bound, so the 10M tier costs hours of local CPU — not the dollars-per-conversation an
 LLM-at-ingest pipeline pays there).
 
