@@ -30,6 +30,7 @@ class MidasAdapter:
         min_relevance: float | None = None,
         min_relevance_ratio: float | None = None,  # scale-free parsimony: drop hits < ratio*top
         thread_cap: int = 0,  # diversification: max hits per session-thread (0 = off)
+        pinned_limit: int = 0,  # pinned standing-directive slots in context (0 = off)
         neighbor_min_importance: int | None = None,
         max_record_chars: int = 600,
         supersede: bool = False,
@@ -61,6 +62,7 @@ class MidasAdapter:
         self._min_relevance = min_relevance
         self._min_relevance_ratio = min_relevance_ratio
         self._thread_cap = thread_cap
+        self._pinned_limit = pinned_limit
         self._neighbor_min_importance = neighbor_min_importance
         self._max_record_chars = max_record_chars
         self._supersede = supersede
@@ -103,6 +105,7 @@ class MidasAdapter:
     def reset(self) -> None:
         reranker = self._get_reranker()
         self._mem = Memory(
+            detect_standing=self._pinned_limit > 0,
             embedder=self._embedder,
             reranker=reranker if self._rerank else None,  # retrieval rerank only when enabled
             # Calibration reranker scores context for abstention WITHOUT reordering retrieval:
@@ -174,6 +177,7 @@ class MidasAdapter:
             min_relevance=self._min_relevance,
             min_relevance_ratio=self._min_relevance_ratio,
             thread_cap=self._thread_cap,
+            pinned_limit=self._pinned_limit,
             hybrid=self._hybrid,
             fusion=self._hybrid_fusion,
             now=now if self._time_aware else None,  # recency decays from when the question is asked

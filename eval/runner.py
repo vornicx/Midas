@@ -586,6 +586,7 @@ def main() -> None:
     parser.add_argument("--midas-min-relevance", type=float, default=None, help="drop Midas hits below this relevance")
     parser.add_argument("--midas-min-relevance-ratio", type=float, default=None, help="drop Midas hits below RATIO x the query's top-hit relevance (scale-free parsimony)")
     parser.add_argument("--midas-thread-cap", type=int, default=0, help="diversification: cap recall hits per session-thread (0 = off)")
+    parser.add_argument("--midas-pinned", type=int, default=0, help="pin up to N standing directives (no-LLM cue detector) into every context (0 = off)")
     parser.add_argument("--midas-max-record-chars", type=int, default=600, help="truncate Midas record bodies")
     parser.add_argument("--midas-only", action="store_true", help="only run Midas")
     parser.add_argument("--midas-supersede", action="store_true", help="enable Midas belief-revision (regression test)")
@@ -673,6 +674,7 @@ def main() -> None:
         min_relevance=midas_min_relevance,
         min_relevance_ratio=args.midas_min_relevance_ratio,
         thread_cap=args.midas_thread_cap,
+        pinned_limit=args.midas_pinned,
         max_record_chars=args.midas_max_record_chars,
         supersede=args.midas_supersede or args.midas_supersede_convo,
         supersede_conversational=args.midas_supersede_convo,

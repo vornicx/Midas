@@ -156,6 +156,22 @@ category**: at 100K tokens there is no naive fallback. The 500K/1M/10M tiers are
 embed-bound, so the 10M tier costs hours of local CPU — not the dollars-per-conversation an
 LLM-at-ingest pipeline pays there).
 
+**Pinned standing directives (measured fix for the instruction gap).** A durable user rule
+("from now on, reply in Spanish") applies to *every* turn yet is semantically unrelated to most
+queries, so relevance-ranked recall structurally misses it. Midas now detects standing directives
+at ingest (cue regex, no LLM, user-voiced turns only) and `build_context` pins up to
+`MIDAS_MCP_PINNED` of them into every context — the no-LLM version of Letta's always-in-context
+core memory. Measured on BEAM-100K (full tier): **instruction-following recall@k 0.26 → 0.44**
+(pinned=2, the default) **→ 0.51** (pinned=4), overall 0.56 → **0.58**, no real regression
+elsewhere (extraction −0.03, within noise). The first iteration of the detector — which also
+pinned assistant-voiced advice — *hurt* across the board (overall 0.50, instructions 0.21) and is
+kept as the honest negative that set the user-voice-only rule.
+
+```bash
+python -m eval.runner --dataset beam --beam-tier 100K --max-convs 20 --local \
+  --midas-no-rerank --dumb-reader --seed 0 --midas-only --midas-pinned 4   # the A/B
+```
+
 ```bash
 # data/beam/100K.parquet from https://huggingface.co/datasets/Mohammadta/BEAM
 python -m eval.runner --dataset beam --beam-tier 100K --max-convs 20 --local \
