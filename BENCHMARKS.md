@@ -147,13 +147,20 @@ config):
 | **100K** (20 conversations) | 5,732 | 400 | 0.00 | **0.56** |
 | **500K** (35 conversations) | 38,058 | 700 | 0.00 | **0.51** |
 | **1M** (35 conversations) | 74,630 | 700 | 0.00 | **0.40** |
+| **10M** (10 conversations) | 208,696 | 200 | 0.00 | **0.32** |
 
-The wedge **holds across a 13× scale-up** (0.56 → 0.51 → 0.40 — graceful degradation while the
-recency baseline stays at literal zero at every tier), and the belief categories degrade slowest:
-knowledge-update 0.89 → 0.76 → **0.73** · temporal 0.90 → 0.73 → **0.65** · contradiction
-0.80 → 0.80 → **0.60**. Ingest stays embed-bound at ~100 ms/turn, **0 LLM calls, $0, zero
-egress** — at the 1M tier an LLM-at-ingest pipeline pays for a million tokens of extraction *per
-conversation*.
+**All four tiers, complete.** The wedge holds across a **100× scale-up** (0.56 → 0.51 → 0.40 →
+0.32 — graceful degradation while the recency baseline stays at literal zero at every tier). At
+the 10M tier — the regime where "no context window is large enough and only a real memory
+architecture works" — Midas still retrieves a third of the gold evidence, with knowledge-update
+holding at **0.68** and extraction at 0.55. The belief categories degrade slowest across the whole
+series: knowledge-update 0.89 → 0.76 → 0.73 → **0.68** · contradiction 0.80 → 0.80 → 0.60 →
+0.48. Ingest stays embed-bound throughout (~100–140 ms/turn, **0 LLM calls, $0, zero egress**):
+the entire 10M tier — 208,696 turns — ingested for **hours of local CPU**, where an LLM-at-ingest
+pipeline pays for ten million tokens of extraction *per conversation*. The honest weak side
+scales too: the aggregation abilities collapse at 10M (instruction-following 0.00 · event-ordering
+0.02 · summarization 0.03) — whole-conversation abilities that top-k retrieval cannot cover by
+construction.
 
 Per-category recall@k tells an honest structural story. Midas is strongest exactly where its
 belief machinery lives — **temporal 0.90 · knowledge-update 0.89 · contradiction-resolution
