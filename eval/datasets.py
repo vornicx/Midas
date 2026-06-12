@@ -547,7 +547,7 @@ _BEAM_TIERS = ("100K", "500K", "1M", "10M")
 
 def _parse_beam_anchor(value: str | None) -> float | None:
     """BEAM time anchors look like 'March-15-2024' — real event time for bitemporal recall."""
-    if not value:
+    if not value or value == "None":  # the 10M tier serialises missing anchors as the string "None"
         return None
     try:
         return _dt.datetime.strptime(value, "%B-%d-%Y").replace(
@@ -570,6 +570,45 @@ def _beam_gold_ids(raw, prefix: str) -> list[str]:
         for v in raw:
             values.extend(v if isinstance(v, list) else [v])
     return [f"{prefix}:{int(v)}" for v in values if isinstance(v, (int, str)) and str(v).isdigit()]
+
+
+def _beam_iter_messages(chat):
+    """Yield (session_key, message) across BOTH BEAM chat layouts.
+
+    100K/500K/1M: `chat` is a list of batches, each a list of message dicts.
+    10M: `chat` is a list of segments, each a dict plan-N -> list of batches, each
+    {batch_number, time_anchor, turns: [[msg, msg, ...], ...]} — ids are strings and missing
+    fields are the literal string "None". A batch-level time_anchor is pushed down onto its first
+    message when the message itself has none."""
+    for seg_i, seg in enumerate(chat):
+        if isinstance(seg, list):
+            for msg in seg:
+                yield f"b{seg_i}", msg
+            continue
+        if not isinstance(seg, dict):
+            continue
+
+        def _plan_order(name: str) -> int:
+            try:
+                return int(name.rsplit("-", 1)[1])
+            except (IndexError, ValueError):
+                return 0
+
+        for plan in sorted(seg, key=_plan_order):
+            batches = seg[plan]
+            if not batches:
+                continue
+            for b in sorted(batches, key=lambda x: x.get("batch_number") or 0):
+                b_anchor = b.get("time_anchor")
+                first = True
+                for group in b.get("turns") or []:
+                    for msg in group if isinstance(group, list) else [group]:
+                        if not isinstance(msg, dict):
+                            continue
+                        if first and msg.get("time_anchor") in (None, "None") and b_anchor not in (None, "None"):
+                            msg = {**msg, "time_anchor": b_anchor}
+                        first = False
+                        yield f"{plan}-b{b.get('batch_number')}", msg
 
 
 def beam(
@@ -617,26 +656,25 @@ def beam(
         events: list[Event] = []
         anchor: float | None = None
         last_anchor: float | None = None
-        for batch_i, batch in enumerate(row["chat"]):
-            for msg in batch:
-                parsed = _parse_beam_anchor(msg.get("time_anchor"))
-                if parsed is not None:
-                    anchor = parsed
-                last_anchor = anchor if anchor is not None else last_anchor
-                content = _BEAM_MARKER_RE.sub("", (msg.get("content") or "")).strip()
-                if not content:
-                    continue
-                events.append(
-                    Event(
-                        id=f"{cid}:{msg['id']}",
-                        content=f"{msg.get('role', 'user')}: {content}",
-                        kind="chat",
-                        metadata={
-                            "session": f"{cid}-b{batch_i}",
-                            "timestamp": anchor,
-                        },
-                    )
+        for session_key, msg in _beam_iter_messages(row["chat"]):
+            parsed = _parse_beam_anchor(msg.get("time_anchor"))
+            if parsed is not None:
+                anchor = parsed
+            last_anchor = anchor if anchor is not None else last_anchor
+            content = _BEAM_MARKER_RE.sub("", (msg.get("content") or "")).strip()
+            if not content:
+                continue
+            events.append(
+                Event(
+                    id=f"{cid}:{int(msg['id'])}",
+                    content=f"{msg.get('role', 'user')}: {content}",
+                    kind="chat",
+                    metadata={
+                        "session": f"{cid}-{session_key}",
+                        "timestamp": anchor,
+                    },
                 )
+            )
         asked_at = (last_anchor or 0) + 86_400 or None  # the day after the last anchored turn
 
         questions: list[Question] = []

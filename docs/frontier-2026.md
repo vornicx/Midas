@@ -52,8 +52,9 @@ unanswerable category).
 
 ## 5. Roadmap (eval-first, in order)
 
-1. **BEAM 500K → 1M → 10M tiers** — same harness; ingest is embed-bound, so the 10M tier
-   (~209k turns) costs hours of local CPU, not dollars (the cost story IS the result).
+1. ~~BEAM 500K → 1M → 10M tiers~~ — **done, all four tiers** (recall@k 0.56/0.51/0.40/0.32 vs a
+   0.00 baseline everywhere; BENCHMARKS §BEAM). The cost story held: the 10M tier ingested for
+   hours of local CPU at $0.
 2. **Judged BEAM runs** with a fixed hosted reader (pending API credits) for cross-system
    answer-rate comparison vs the Mem0/Hindsight published numbers.
 3. **Bitemporal recall on BEAM event-ordering/temporal categories** — measure whether

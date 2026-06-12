@@ -31,6 +31,7 @@ class MidasAdapter:
         min_relevance_ratio: float | None = None,  # scale-free parsimony: drop hits < ratio*top
         thread_cap: int = 0,  # diversification: max hits per session-thread (0 = off)
         pinned_limit: int = 0,  # pinned standing-directive slots in context (0 = off)
+        anchor_boost: float = 0.0,  # PRF: records near a top hit earn boost*cosine relevance
         neighbor_min_importance: int | None = None,
         max_record_chars: int = 600,
         supersede: bool = False,
@@ -63,6 +64,7 @@ class MidasAdapter:
         self._min_relevance_ratio = min_relevance_ratio
         self._thread_cap = thread_cap
         self._pinned_limit = pinned_limit
+        self._anchor_boost = anchor_boost
         self._neighbor_min_importance = neighbor_min_importance
         self._max_record_chars = max_record_chars
         self._supersede = supersede
@@ -178,6 +180,7 @@ class MidasAdapter:
             min_relevance_ratio=self._min_relevance_ratio,
             thread_cap=self._thread_cap,
             pinned_limit=self._pinned_limit,
+            anchor_boost=self._anchor_boost,
             hybrid=self._hybrid,
             fusion=self._hybrid_fusion,
             now=now if self._time_aware else None,  # recency decays from when the question is asked
@@ -189,6 +192,7 @@ class MidasAdapter:
             question, limit=self._limit, now=now if self._time_aware else None,
             pool=self._pool, min_relevance=self._min_relevance,
             min_relevance_ratio=self._min_relevance_ratio, thread_cap=self._thread_cap,
+            anchor_boost=self._anchor_boost,
             hybrid=self._hybrid, fusion=self._hybrid_fusion,
         )
         top_texts = [h.record.content for h in hits]

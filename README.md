@@ -332,6 +332,7 @@ verbatim MCP policy in [docs/methodology.md](docs/methodology.md)):
 |---|---:|---:|
 | **Retrieval** — LongMemEval-`s` recall@k (FULL set: 500 questions, 246,750 turns) | 0.01 | **0.92** |
 | **Retrieval** — LoCoMo recall@k (full public set: 10 conversations, n=1,540) | 0.05 | **0.73** |
+| **Retrieval** — BEAM recall@k (all 4 tiers, 100K→**10M tokens**) | 0.00 | **0.56→0.32** |
 | **Answer** — LongMemEval-`s` correctness (reader = gpt-4.1-mini, n=40) | 0.05 | **0.82** |
 | **Ingest cost** | — | **0 LLM calls · $0 API · 0 data egress** |
 

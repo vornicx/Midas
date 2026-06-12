@@ -512,6 +512,7 @@ class Memory:
         thread_cap: int = 0,
         thread_key: str = "session",
         as_of: float | None = None,
+        anchor_boost: float = 0.0,
     ) -> list[RecallHit]:
         q_emb = self.embedder.embed(query)
         # `now` is the query's reference time (e.g. when the question is asked); recency decays
@@ -587,6 +588,33 @@ class Memory:
             )
             hits.append(RecallHit(record, score, relevance, importance_norm, recency))
         hits.sort(key=lambda h: (h.score, h.record.updated_at), reverse=True)
+        if anchor_boost and anchor_boost > 0 and hits:
+            # Hit-anchored expansion (pseudo-relevance feedback, no LLM): the other instances of
+            # an evolving fact resemble EACH OTHER even when the query's phrasing only matches one
+            # of them. Treat the top hits as confirmed-relevant anchors and let records near an
+            # anchor earn relevance = anchor_boost x cosine-to-anchor, then re-rank.
+            by_id: dict[str, RecallHit] = {h.record.id: h for h in hits}
+            for anchor in [h.record for h in hits[:3]]:
+                if anchor.embedding is None:
+                    continue
+                for sim, rec in self.store.search(anchor.embedding, limit=pool, predicate=predicate):
+                    if rec.id == anchor.id or (self._supersede and rec.superseded_by is not None):
+                        continue
+                    rel = anchor_boost * max(0.0, sim)
+                    existing = by_id.get(rec.id)
+                    if existing is not None and rel <= existing.relevance:
+                        continue
+                    importance_norm = (rec.importance - 1) / 4
+                    age_days = max(0.0, (now - rec.updated_at) / 86_400.0)
+                    recency = math.exp(-age_days / RECENCY_HALF_LIFE_DAYS)
+                    by_id[rec.id] = RecallHit(
+                        rec,
+                        self.w_relevance * rel + self.w_importance * importance_norm + self.w_recency * recency,
+                        rel,
+                        importance_norm,
+                        recency,
+                    )
+            hits = sorted(by_id.values(), key=lambda h: (h.score, h.record.updated_at), reverse=True)
         if thread_cap and thread_cap > 0:
             # Thread diversification: multi-evidence questions ("when did I first…?") have gold
             # spread across sessions, and plain top-k lets consecutive turns of one session crowd

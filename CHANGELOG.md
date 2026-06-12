@@ -29,6 +29,16 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
   0.56 → **0.58**. The first detector iteration (which also pinned assistant-voiced advice) hurt
   across the board and is documented as the negative that set the user-voice-only rule.
 
+### Measured negative (kept opt-in, default off)
+- **Hit-anchored expansion / pseudo-relevance feedback** (`recall(anchor_boost=…)`,
+  `--midas-anchor-boost`) — letting records near a confirmed top hit earn `boost × cosine`
+  relevance was the natural attack on the multi-evidence categories (event-ordering 0.24 on
+  BEAM-100K), and it *hurts monotonically*: overall recall@k 0.56 → 0.44 (boost 0.7) → 0.28
+  (0.85), with the target category itself dropping to 0.17. Anchor-similar records are
+  conversational near-duplicates, not gold. Third member of the same measured family (hybrid
+  fusion, thread-cap): **reshuffling bge's dense ranking only ever degraded it** — the remaining
+  aggregation-category gap is a reader/structure problem, not a retrieval-reordering one.
+
 ### Fixed
 - **Belief revision did not survive restarts on SQLite-backed stores** — supersession mutated the
   in-memory mirror without persisting (`store.put`), so `superseded_by` silently vanished on
@@ -70,6 +80,13 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
   heuristic ships either.
 
 ### Measured
+- **BEAM, all four tiers complete (100K → 10M tokens), deterministic.** Midas recall@k
+  **0.56 → 0.51 → 0.40 → 0.32** across a 100× scale-up while the recency baseline scores **0.00 at
+  every tier**; knowledge-update holds at 0.68 even at 10M. The 10M tier (208,696 turns per the 10
+  conversations) ingested in hours of local CPU at $0 — the cost regime where LLM-at-ingest
+  systems pay for ten million tokens of extraction per conversation. Honest weak side documented:
+  aggregation abilities collapse at 10M (instruction 0.00, event-ordering 0.02, summarization
+  0.03) — whole-conversation abilities top-k retrieval cannot cover by construction.
 - **Full-set retrieval headlines — no sampling caveat left.** LongMemEval-`s`, all **500**
   questions (246,750 turns ingested, deterministic, seed 0): Midas recall@k **0.92** vs
   recency-baseline **0.01**; per-category fact 0.97 (n=126) · knowledge-update 0.93 (n=78) ·
