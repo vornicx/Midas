@@ -22,6 +22,9 @@ Config (env):
     MIDAS_MCP_SUPERSEDE    = 1/0 typed belief revision for stale facts (default: 1)
     MIDAS_MCP_SUPERSEDE_CONVO = 1 enables strict-cue chat revision (default: 0)
     MIDAS_MCP_NLI          = 1 gates revision with the local NLI model (default: 0)
+    MIDAS_MCP_AUTO_MAINTAIN = minutes between background maintenance passes (consolidate
+                             near-duplicates + bound the store) — "sleep-time" upkeep at $0,
+                             no LLM, while the agent is idle (default: 0 = off)
 """
 from __future__ import annotations
 
@@ -278,6 +281,7 @@ def recall(
     pool: int = 0,
     explain: bool = True,
     namespace: str = "",
+    as_of: str = "",
 ) -> list[dict]:
     """Retrieve relevant memories with deterministic, source-traceable evidence.
 
@@ -285,7 +289,14 @@ def recall(
     (relevance, importance_norm, recency). No LLM rewrites or rationales are generated.
     Set hybrid=true to fuse BM25 lexical matching with semantic recall — useful when the query is
     an exact identifier (an error code, a function name) rather than a paraphrase.
+    as_of: ISO date (YYYY-MM-DD) for a HISTORICAL query — "what did memory say on that date":
+    later records are excluded and revised beliefs resolve to the version valid then.
     """
+    as_of_ts: float | None = None
+    if as_of:
+        import datetime as _dt
+
+        as_of_ts = _dt.datetime.fromisoformat(as_of).replace(tzinfo=_dt.timezone.utc).timestamp()
     return [
         _serialize_recall_hit(h, explain=bool(explain))
         for h in _mem.recall(
@@ -298,6 +309,7 @@ def recall(
             fusion=fusion,
             pool=int(pool) or None,
             metadata_filter=_ns_filter(namespace),
+            as_of=as_of_ts,
         )
     ]
 
@@ -529,7 +541,39 @@ def memory_session(goal: str = "") -> str:
     )
 
 
+def _run_maintenance_pass() -> dict:
+    """One no-LLM upkeep pass: collapse near-duplicate restatements and re-bound the store.
+
+    This is the sleep-time idea (reorganise memory while the agent is idle) at Midas prices:
+    extractive consolidation + value-ranked forgetting, $0, nothing leaves the box — versus
+    LLM-agent rewrites of memory in systems like Letta's sleep-time agents."""
+    consolidated = _mem.consolidate(similarity_threshold=0.95)
+    forgotten = _mem.forget_decayed(max_records=_MAX_RECORDS) if _MAX_RECORDS else []
+    return {"consolidated": len(consolidated), "forgotten": len(forgotten)}
+
+
+def _auto_maintain_loop(interval_seconds: float) -> None:
+    import time as _time
+
+    while True:
+        _time.sleep(interval_seconds)
+        try:
+            result = _run_maintenance_pass()
+            if result["consolidated"] or result["forgotten"]:
+                print(f"[midas-mcp] auto-maintain: {result}", file=sys.stderr)
+        except Exception as exc:  # never let upkeep kill the server
+            print(f"[midas-mcp] auto-maintain error: {exc}", file=sys.stderr)
+
+
 def main() -> None:
+    interval_min = int(os.getenv("MIDAS_MCP_AUTO_MAINTAIN", "0") or "0")
+    if interval_min > 0:
+        import threading
+
+        threading.Thread(
+            target=_auto_maintain_loop, args=(interval_min * 60.0,), daemon=True
+        ).start()
+        print(f"[midas-mcp] auto-maintain every {interval_min} min (no LLM)", file=sys.stderr)
     server.run()
 
 

@@ -6,6 +6,27 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- **BEAM adapter — the 10M-token frontier benchmark** (`eval.runner --dataset beam --beam-tier
+  100K|500K|1M|10M`). BEAM ("Beyond a Million Tokens", ICLR 2026) is the regime where
+  context-stuffing is physically impossible; its questions carry `source_chat_ids` evidence, so
+  Midas's deterministic reader-independent `recall@k` applies on the frontier benchmark. Loader
+  maps real `time_anchor` event times (bitemporal signal) and BEAM's abstention category onto the
+  runner's unanswerable semantics; rubric-only categories contribute retrieval metrics only.
+  Landscape research + positioning in [`docs/frontier-2026.md`](docs/frontier-2026.md).
+- **Bitemporal belief history** — retired beliefs now carry a validity bound (`superseded_at` =
+  the revising record's event time) and `recall(as_of=…)` (MCP: `recall(as_of="YYYY-MM-DD")`)
+  answers "what did memory say on date X": later records are excluded and supersession chains
+  resolve to the version valid then. Zep-class historical queries with no graph DB and no LLM.
+- **Background auto-maintain (sleep-time at $0)** — `MIDAS_MCP_AUTO_MAINTAIN=<minutes>` runs a
+  periodic no-LLM upkeep pass (consolidate near-duplicates + re-bound the store) while the agent
+  is idle — the sleep-time-compute insight without an LLM rewriting memory.
+
+### Fixed
+- **Belief revision did not survive restarts on SQLite-backed stores** — supersession mutated the
+  in-memory mirror without persisting (`store.put`), so `superseded_by` silently vanished on
+  reopen. Found while adding the bitemporal stamp; regression test included.
+
+### Added (earlier this cycle)
 - **TypeScript port (experimental)** — `packages/midas-ts`, `npx -y midas-memory-mcp`. Same MCP
   tool surface, env knobs, injected policy, **and SQLite schema** as the Python server; the
   hashing embedder is bit-comparable (md5 parity pinned by a Python-generated fixture), so a TS

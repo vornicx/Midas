@@ -133,6 +133,35 @@ python -m eval.runner --dataset multiday --dumb-reader --midas-supersede \
   --midas-min-relevance-ratio 0   # the A/B: disable the floor
 ```
 
+### BEAM — the 10M-token frontier benchmark (first results)
+
+[BEAM](https://arxiv.org/abs/2510.27246) (ICLR 2026) is the field's successor to LoCoMo/LongMemEval:
+coherent conversations at **128K–10M tokens** where context-stuffing is physically impossible, with
+ten memory abilities and `source_chat_ids` evidence — so the deterministic `recall@k` applies (see
+[`docs/frontier-2026.md`](docs/frontier-2026.md) for the landscape). First tier, full set
+(20 conversations, 5,732 turns, 400 questions, bge-base, no rerank, seed 0):
+
+| BEAM 100K (deterministic) | baseline-raw | **Midas** |
+|---|---:|---:|
+| recall@k (overall) | 0.00 | **0.56** |
+| ingest cost | — | ~91 ms/turn local, **0 LLM, $0** |
+
+Per-category recall@k tells an honest structural story. Midas is strongest exactly where its
+belief machinery lives — **temporal 0.90 · knowledge-update 0.89 · contradiction-resolution
+0.80** — mid on retrieval breadth (preference 0.65 · extraction 0.60 · multi-session 0.51), and
+weak on the aggregation abilities (**instruction-following 0.26 · event-ordering 0.24 ·
+summarization 0.18**), which need *the whole conversation*, not the top-k turns — the documented
+cost of the no-LLM/no-summarization trade. A recency window retrieves **0.00 across every
+category**: at 100K tokens there is no naive fallback. The 500K/1M/10M tiers are next (ingest is
+embed-bound, so the 10M tier costs hours of local CPU — not the dollars-per-conversation an
+LLM-at-ingest pipeline pays there).
+
+```bash
+# data/beam/100K.parquet from https://huggingface.co/datasets/Mohammadta/BEAM
+python -m eval.runner --dataset beam --beam-tier 100K --max-convs 20 --local \
+  --local-max-text-chars 600 --midas-no-rerank --dumb-reader --seed 0
+```
+
 ### Multilingual embeddings — measured both ways (opt-in)
 
 The default `bge-base` is **English-only**, and that failure mode is silent: on a Spanish mirror of
