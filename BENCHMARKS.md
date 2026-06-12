@@ -146,13 +146,14 @@ config):
 |---|---:|---:|---:|---:|
 | **100K** (20 conversations) | 5,732 | 400 | 0.00 | **0.56** |
 | **500K** (35 conversations) | 38,058 | 700 | 0.00 | **0.51** |
+| **1M** (35 conversations) | 74,630 | 700 | 0.00 | **0.40** |
 
-The wedge **holds at 5× scale** (0.56 → 0.51 — graceful degradation while the recency baseline
-stays at literal zero), and the belief categories stay strong as the haystack grows:
-contradiction-resolution **0.80 → 0.80** · knowledge-update 0.89 → 0.76 · temporal 0.90 → 0.73 ·
-multi-session actually *rises* 0.51 → **0.63**. Ingest stays embed-bound at ~104 ms/turn,
-**0 LLM calls, $0, zero egress** — at this tier an LLM-at-ingest pipeline pays for ~500K tokens of
-extraction *per conversation*.
+The wedge **holds across a 13× scale-up** (0.56 → 0.51 → 0.40 — graceful degradation while the
+recency baseline stays at literal zero at every tier), and the belief categories degrade slowest:
+knowledge-update 0.89 → 0.76 → **0.73** · temporal 0.90 → 0.73 → **0.65** · contradiction
+0.80 → 0.80 → **0.60**. Ingest stays embed-bound at ~100 ms/turn, **0 LLM calls, $0, zero
+egress** — at the 1M tier an LLM-at-ingest pipeline pays for a million tokens of extraction *per
+conversation*.
 
 Per-category recall@k tells an honest structural story. Midas is strongest exactly where its
 belief machinery lives — **temporal 0.90 · knowledge-update 0.89 · contradiction-resolution
