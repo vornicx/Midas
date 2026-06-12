@@ -316,3 +316,12 @@ def test_recall_as_of_returns_the_historical_belief():
     # The injected prompt is how installing Midas makes an agent start remembering on its own.
     assert server.instructions and "capture" in server.instructions.lower()
     assert "check_memory_use" in server.instructions
+
+
+def test_build_context_pins_standing_directives():
+    forget_all()
+    capture("From now on, always reply in Spanish.", kind="chat")
+    for i in range(20):
+        remember(f"database migration note {i} about postgres tables", kind="note")
+    ctx = build_context("how do I migrate the postgres schema?", token_budget=300)
+    assert "reply in Spanish" in ctx, "the standing directive must be pinned into every context"

@@ -144,3 +144,30 @@ class StructuralImportance(ContentImportance):
         return max(self.min_importance, min(self.max_importance, score))
 
     __call__ = score
+
+
+# Standing-instruction detection (no LLM): cues that mark a turn as a DURABLE directive —
+# "always format code with type hints", "from now on reply in Spanish" — the memory that should
+# be PINNED into context regardless of query relevance (a one-time statement, applicable always,
+# is semantically unrelated to almost every later query, so vector recall alone misses it).
+# Precision-oriented: generic imperative/future-scope cues only, no dataset-specific terms.
+_STANDING_RE = re.compile(
+    r"\b(from now on|going forward|in the future|for (?:all )?future|by default|"
+    r"every time you|whenever you|make sure (?:to|you)|remember to|don'?t forget to|"
+    r"always (?:use|format|include|write|respond|reply|show|add|keep|put|start|end|answer|call)|"
+    r"never (?:use|include|show|add|put|write|mention)|"
+    r"i (?:want|need|expect) you to (?:always|never|use|include)|you (?:should|must) always)\b",
+    re.I,
+)
+
+
+def is_standing_instruction(text: str) -> bool:
+    """Cheap, deterministic detector for standing directives worth pinning. Questions are never
+    standing instructions, and assistant-voiced turns (role-prefixed chat records) are advice,
+    not user directives — pinning those displaced real evidence in the BEAM A/B."""
+    text = (text or "").strip()
+    if not text or text.endswith("?"):
+        return False
+    if text.lower().startswith(("assistant:", "system:")):
+        return False
+    return bool(_STANDING_RE.search(text))

@@ -212,6 +212,7 @@ class Memory:
         reinforce_threshold: float = 0.85,
         reinforce_bump: int = 1,
         include_provenance: bool = False,
+        detect_standing: bool = False,  # tag standing directives at ingest (no LLM cue detector)
     ) -> None:
         self.store = store if store is not None else InMemoryStore()
         self.embedder = embedder if embedder is not None else HashingEmbedder()
@@ -247,6 +248,7 @@ class Memory:
         self._abstention_relevance_floor = abstention_relevance_floor
         self._abstention_entailment_floor = abstention_entailment_floor
         self._include_provenance = include_provenance
+        self._detect_standing = detect_standing
         # Cached BM25 lexical index for hybrid recall, keyed by the store's change counter —
         # rebuilding it per query made hybrid ~35x slower at LongMemEval scale (66 ms vs 1.9 ms).
         self._bm25_cache: tuple[int, Any] | None = None
@@ -266,6 +268,14 @@ class Memory:
         content = (content or "").strip()
         if not content:
             raise ValueError("Memory.remember: `content` is required")
+        if self._detect_standing:
+            from .importance import is_standing_instruction
+
+            if is_standing_instruction(content):
+                # A durable directive ("from now on…", "always format…") applies to every future
+                # turn yet is semantically unrelated to most queries — tag it so build_context can
+                # PIN it into the prompt regardless of relevance (the Letta core-memory idea, no LLM).
+                metadata = {**(metadata or {}), "standing": True}
         embedding = _as_f32(self.embedder.embed(content))
         # `created_at` is the EVENT time (when the fact was true/stated), distinct from ingest order.
         # Passing it makes recency and chronological context reflect real time, not load order — the
@@ -315,6 +325,12 @@ class Memory:
         if len(embeddings) != len(normalized):
             raise ValueError("Memory.remember_many: embedder returned the wrong number of embeddings")
 
+        detect = None
+        if self._detect_standing:
+            from .importance import is_standing_instruction
+
+            detect = is_standing_instruction
+
         records: list[MemoryRecord] = []
         for item, embedding in zip(normalized, embeddings):
             embedding = _as_f32(embedding)  # store as float32 array, not list[float] (footprint)
@@ -322,6 +338,9 @@ class Memory:
             ts = ts if ts is not None else self._now()
             if self._reinforce:
                 self._reinforce_existing(embedding, ts)  # a restatement boosts the matched memory
+            metadata = item.get("metadata") or {}
+            if detect is not None and detect(item["content"]):
+                metadata = {**metadata, "standing": True}
             record = MemoryRecord(
                 id=str(uuid.uuid4()),
                 content=item["content"],
@@ -330,7 +349,7 @@ class Memory:
                 source=item.get("source"),
                 provenance=_normalize_provenance(item.get("provenance") or "observation"),
                 actor=item.get("actor"),
-                metadata=item.get("metadata") or {},
+                metadata=metadata,
                 created_at=ts,
                 updated_at=ts,
                 embedding=embedding,
@@ -839,10 +858,32 @@ class Memory:
         context_order: str = "relevance",
         include_provenance: bool | None = None,
         now: float | None = None,
+        pinned_limit: int = 0,
         **recall_kwargs: Any,
     ) -> ContextBlock:
         hits = self.recall(query, limit=limit, now=now, **recall_kwargs)
         records = [h.record for h in hits]
+        # Pinned channel: standing directives (metadata["standing"], or mission-kind records) are
+        # applicable to EVERY turn but semantically unrelated to most queries, so relevance-ranked
+        # recall misses them. Reserve up to `pinned_limit` slots for them, ranked by importance
+        # then recency — the no-LLM version of Letta's always-in-context core memory.
+        pinned: list[MemoryRecord] = []
+        if pinned_limit > 0:
+            metadata_filter = recall_kwargs.get("metadata_filter")
+            hit_ids = {r.id for r in records}
+            candidates = [
+                r
+                for r in self.store.all()
+                if (r.metadata.get("standing") or r.kind == "mission")
+                and r.id not in hit_ids
+                and r.superseded_by is None
+                and not (
+                    metadata_filter
+                    and any(r.metadata.get(k) != v for k, v in metadata_filter.items())
+                )
+            ]
+            candidates.sort(key=lambda r: (r.importance, r.updated_at), reverse=True)
+            pinned = candidates[:pinned_limit]
         if window > 0 and thread_key is not None:
             records = self._append_neighbors(
                 records,
@@ -862,6 +903,9 @@ class Memory:
                 self._resolve_head if as_of is None else (lambda r: self._resolve_at(r, as_of))
             )
             records = [r for r in records if resolve(r).id == r.id]
+
+        if pinned:
+            records = pinned + records  # pinned first: they must survive the budget cut
 
         # Fill the budget in priority order (highest-value first). Build-context defaults to lean lines
         # because Memory(include_provenance=False) is now the default; full provenance/source remains one

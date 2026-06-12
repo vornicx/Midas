@@ -25,6 +25,11 @@ Config (env):
     MIDAS_MCP_AUTO_MAINTAIN = minutes between background maintenance passes (consolidate
                              near-duplicates + bound the store) — "sleep-time" upkeep at $0,
                              no LLM, while the agent is idle (default: 0 = off)
+    MIDAS_MCP_PINNED       = standing-directive slots pinned into every build_context — durable
+                             user rules ("from now on…", "always…") detected at ingest (no LLM)
+                             and kept in context regardless of query relevance. Measured on BEAM
+                             instruction-following recall@k: 0.26 off -> 0.44 at 2 (default) ->
+                             0.51 at 4, overall unchanged-to-better (0 = off)
 """
 from __future__ import annotations
 
@@ -64,6 +69,7 @@ def _ns_filter(namespace: str) -> dict | None:
 _SUPERSEDE = os.getenv("MIDAS_MCP_SUPERSEDE", "1") != "0"
 _SUPERSEDE_CONVO = os.getenv("MIDAS_MCP_SUPERSEDE_CONVO", "0") == "1"
 _USE_NLI = os.getenv("MIDAS_MCP_NLI", "0") == "1"
+_PINNED = int(os.getenv("MIDAS_MCP_PINNED", "2") or "0")
 
 
 _MULTILINGUAL_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
@@ -117,6 +123,7 @@ def build_memory() -> Memory:
         supersede_conversational=_SUPERSEDE_CONVO,
         nli=nli,
         include_provenance=False,
+        detect_standing=_PINNED > 0,  # tag durable user directives at ingest (no LLM)
     )
 
 
@@ -342,7 +349,8 @@ def build_context(
     Highest-value memories first, with same-session neighbours pulled in, trimmed to token_budget.
     Drop the returned string straight into an LLM prompt. It uses lean memory lines by default;
     call `recall` or `inspect_memory` when you need full provenance/source evidence. Each line is dated
-    and the header anchors today's date so the reader can resolve relative time.
+    and the header anchors today's date so the reader can resolve relative time. Standing user
+    directives ("from now on…", "always…") are pinned in regardless of query relevance.
     """
     return _mem.assemble(
         query,
@@ -352,6 +360,7 @@ def build_context(
         thread_key="session",
         hybrid=bool(hybrid),
         metadata_filter=_ns_filter(namespace),
+        pinned_limit=_PINNED,
         # The "Today is ..." anchor + per-memory relative ages — the LLM-free temporal grounding
         # that lifted temporal recall@k 0.86 -> 0.95 in the eval; identical recency scoring.
         now=time.time(),

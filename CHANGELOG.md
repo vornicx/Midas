@@ -20,6 +20,14 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
 - **Background auto-maintain (sleep-time at $0)** — `MIDAS_MCP_AUTO_MAINTAIN=<minutes>` runs a
   periodic no-LLM upkeep pass (consolidate near-duplicates + re-bound the store) while the agent
   is idle — the sleep-time-compute insight without an LLM rewriting memory.
+- **Pinned standing directives (default on in MCP)** — durable user rules ("from now on…",
+  "always…") are detected at ingest (cue regex, no LLM, user-voiced turns only —
+  `is_standing_instruction`, `Memory(detect_standing=True)`) and `build_context(pinned_limit=…)` /
+  `MIDAS_MCP_PINNED` (default 2) pins them into every context regardless of query relevance: the
+  no-LLM version of Letta's always-in-context core memory. Measured on BEAM-100K:
+  instruction-following recall@k **0.26 → 0.44** (pinned=2) **→ 0.51** (pinned=4), overall
+  0.56 → **0.58**. The first detector iteration (which also pinned assistant-voiced advice) hurt
+  across the board and is documented as the negative that set the user-voice-only rule.
 
 ### Fixed
 - **Belief revision did not survive restarts on SQLite-backed stores** — supersession mutated the
