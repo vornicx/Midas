@@ -24,7 +24,7 @@ from .adapters.midas_adapter import MidasAdapter
 from .adapters.mem0_adapter import Mem0Adapter
 from .adapters.base import MemoryAdapter
 from .adapters.baseline_raw import BaselineRawAdapter
-from .datasets import conflicts, locomo, longmemeval, multiday, synthetic, synthetic_es
+from .datasets import beam, conflicts, locomo, longmemeval, multiday, synthetic, synthetic_es
 from .llm import from_env, load_dotenv
 from .metrics import (
     answer_recoverable,
@@ -44,6 +44,7 @@ DEFAULT_JUDGE_MAX_QUESTIONS = 40
 _DEFAULTS = {
     "synthetic": {"budget": 110, "limit": 5},
     "synthetic-es": {"budget": 110, "limit": 5},
+    "beam": {"budget": 2048, "limit": 20},
     "locomo": {"budget": 1024, "limit": 100},
     "longmemeval": {"budget": 2048, "limit": 50},
     "multiday": {"budget": 256, "limit": 8},
@@ -511,11 +512,15 @@ def _load(
     variant: str = "s",
     longmemeval_path: str | None = None,
     abstention_only: bool = False,
+    beam_tier: str = "100K",
+    beam_path: str | None = None,
 ) -> Dataset:
     if dataset == "synthetic":
         return synthetic()
     if dataset == "synthetic-es":
         return synthetic_es()
+    if dataset == "beam":
+        return beam(path=beam_path, tier=beam_tier, max_conversations=max_convs or None)
     if dataset == "multiday":
         return multiday()
     if dataset == "conflicts":
@@ -554,13 +559,15 @@ def _make_embedder(args: argparse.Namespace) -> tuple[object | None, str]:
 def main() -> None:
     load_dotenv()
     parser = argparse.ArgumentParser(description="Midas agentic-memory eval harness")
-    parser.add_argument("--dataset", choices=["synthetic", "synthetic-es", "locomo", "longmemeval", "multiday", "conflicts"], default="synthetic")
+    parser.add_argument("--dataset", choices=["synthetic", "synthetic-es", "locomo", "longmemeval", "multiday", "conflicts", "beam"], default="synthetic")
     parser.add_argument("--budget", type=int, default=None, help="token budget (per-dataset default if unset)")
     parser.add_argument("--limit", type=int, default=None, help="top-k (per-dataset default if unset)")
     parser.add_argument("--max-convs", type=int, default=2, help="LoCoMo: conversations to include")
     parser.add_argument("--max-questions", type=int, default=None, help="cap questions (default 40 when --judge)")
     parser.add_argument("--variant", type=str, default="s", choices=["s", "m", "oracle"], help="LongMemEval: variant to use (s, m, oracle)")
     parser.add_argument("--longmemeval-path", type=str, default=None, help="Path to LongMemEval JSON file (overrides variant default)")
+    parser.add_argument("--beam-tier", type=str, default="100K", choices=["100K", "500K", "1M", "10M"], help="BEAM: conversation-length tier")
+    parser.add_argument("--beam-path", type=str, default=None, help="Path to a BEAM parquet (overrides tier default)")
     parser.add_argument("--longmemeval-abstention", action="store_true", help="LongMemEval: load only the abstention (unanswerable) questions, to measure Calibrated/abstention")
     parser.add_argument("--local", action="store_true", help="use local fastembed semantic embeddings (no key)")
     parser.add_argument("--local-model", type=str, default="BAAI/bge-base-en-v1.5", help="fastembed model for --local (e.g. sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2)")
@@ -619,6 +626,8 @@ def main() -> None:
         variant=args.variant,
         longmemeval_path=args.longmemeval_path,
         abstention_only=args.longmemeval_abstention,
+        beam_tier=args.beam_tier,
+        beam_path=args.beam_path,
     )
     if max_q is not None:
         _resample_questions(dataset, seed=args.seed)

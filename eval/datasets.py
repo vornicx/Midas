@@ -539,3 +539,122 @@ def _skip_json_ws(text: str, pos: int) -> int:
     while pos < len(text) and text[pos] in " \t\r\n":
         pos += 1
     return pos
+
+
+_BEAM_MARKER_RE = re.compile(r"\s*->->\s*\d+,\d+\s*$")
+_BEAM_TIERS = ("100K", "500K", "1M", "10M")
+
+
+def _parse_beam_anchor(value: str | None) -> float | None:
+    """BEAM time anchors look like 'March-15-2024' — real event time for bitemporal recall."""
+    if not value:
+        return None
+    try:
+        return _dt.datetime.strptime(value, "%B-%d-%Y").replace(
+            tzinfo=_dt.timezone.utc
+        ).timestamp()
+    except ValueError:
+        return None
+
+
+def _beam_gold_ids(raw, prefix: str) -> list[str]:
+    """`source_chat_ids` is a list of message ids — or a dict with semantic keys
+    ({'original_info': [86], 'updated_info': [114]}) whose values are id lists."""
+    if not raw:
+        return []
+    values = []
+    if isinstance(raw, dict):
+        for v in raw.values():
+            values.extend(v if isinstance(v, list) else [v])
+    else:
+        for v in raw:
+            values.extend(v if isinstance(v, list) else [v])
+    return [f"{prefix}:{int(v)}" for v in values if isinstance(v, (int, str)) and str(v).isdigit()]
+
+
+def beam(
+    path: str | Path | None = None,
+    *,
+    tier: str = "100K",
+    max_conversations: int | None = None,
+) -> Dataset:
+    """Load BEAM — 'Beyond a Million Tokens' (ICLR 2026), the 10M-token-regime memory benchmark.
+
+    100 coherent conversations at 128K/500K/1M/10M tokens, 10 memory abilities per conversation
+    (incl. contradiction resolution, event ordering, abstention). Questions carry
+    `source_chat_ids` evidence, so the deterministic `recall@k`/`precision@k` apply — the
+    reader-independent wedge — at the scale where context-stuffing is physically impossible.
+
+    Mapping: every chat message becomes an Event (id '<conv>:<msg_id>', session = batch index,
+    real event time from the propagated 'time_anchor'). Abstention questions keep answer=None
+    (the runner's abstain semantics). instruction_following / preference_following /
+    summarization are rubric-graded upstream (no reference string), so they contribute
+    retrieval metrics only — `answer_dumb` skips them.
+
+    Download (≈5-90 MB per tier): https://huggingface.co/datasets/Mohammadta/BEAM
+    e.g. data/beam/100K.parquet from data/100K-00000-of-00001.parquet (10M tier lives in the
+    BEAM-10M sibling dataset).
+    """
+    if tier not in _BEAM_TIERS:
+        raise ValueError(f"tier must be one of {_BEAM_TIERS}")
+    path = Path(path) if path else _DATA_DIR / "beam" / f"{tier}.parquet"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"BEAM not found at {path}. Download the {tier} parquet from "
+            "https://huggingface.co/datasets/Mohammadta/BEAM (see loader docstring)."
+        )
+    import ast
+
+    import pyarrow.parquet as pq
+
+    rows = pq.read_table(path).to_pylist()
+    if max_conversations:
+        rows = rows[:max_conversations]
+
+    samples: list[Sample] = []
+    for row in rows:
+        cid = str(row["conversation_id"])
+        events: list[Event] = []
+        anchor: float | None = None
+        last_anchor: float | None = None
+        for batch_i, batch in enumerate(row["chat"]):
+            for msg in batch:
+                parsed = _parse_beam_anchor(msg.get("time_anchor"))
+                if parsed is not None:
+                    anchor = parsed
+                last_anchor = anchor if anchor is not None else last_anchor
+                content = _BEAM_MARKER_RE.sub("", (msg.get("content") or "")).strip()
+                if not content:
+                    continue
+                events.append(
+                    Event(
+                        id=f"{cid}:{msg['id']}",
+                        content=f"{msg.get('role', 'user')}: {content}",
+                        kind="chat",
+                        metadata={
+                            "session": f"{cid}-b{batch_i}",
+                            "timestamp": anchor,
+                        },
+                    )
+                )
+        asked_at = (last_anchor or 0) + 86_400 or None  # the day after the last anchored turn
+
+        questions: list[Question] = []
+        probing = row["probing_questions"]
+        probing = ast.literal_eval(probing) if isinstance(probing, str) else probing
+        for category, qs in probing.items():
+            for qi, q in enumerate(qs):
+                answer = q.get("answer") or q.get("ideal_answer") or q.get("ideal_response")
+                gold = _beam_gold_ids(q.get("source_chat_ids"), cid)
+                questions.append(
+                    Question(
+                        id=f"{cid}-{category}-{qi}",
+                        text=q["question"],
+                        answer=answer if category != "abstention" else None,
+                        gold_event_ids=gold,
+                        category="unanswerable" if category == "abstention" else category,
+                        metadata={"asked_at": asked_at, "difficulty": q.get("difficulty")},
+                    )
+                )
+        samples.append(Sample(cid, events, questions))
+    return Dataset(name=f"beam-{tier.lower()}", samples=samples)

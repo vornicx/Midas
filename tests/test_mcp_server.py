@@ -288,7 +288,31 @@ def test_build_context_anchors_today():
     assert "# Today is" in ctx, "the temporal anchor should reach real agents"
 
 
-def test_server_injects_memory_instructions():
+def test_maintenance_pass_consolidates_and_bounds():
+    from midas.mcp_server import _run_maintenance_pass
+
+    forget_all()
+    remember("The launch is on September 14.", kind="fact", importance=3)
+    remember("The launch is on September 14.", kind="fact", importance=3)  # near-duplicate
+    out = _run_maintenance_pass()
+    assert out["consolidated"] == 1
+    assert stats()["total"] == 1
+
+
+def test_recall_as_of_returns_the_historical_belief():
+    forget_all()
+    from midas.mcp_server import _mem
+
+    # 1.7e9 ≈ 2023-11-14, 1.75e9 ≈ 2025-06-15; the as-of date falls between the two.
+    _mem.remember("the launch date is September 14", kind="fact", created_at=1.7e9)
+    _mem.remember("actually the launch date moved to October 2", kind="fact", created_at=1.75e9)
+
+    current = recall("when is the launch?", limit=2)
+    assert any("October 2" in h["content"] for h in current)
+
+    historical = recall("when is the launch?", limit=2, as_of="2024-06-01")
+    assert historical and all("October 2" not in h["content"] for h in historical)
+    assert any("September 14" in h["content"] for h in historical)
     # The injected prompt is how installing Midas makes an agent start remembering on its own.
     assert server.instructions and "capture" in server.instructions.lower()
     assert "check_memory_use" in server.instructions

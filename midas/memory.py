@@ -492,14 +492,22 @@ class Memory:
         metadata_filter: dict[str, Any] | None = None,
         thread_cap: int = 0,
         thread_key: str = "session",
+        as_of: float | None = None,
     ) -> list[RecallHit]:
         q_emb = self.embedder.embed(query)
         # `now` is the query's reference time (e.g. when the question is asked); recency decays
         # relative to it, so "what is my current X" favours the most recent evidence. Defaults to
         # the wall clock, which leaves time-agnostic datasets behaving exactly as before.
+        # `as_of` asks the HISTORICAL question instead: "what did memory say on date X" — records
+        # born later are excluded and supersession chains resolve to the version valid at X
+        # (each retired belief carries its `superseded_at` validity bound).
+        if as_of is not None:
+            now = as_of
         now = now if now is not None else self._now()
 
         def predicate(record: MemoryRecord) -> bool:
+            if as_of is not None and record.created_at > as_of:
+                return False  # didn't exist yet at the as-of time
             if kind is not None and record.kind != kind:
                 return False
             if min_importance is not None and record.importance < min_importance:
@@ -521,7 +529,7 @@ class Memory:
         else:
             candidates = self.store.search(q_emb, limit=pool, predicate=predicate)
         if self._supersede:
-            candidates = self._resolve_candidates(candidates)
+            candidates = self._resolve_candidates(candidates, as_of=as_of)
         if not candidates:
             return []
 
@@ -771,6 +779,13 @@ class Memory:
             if self._nli.contradiction(new_record.content, head.content) < self._supersede_contradiction_threshold:
                 return
         head.superseded_by = new_record.id
+        # Bitemporal validity window: a retired belief keeps WHEN it stopped being current
+        # (`superseded_at` = the revising record's event time), so `recall(as_of=…)` can answer
+        # "what did we believe on date X" — the Zep-style historical query, with no LLM and no
+        # graph DB. The `store.put` also fixes a real bug: without it, SQLite-backed stores never
+        # persisted the revision and belief history silently vanished on restart.
+        head.metadata = {**head.metadata, "superseded_at": new_record.created_at}
+        self.store.put(head)
 
     def _resolve_head(self, record: MemoryRecord) -> MemoryRecord:
         seen: set[str] = set()
@@ -783,15 +798,28 @@ class Memory:
             current = nxt
         return current
 
+    def _resolve_at(self, record: MemoryRecord, as_of: float) -> MemoryRecord:
+        """Walk the supersession chain to the version that was CURRENT at `as_of` — the record
+        whose validity window (created_at .. superseded_at) contains it."""
+        seen: set[str] = set()
+        current = record
+        while current.superseded_by is not None and current.id not in seen:
+            seen.add(current.id)
+            nxt = self.store.get(current.superseded_by)
+            if nxt is None or nxt.created_at > as_of:
+                break  # the successor wasn't true yet at the as-of time
+            current = nxt
+        return current
+
     def _resolve_candidates(
-        self, candidates: list[tuple[float, MemoryRecord]]
+        self, candidates: list[tuple[float, MemoryRecord]], *, as_of: float | None = None
     ) -> list[tuple[float, MemoryRecord]]:
         """Map each stale candidate to its current head (keeping the match score that
         surfaced the chain), de-duplicated by head — so a query phrased like the OLD value
-        resolves to the CURRENT belief."""
+        resolves to the CURRENT belief (or, with `as_of`, the belief current at that time)."""
         best: dict[str, tuple[float, MemoryRecord]] = {}
         for score, record in candidates:
-            head = self._resolve_head(record)
+            head = self._resolve_head(record) if as_of is None else self._resolve_at(record, as_of)
             if head.id not in best or score > best[head.id][0]:
                 best[head.id] = (score, head)
         return list(best.values())
@@ -826,12 +854,14 @@ class Memory:
                 metadata_filter=recall_kwargs.get("metadata_filter"),
             )
 
-        # Filter out superseded records if enabled
+        # Filter out superseded records if enabled (with `as_of`, "current" means current at
+        # that time — a later-retired belief is still the right record for a historical query).
         if self._supersede and self._exclude_superseded_from_context:
-            records = [
-                r for r in records 
-                if self._resolve_head(r).id == r.id  # Only keep current heads
-            ]
+            as_of = recall_kwargs.get("as_of")
+            resolve = (
+                self._resolve_head if as_of is None else (lambda r: self._resolve_at(r, as_of))
+            )
+            records = [r for r in records if resolve(r).id == r.id]
 
         # Fill the budget in priority order (highest-value first). Build-context defaults to lean lines
         # because Memory(include_provenance=False) is now the default; full provenance/source remains one
