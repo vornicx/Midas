@@ -22,7 +22,8 @@ def test_distill_requires_a_configured_distiller():
         mem.distill(["some raw turn"])
 
 
-def test_distill_stores_compact_facts_marked_as_llm_derived():
+def test_distill_replace_mode_stores_only_facts():
+    # keep_raw=False is the (risky) replace mode — measured catastrophic on BEAM, so opt-in only.
     fake = FakeDistiller(["Deploy target is staging; production deferred."])
     mem = Memory(embedder=HashingEmbedder(), distiller=fake)
     raw = [
@@ -30,16 +31,26 @@ def test_distill_stores_compact_facts_marked_as_llm_derived():
         "user: let's just point everything at staging for now, prod isn't ready",
         "user: cool",
     ]
-    recs = mem.distill(raw, kind="constraint")
+    recs = mem.distill(raw, kind="constraint", keep_raw=False)
     assert fake.seen == raw, "the distiller receives the raw turns"
     assert len(recs) == 1
     assert recs[0].kind == "constraint"
     assert recs[0].metadata["distilled"] is True  # auditable as LLM-derived
-    # the distilled fact is retrievable; raw turns were NOT stored by default
     hits = mem.recall("where do we deploy?", limit=3)
     assert hits and "staging" in hits[0].record.content
-    assert all(h.record.metadata.get("distilled") for h in hits if "staging" in h.record.content)
     assert len(mem.store.all()) == 1
+
+
+def test_distill_default_keeps_raw_turns():
+    # The default is keep_raw=True (measured-safe): facts AUGMENT the verbatim audit trail.
+    fake = FakeDistiller(["Deploy target is staging; production deferred."])
+    mem = Memory(embedder=HashingEmbedder(), distiller=fake)
+    raw = ["user: morning!", "user: point everything at staging, prod isn't ready", "user: cool"]
+    mem.distill(raw, kind="constraint")
+    contents = [r.content for r in mem.store.all()]
+    assert "Deploy target is staging; production deferred." in contents  # the fact
+    assert "user: point everything at staging, prod isn't ready" in contents  # raw kept
+    assert len(mem.store.all()) == 1 + 3
 
 
 def test_distill_keep_raw_retains_the_audit_trail():

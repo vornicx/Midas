@@ -44,12 +44,24 @@ frontier's gains are **not** retrieval, they are **distillation** — LIGHT inde
 key-value pairs that *replace* raw turns; LongMemEval's wins come from LLM value-decomposition.
 
 Midas's architecturally-honest answer keeps the moat intact: **the LLM the agent is already running
-does the distillation; Midas never calls one.** The injected policy now asks the agent to capture
-*one compact, self-contained fact* rather than raw turns, and a new MCP `distill` prompt drives an
-explicit pass (review the session → emit high-signal `capture` calls). A distilled fact retrieves
-far better than the fragment it came from — the same mechanism as LIGHT, at $0 ingest and zero
-egress, with Midas still source-traceable and deterministic. Its full payoff is agent-in-the-loop,
-so it is validated by **judged runs**, not the deterministic harness (see roadmap §2).
+does the distillation; Midas never calls one.** The injected policy asks the agent to capture *one
+compact, self-contained fact* rather than raw turns, a new MCP `distill` prompt drives an explicit
+pass, and `Memory(distiller=...)` exposes an optional local-LLM tier for non-agentic ingest.
+
+**But we then measured it, and the honest result is humbling** (judged BEAM-100K A/B, BENCHMARKS):
+a *naive* distillation pass — a simple "compress into facts" prompt with a small model, batched —
+**does not lift the answer rate, and replacing raw turns with facts is catastrophic** (0.37 → 0.08),
+because a lossy summary drops the temporal sequence and changed values that knowledge-update /
+temporal / multi-session questions depend on. Augmenting (`keep_raw=True`, now the default) recovers
+most of it but stays slightly below raw (0.32). A single clean fact does retrieve better than its
+conversational fragment (see `examples/distillation_demo.py`) — that intuition is real — but it does
+**not** generalise to compressing a whole evolving conversation.
+
+The sharpened lesson: the frontier's lift is **not** distillation-in-general but *sophisticated,
+structure-preserving* extraction — LIGHT's key-value pairs (entity → attribute, with validity time)
+built by a 32B model, not a generic summary. Replicating that — a no-Midas-LLM, entity/time-aware
+extraction prompt, and likely a capable model — is the real open work. Until it is measured to help,
+the distillation dial stays **off by default, `keep_raw` when on**, and we do not claim it as a win.
 
 ## 3. What Midas deliberately does NOT adopt
 

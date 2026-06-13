@@ -189,6 +189,47 @@ LLM **distillation** — compact, high-signal key-value records that *replace* r
 coarser index added on top. That points squarely at agent-driven distillation (the host LLM, $0 to
 Midas), not more retrieval granularity.
 
+**Judged answer-rate (gpt-4o judge — the competitors' protocol).** Beyond deterministic `recall@k`,
+a first judged run on BEAM-100K (n=400, reader `gpt-4.1-mini`, judge `gpt-4o` — the same judge class
+Mem0/Hindsight report against): **Midas answer 0.40 vs a context-stuffing baseline 0.05** (8×). The
+answer rate tracks retrieval — knowledge-update 0.53 · information-extraction 0.60 · temporal 0.50 ·
+multi-session 0.47 · contradiction 0.33 · event-ordering 0.00 (the retrieval-weak category). This is
+the **no-LLM-ingest floor**: raw turns, $0 at ingest, no distillation. Honest scope: the rubric-only
+categories (instruction / preference / summarization) are graded upstream against rubrics, not a
+reference string, so they are outside this answer metric; and the comparison to Mem0's 64.1 / 48.6
+(BEAM-1M / 10M) is **not** apples-to-apples — those are larger tiers run by full LLM-at-ingest systems.
+The point of this number is the *floor it sets at $0 ingest*.
+
+**Does distillation lift that floor? Measured — and naive distillation does NOT (judged A/B).** We
+built the distillation tiers expecting LIGHT/Mem0's ingest-side gains; the honest measurement says a
+*naive* pass (a simple "compress these turns into facts" prompt, gpt-4.1-mini, batched) hurts:
+
+| BEAM-100K, 5 conversations, judged answer | overall | knowledge-update | multi-session |
+|---|---:|---:|---:|
+| raw turns | **0.37** | 0.70 | 0.30 |
+| distilled, **replacing** turns | **0.08** | 0.00 | 0.00 |
+| distilled, **augmenting** turns (`keep_raw`) | 0.32 | 0.70 | 0.40 |
+
+Distilling *to replace* raw turns is **catastrophic** (−0.29): lossy summaries drop the temporal
+sequence and changed values that knowledge-update / temporal / multi-session questions need.
+*Augmenting* (keep the raw turns, add the facts) recovers the lost categories but the extra facts add
+enough noise to stay slightly below raw. So `keep_raw=True` is the measured-safe default, and the
+real takeaway is sharper than "distillation helps": **the frontier's lift requires *sophisticated*,
+structure-preserving extraction** (key-value with entity/attribute/time, capable models — LIGHT uses
+a 32B model with key-value indexing), not a generic summarization pass. That is future work, not a
+shipped win — and exactly the kind of result the eval-first discipline exists to surface.
+
+```bash
+JUDGE_PROVIDER=openrouter OPENROUTER_API_KEY=... python -m eval.distill_ab --convs 5 --batch 40
+JUDGE_PROVIDER=openrouter OPENROUTER_API_KEY=... python -m eval.distill_ab --convs 5 --batch 40 --keep-raw
+```
+
+```bash
+JUDGE_PROVIDER=openrouter OPENROUTER_API_KEY=... python -m eval.runner --dataset beam \
+  --beam-tier 100K --max-convs 20 --local --midas-no-rerank --judge \
+  --reader-model openai/gpt-4.1-mini --judge-model openai/gpt-4o --max-questions 400 --seed 0
+```
+
 **Pinned standing directives (measured fix for the instruction gap).** A durable user rule
 ("from now on, reply in Spanish") applies to *every* turn yet is semantically unrelated to most
 queries, so relevance-ranked recall structurally misses it. Midas now detects standing directives

@@ -74,10 +74,14 @@ def main() -> None:
         print()
 
     print(
-        "Takeaway: with raw turns the deploy answer is outranked by irrelevant chatter; the distilled\n"
-        "fact wins decisively — cleaner relevance (a self-contained statement matches the query better)\n"
-        "plus typed importance. The fix is at INGEST, not retrieval — and the agent's own LLM did it,\n"
-        "so Midas stayed no-LLM, $0, and source-traceable. See docs/frontier-2026.md."
+        "Takeaway: a single CLEAN fact retrieves better than its conversational fragment — cleaner\n"
+        "relevance plus typed importance, and the agent's own LLM wrote it, so Midas stayed no-LLM.\n"
+        "\n"
+        "HONEST CAVEAT (measured): this intuition does NOT generalise to compressing a WHOLE evolving\n"
+        "conversation. On a judged BEAM A/B, naive distillation HURT (replacing raw turns: answer\n"
+        "0.30 -> 0.08) because lossy summaries drop the temporal/changed-value detail. The frontier's\n"
+        "lift needs sophisticated, structure-preserving extraction (key-value + time), not a generic\n"
+        "summary — so the distill dial is off by default, keep_raw when on. See BENCHMARKS.md."
     )
 
 
