@@ -5,6 +5,10 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
 
 ## [Unreleased]
 
+(nothing yet)
+
+## [0.0.4] — 2026-06-13
+
 ### Added
 - **Distillation as one optional dial (three tiers, default no-LLM)** — the frontier's gains come
   from distilling raw turns into compact facts at ingest. Midas exposes this as a single opt-in dial,

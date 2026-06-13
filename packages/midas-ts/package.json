@@ -1,6 +1,6 @@
 {
   "name": "midas-memory-mcp",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Midas \u2014 local-first, source-traceable agent memory over MCP (TypeScript port, experimental). No LLM at ingest or query.",
   "license": "MIT",
   "type": "module",
