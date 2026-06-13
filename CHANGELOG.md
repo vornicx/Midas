@@ -6,6 +6,15 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- **Distillation as one optional dial (three tiers, default no-LLM)** — the frontier's gains come
+  from distilling raw turns into compact facts at ingest. Midas exposes this as a single opt-in dial,
+  never a fork: **(1) default** — raw turns, $0, fully source-traceable; **(2) agent-driven** — the
+  agent's own LLM distills via the injected policy + new `distill` MCP prompt ($0 to Midas, keeps raw
+  + facts); **(3) local distiller** — `Memory(distiller=...)` / `OllamaDistiller` + `Memory.distill(
+  turns, keep_raw=True)`, the explicitly-fenced "crosses the no-LLM line" tier for non-agentic ingest
+  (keeps $0/local/zero-egress with Ollama, but distilled records are LLM-derived, stamped
+  `metadata["distilled"]=True`). Default `distiller=None` = pure no-LLM. README has the tier table;
+  `docs/frontier-2026.md` §2b has the research.
 - **BEAM adapter — the 10M-token frontier benchmark** (`eval.runner --dataset beam --beam-tier
   100K|500K|1M|10M`). BEAM ("Beyond a Million Tokens", ICLR 2026) is the regime where
   context-stuffing is physically impossible; its questions carry `source_chat_ids` evidence, so

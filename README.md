@@ -24,6 +24,25 @@ is traceable to its source.
 
 > **Status:** early. The API may change. Built narrow and measured-first.
 
+### One dial, not a fork: how much distillation you want
+
+The frontier's extra answer-quality comes from *distilling* raw turns into compact facts at ingest —
+which Mem0/Letta/Zep pay a separate LLM for. Midas exposes that as **one optional dial**, defaulting
+to off, so you choose exactly where you sit on the cost/purity spectrum without changing products:
+
+| Tier | Who distills | API $ | Local | Verbatim source-traceable | How |
+|---|---|---:|:---:|:---:|---|
+| **Default** (recommended) | nobody — raw turns | **$0** | ✅ | ✅ full | just `remember` / `capture` |
+| **Agent-driven** | the agent's *own* LLM (already in the loop) | **$0 to Midas** | ✅ | ✅ (keeps raw + facts) | the injected policy + the `distill` MCP prompt |
+| **Local distiller** (opt-in) | a model *you* plug in — ideally local (Ollama) | **$0 with Ollama** | ✅ | ⚠️ distilled records are LLM-rewritten | `Memory(distiller=OllamaDistiller())` → `mem.distill(turns, keep_raw=True)` |
+
+The first two never call an LLM inside Midas. The third is the explicitly-fenced "crosses the
+no-LLM line" tier for **non-agentic ingest** (raw logs with no smart agent to delegate to) — it
+keeps $0/local/zero-egress with a local model, but the distilled record is LLM-derived rather than a
+verbatim source (use `keep_raw=True` to retain the audit trail). Default is `distiller=None`: pure
+no-LLM. See [`docs/frontier-2026.md`](docs/frontier-2026.md) §2b for why distillation — not
+retrieval tuning — is the real lever, and the research behind it.
+
 ---
 
 ## How it works (in plain English)
