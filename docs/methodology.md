@@ -179,9 +179,11 @@ tool):
 > 1) RECALL FIRST. Call `build_context` with the user's goal; use the returned facts silently. Use
 > `recall`/`inspect_memory` only when you need audit details.
 >
-> 2) CAPTURE DURABLE SIGNAL. Call `capture` for reusable facts, decisions, preferences, constraints,
-> corrections, and completed actions. Skip pure small talk. Midas scores, dedups, and rejects trivia,
-> so capture can be brief and does not need an LLM. Set kind/provenance accurately; use
+> 2) CAPTURE DURABLE SIGNAL — DISTILLED. Call `capture` for reusable facts, decisions, preferences,
+> constraints, corrections, and completed actions. Prefer ONE compact, self-contained statement
+> (the entities, the value, and when) over raw turns — a memory that answers on its own retrieves
+> far better than a conversational fragment. Skip pure small talk. Midas scores, dedups, and rejects
+> trivia, so capture can be brief and needs no LLM. Set kind/provenance accurately; use
 > provenance="user_confirmation" only for explicit user confirmation.
 >
 > 3) GUARD ACTIONS. Memory may guide planning, but before external/destructive actions based on

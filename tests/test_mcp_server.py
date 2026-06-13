@@ -325,3 +325,18 @@ def test_build_context_pins_standing_directives():
         remember(f"database migration note {i} about postgres tables", kind="note")
     ctx = build_context("how do I migrate the postgres schema?", token_budget=300)
     assert "reply in Spanish" in ctx, "the standing directive must be pinned into every context"
+
+
+def test_policy_nudges_distillation():
+    out = memory_policy()
+    assert "DISTILLED" in out["instructions"]
+    assert "compact, self-contained" in out["instructions"]
+
+
+def test_distill_prompt_drives_no_llm_distillation():
+    from midas.mcp_server import distill
+
+    text = distill(session="proj-a")
+    assert "compact, self-contained" in text
+    assert "capture" in text and "proj-a" in text
+    assert "no extra tool/model needed" in text or "no Midas-LLM" in text or "no extra" in text
