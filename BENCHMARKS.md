@@ -189,6 +189,24 @@ LLM **distillation** — compact, high-signal key-value records that *replace* r
 coarser index added on top. That points squarely at agent-driven distillation (the host LLM, $0 to
 Midas), not more retrieval granularity.
 
+**Judged answer-rate (gpt-4o judge — the competitors' protocol).** Beyond deterministic `recall@k`,
+a first judged run on BEAM-100K (n=400, reader `gpt-4.1-mini`, judge `gpt-4o` — the same judge class
+Mem0/Hindsight report against): **Midas answer 0.40 vs a context-stuffing baseline 0.05** (8×). The
+answer rate tracks retrieval — knowledge-update 0.53 · information-extraction 0.60 · temporal 0.50 ·
+multi-session 0.47 · contradiction 0.33 · event-ordering 0.00 (the retrieval-weak category). This is
+the **no-LLM-ingest floor**: raw turns, $0 at ingest, no distillation. Honest scope: the rubric-only
+categories (instruction / preference / summarization) are graded upstream against rubrics, not a
+reference string, so they are outside this answer metric; and the comparison to Mem0's 64.1 / 48.6
+(BEAM-1M / 10M) is **not** apples-to-apples — those are larger tiers run by full LLM-at-ingest systems.
+The point of this number is the *floor it sets at $0 ingest*, and the headroom the distillation tiers
+(see [`docs/frontier-2026.md`](docs/frontier-2026.md) §2b) are built to claim.
+
+```bash
+JUDGE_PROVIDER=openrouter OPENROUTER_API_KEY=... python -m eval.runner --dataset beam \
+  --beam-tier 100K --max-convs 20 --local --midas-no-rerank --judge \
+  --reader-model openai/gpt-4.1-mini --judge-model openai/gpt-4o --max-questions 400 --seed 0
+```
+
 **Pinned standing directives (measured fix for the instruction gap).** A durable user rule
 ("from now on, reply in Spanish") applies to *every* turn yet is semantically unrelated to most
 queries, so relevance-ranked recall structurally misses it. Midas now detects standing directives
