@@ -43,6 +43,16 @@ verbatim source (use `keep_raw=True` to retain the audit trail). Default is `dis
 no-LLM. See [`docs/frontier-2026.md`](docs/frontier-2026.md) §2b for why distillation — not
 retrieval tuning — is the real lever, and the research behind it.
 
+**See the mechanism in 5 seconds** — `python examples/distillation_demo.py` stores the same
+session as raw turns vs one distilled fact and runs a later query against each:
+
+```text
+query: 'which environment do we deploy to?'
+RAW TURNS:   1. 0.93  "...sort out a few things on the project today"      (chatter wins)
+             2. 0.85  "...let's just point everything at staging..."       <- the answer, buried 2nd
+DISTILLED:   1. 1.14  "Deployment target is staging; production deferred"  <- the answer, 1st by a margin
+```
+
 ---
 
 ## How it works (in plain English)
