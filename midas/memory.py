@@ -213,6 +213,7 @@ class Memory:
         reinforce_bump: int = 1,
         include_provenance: bool = False,
         detect_standing: bool = False,  # tag standing directives at ingest (no LLM cue detector)
+        distiller: object | None = None,  # OPTIONAL LLM distiller (tier 3); None = pure no-LLM
     ) -> None:
         self.store = store if store is not None else InMemoryStore()
         self.embedder = embedder if embedder is not None else HashingEmbedder()
@@ -249,6 +250,7 @@ class Memory:
         self._abstention_entailment_floor = abstention_entailment_floor
         self._include_provenance = include_provenance
         self._detect_standing = detect_standing
+        self._distiller = distiller
         # Cached BM25 lexical index for hybrid recall, keyed by the store's change counter —
         # rebuilding it per query made hybrid ~35x slower at LongMemEval scale (66 ms vs 1.9 ms).
         self._bm25_cache: tuple[int, Any] | None = None
@@ -421,6 +423,57 @@ class Memory:
             metadata=metadata, created_at=created_at,
         )
         return CaptureResult(True, "stored", record=record, importance=importance)
+
+    def distill(
+        self,
+        texts: list[str],
+        *,
+        kind: MemoryKind = "fact",
+        importance: int | None = 4,
+        keep_raw: bool = False,
+        source: str | None = None,
+        provenance: MemoryProvenance = "observation",
+        actor: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        created_at: float | None = None,
+    ) -> list[MemoryRecord]:
+        """Tier-3 distillation: run the configured `distiller` (an LLM — typically a LOCAL one) over
+        raw `texts` and store the compact facts it returns. This is the only path where an LLM runs
+        at ingest; it requires `Memory(distiller=...)` and is **off unless you opt in**.
+
+        `keep_raw=True` also stores the source turns (kind="chat"), so the distilled facts are an
+        index layer over a verbatim audit trail rather than a replacement. Distilled records are
+        stamped `metadata["distilled"]=True` so they stay identifiable and auditable as
+        LLM-derived. Returns the stored records (distilled first)."""
+        if self._distiller is None:
+            raise RuntimeError(
+                "Memory.distill requires Memory(distiller=...). The default and agent-driven tiers "
+                "store via remember/capture and never call an LLM."
+            )
+        texts = [t for t in (s.strip() for s in texts) if t]
+        if not texts:
+            return []
+        facts = [f.strip() for f in self._distiller.distill(texts) if f and f.strip()]
+        meta = {**(metadata or {}), "distilled": True}
+        records = [
+            self.remember(
+                fact, kind=kind, importance=importance, source=source,
+                provenance=provenance, actor=actor, metadata=meta, created_at=created_at,
+            )
+            for fact in facts
+        ]
+        if keep_raw:
+            records += self.remember_many(
+                [
+                    {
+                        "content": t, "kind": "chat", "source": source,
+                        "provenance": provenance, "actor": actor,
+                        "metadata": metadata or {}, "created_at": created_at,
+                    }
+                    for t in texts
+                ]
+            )
+        return records
 
     def _upgrade_provenance(
         self,

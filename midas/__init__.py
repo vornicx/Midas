@@ -24,6 +24,7 @@ from .guard import (
     ProvenanceStamp,
     decide_memory_use,
 )
+from .distill import Distiller, OllamaDistiller
 from .importance import ContentImportance, StructuralImportance, is_standing_instruction
 from .memory import CaptureResult, ContextBlock, Memory, Reranker, approx_tokens, format_record
 from .policy import AGENT_MEMORY_INSTRUCTIONS, DEFAULT_POLICY, MemoryPolicy, policy_summary
@@ -53,6 +54,8 @@ __all__ = [
     "ContentImportance",
     "StructuralImportance",
     "is_standing_instruction",
+    "Distiller",
+    "OllamaDistiller",
     "MemoryPolicy",
     "DEFAULT_POLICY",
     "AGENT_MEMORY_INSTRUCTIONS",
