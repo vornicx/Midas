@@ -430,7 +430,7 @@ class Memory:
         *,
         kind: MemoryKind = "fact",
         importance: int | None = 4,
-        keep_raw: bool = False,
+        keep_raw: bool = True,
         source: str | None = None,
         provenance: MemoryProvenance = "observation",
         actor: str | None = None,
@@ -441,9 +441,12 @@ class Memory:
         raw `texts` and store the compact facts it returns. This is the only path where an LLM runs
         at ingest; it requires `Memory(distiller=...)` and is **off unless you opt in**.
 
-        `keep_raw=True` also stores the source turns (kind="chat"), so the distilled facts are an
-        index layer over a verbatim audit trail rather than a replacement. Distilled records are
-        stamped `metadata["distilled"]=True` so they stay identifiable and auditable as
+        `keep_raw=True` (the **measured-safe default**) also stores the source turns (kind="chat"),
+        so the distilled facts are an index layer over a verbatim audit trail, not a replacement.
+        This default is not cosmetic: on a judged BEAM A/B, distilling *to replace* raw turns was
+        catastrophic (answer 0.30 → 0.08 — it destroys the temporal / knowledge-update detail a
+        lossy summary drops), while *augmenting* recovered to roughly neutral (0.32). Distilled
+        records are stamped `metadata["distilled"]=True` so they stay identifiable and auditable as
         LLM-derived. Returns the stored records (distilled first)."""
         if self._distiller is None:
             raise RuntimeError(

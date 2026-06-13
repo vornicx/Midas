@@ -39,9 +39,16 @@ to off, so you choose exactly where you sit on the cost/purity spectrum without 
 The first two never call an LLM inside Midas. The third is the explicitly-fenced "crosses the
 no-LLM line" tier for **non-agentic ingest** (raw logs with no smart agent to delegate to) — it
 keeps $0/local/zero-egress with a local model, but the distilled record is LLM-derived rather than a
-verbatim source (use `keep_raw=True` to retain the audit trail). Default is `distiller=None`: pure
-no-LLM. See [`docs/frontier-2026.md`](docs/frontier-2026.md) §2b for why distillation — not
-retrieval tuning — is the real lever, and the research behind it.
+verbatim source (`keep_raw=True`, the default, retains the audit trail). Default is `distiller=None`:
+pure no-LLM.
+
+> **Honest status (measured):** we built the distillation dial expecting the frontier's ingest-side
+> lift — then judged it on BEAM and a *naive* pass does **not** help: replacing raw turns with facts
+> is catastrophic (answer 0.37 → 0.08; lossy summaries drop temporal/changed-value detail), and
+> augmenting is roughly neutral (0.32). The real lift needs *sophisticated, structure-preserving*
+> extraction (key-value + time, like LIGHT's 32B key-value indexing), which is open work — so the
+> dial stays off by default and we don't claim it as a win. See
+> [`docs/frontier-2026.md`](docs/frontier-2026.md) §2b and [BENCHMARKS.md](BENCHMARKS.md).
 
 **See the mechanism in 5 seconds** — `python examples/distillation_demo.py` stores the same
 session as raw turns vs one distilled fact and runs a later query against each:

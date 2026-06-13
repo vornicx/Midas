@@ -73,8 +73,60 @@ class OllamaDistiller:
         )
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:
             out = json.loads(resp.read())["response"]
-        return [
-            line.strip(" -•\t")
-            for line in out.splitlines()
-            if line.strip() and not line.strip().lower().startswith(("facts:", "here are"))
-        ]
+        return _parse_facts(out)
+
+
+class HTTPDistiller:
+    """Distiller over any **OpenAI-compatible** `/chat/completions` endpoint — a local vLLM/LM Studio
+    (keeps $0/local/zero-egress), or a cloud gateway (OpenRouter, OpenAI…) which trades the moat for
+    quality. Reads the key from `api_key` or `api_key_env`. stdlib only (`urllib`)."""
+
+    def __init__(
+        self,
+        model: str,
+        *,
+        base_url: str = "http://localhost:8000/v1",
+        api_key: str | None = None,
+        api_key_env: str | None = None,
+        temperature: float = 0.0,
+        timeout: float = 120.0,
+    ) -> None:
+        import os
+
+        self.model = model
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key or (os.environ.get(api_key_env) if api_key_env else None) or "none"
+        self.temperature = temperature
+        self.timeout = timeout
+
+    def distill(self, texts: list[str]) -> list[str]:
+        import json
+        import urllib.request
+
+        if not texts:
+            return []
+        prompt = DISTILL_PROMPT.format(turns="\n".join(texts))
+        body = json.dumps(
+            {
+                "model": self.model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": self.temperature,
+                "max_tokens": 1024,
+            }
+        ).encode("utf-8")
+        req = urllib.request.Request(
+            f"{self.base_url}/chat/completions",
+            data=body,
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"},
+        )
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            out = json.loads(resp.read())["choices"][0]["message"]["content"]
+        return _parse_facts(out)
+
+
+def _parse_facts(out: str) -> list[str]:
+    return [
+        line.strip(" -•\t0123456789.")
+        for line in out.splitlines()
+        if line.strip() and not line.strip().lower().startswith(("facts:", "here are", "based on"))
+    ]
