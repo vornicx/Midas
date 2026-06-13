@@ -185,7 +185,15 @@ class MidasAdapter:
             fusion=self._hybrid_fusion,
             now=now if self._time_aware else None,  # recency decays from when the question is asked
         )
-        ids = [r.metadata.get("event_id") for r in block.records if r.metadata.get("event_id")]
+        # A round-event covers several source turns (dual-granularity indexing): retrieving it
+        # credits recall for any turn it covers. Plain turn-events expose a single `event_id`.
+        ids: list[str] = []
+        for r in block.records:
+            covers = r.metadata.get("covers")
+            if covers:
+                ids.extend(covers)
+            elif r.metadata.get("event_id"):
+                ids.append(r.metadata.get("event_id"))
         # Top turns by RELEVANCE (recall order, not the context's recency order) — the source an
         # answer was drawn from, for the NLI verifier. Cheap: embeddings are cached.
         hits = self._mem.recall(

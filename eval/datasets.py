@@ -611,11 +611,80 @@ def _beam_iter_messages(chat):
                         yield f"{plan}-b{b.get('batch_number')}", msg
 
 
+def _round_events(events: list[Event], size: int) -> list[Event]:
+    """Build round-events (each = `size` consecutive same-session turns concatenated) that carry the
+    turn ids they `cover`, so a retrieved round credits recall for any of its turns. Used by
+    dual-granularity indexing, where rounds are ADDED alongside the original turns."""
+    by_session: dict[str, list[Event]] = {}
+    order: list[str] = []
+    for ev in events:
+        s = ev.metadata.get("session")
+        if s not in by_session:
+            by_session[s] = []
+            order.append(s)
+        by_session[s].append(ev)
+    rounds: list[Event] = []
+    for s in order:
+        evs = by_session[s]
+        for i in range(0, len(evs), size):
+            chunk = evs[i : i + size]
+            ts = next((e.metadata.get("timestamp") for e in chunk if e.metadata.get("timestamp")), None)
+            rounds.append(
+                Event(
+                    id=f"{chunk[0].id}__dual{size}",
+                    content=" ".join(e.content for e in chunk),
+                    kind="chat",
+                    metadata={"session": s, "timestamp": ts, "covers": [e.id for e in chunk]},
+                )
+            )
+    return rounds
+
+
+def _merge_into_rounds(
+    events: list[Event], questions: list[Question], size: int
+) -> tuple[list[Event], list[Question]]:
+    """Group `size` consecutive same-session events into one round-event (LongMemEval/LIGHT index
+    at round/key-value granularity, not single turns). Gold message ids are remapped to their round
+    so `recall@k` credit still works; event time is the round's first anchored turn."""
+    round_of: dict[str, str] = {}
+    by_session: dict[str, list[Event]] = {}
+    session_order: list[str] = []
+    for ev in events:
+        s = ev.metadata.get("session")
+        if s not in by_session:
+            by_session[s] = []
+            session_order.append(s)
+        by_session[s].append(ev)
+
+    merged: list[Event] = []
+    for s in session_order:
+        evs = by_session[s]
+        for i in range(0, len(evs), size):
+            chunk = evs[i : i + size]
+            rid = f"{chunk[0].id}__r{size}"
+            ts = next((e.metadata.get("timestamp") for e in chunk if e.metadata.get("timestamp")), None)
+            merged.append(
+                Event(
+                    id=rid,
+                    content=" ".join(e.content for e in chunk),
+                    kind="chat",
+                    metadata={"session": s, "timestamp": ts},
+                )
+            )
+            for e in chunk:
+                round_of[e.id] = rid
+    for q in questions:
+        q.gold_event_ids = sorted({round_of.get(g, g) for g in q.gold_event_ids})
+    return merged, questions
+
+
 def beam(
     path: str | Path | None = None,
     *,
     tier: str = "100K",
     max_conversations: int | None = None,
+    merge_rounds: int = 0,
+    dual_rounds: int = 0,
 ) -> Dataset:
     """Load BEAM — 'Beyond a Million Tokens' (ICLR 2026), the 10M-token-regime memory benchmark.
 
@@ -694,5 +763,9 @@ def beam(
                         metadata={"asked_at": asked_at, "difficulty": q.get("difficulty")},
                     )
                 )
+        if dual_rounds and dual_rounds > 1:
+            events = events + _round_events(events, dual_rounds)  # index turns AND rounds
+        elif merge_rounds and merge_rounds > 1:
+            events, questions = _merge_into_rounds(events, questions, merge_rounds)
         samples.append(Sample(cid, events, questions))
     return Dataset(name=f"beam-{tier.lower()}", samples=samples)

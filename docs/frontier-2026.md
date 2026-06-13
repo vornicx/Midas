@@ -34,6 +34,23 @@ deterministic, reader-independent `recall@k` applies on the frontier benchmark
 | **[Mastra OM](https://mastra.ai/blog/observational-memory)** | LLM Observer/Reflector compaction; LongMemEval 94.9 @ gpt-5-mini | Already measured against (Midas ties at gpt-4o with $0 ingest; BENCHMARKS §6) |
 | **[LangMem](https://langchain-ai.github.io/langmem/)** | Hot-path memory tools + background LLM memory manager | The hot-path/background split (capture vs auto-maintain) — both no-LLM in Midas |
 
+## 2b. The distillation pattern — LIGHT's win without the LLM bill (measured-motivated)
+
+We exhaustively tested the no-LLM **retrieval** levers and they are exhausted (see BENCHMARKS:
+hybrid❌, thread-cap❌, anchor-PRF❌, reranker❌, embedder≈flat — confirmed by LIGHT/LongMemEval
+both reporting the retriever is not the bottleneck — K-budget reader-only, and granularity in all
+three forms: turn / round / **dual (a measured negative)**). That sweep proved the corollary: the
+frontier's gains are **not** retrieval, they are **distillation** — LIGHT indexes LLM-extracted
+key-value pairs that *replace* raw turns; LongMemEval's wins come from LLM value-decomposition.
+
+Midas's architecturally-honest answer keeps the moat intact: **the LLM the agent is already running
+does the distillation; Midas never calls one.** The injected policy now asks the agent to capture
+*one compact, self-contained fact* rather than raw turns, and a new MCP `distill` prompt drives an
+explicit pass (review the session → emit high-signal `capture` calls). A distilled fact retrieves
+far better than the fragment it came from — the same mechanism as LIGHT, at $0 ingest and zero
+egress, with Midas still source-traceable and deterministic. Its full payoff is agent-in-the-loop,
+so it is validated by **judged runs**, not the deterministic harness (see roadmap §2).
+
 ## 3. What Midas deliberately does NOT adopt
 
 **LLM extraction/summarization at ingest** — the entire frontier pack (Mem0, Hindsight, OM, LIGHT's

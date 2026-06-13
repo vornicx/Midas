@@ -550,6 +550,30 @@ def memory_session(goal: str = "") -> str:
     )
 
 
+@server.prompt()
+def distill(session: str = "default") -> str:
+    """Drive a no-Midas-LLM distillation pass: YOUR model turns the recent conversation into compact,
+    self-contained memories.
+
+    This is the architecturally-honest version of the frontier's LLM-at-ingest memory (Mem0/Letta/
+    LIGHT): the gains in those systems come from distilling raw turns into high-signal facts — but
+    they pay a separate LLM per session. Here the model you're ALREADY running does it, and Midas
+    stays no-LLM and $0. A distilled fact ("X's deploy target is staging, as of 2026-06") retrieves
+    far better than the conversational fragment it came from.
+    """
+    return (
+        "Distill the durable knowledge from this session into memory, using your own reasoning "
+        "(no extra tool/model needed):\n"
+        "1) Identify the facts, decisions, preferences, constraints, and corrections worth keeping.\n"
+        "2) For each, write ONE compact, self-contained sentence — name the entities, the value, and "
+        "when it holds — so it answers on its own without the surrounding chat.\n"
+        f"3) Store each with `capture` (session=\"{session}\", kind=fact|preference|constraint|note, "
+        "provenance=user_confirmation only if the user explicitly confirmed it). Midas dedups and "
+        "scores; restating an existing memory just reinforces it, so err on the side of capturing.\n"
+        "4) Do NOT dump raw turns — distillation is the point."
+    )
+
+
 def _run_maintenance_pass() -> dict:
     """One no-LLM upkeep pass: collapse near-duplicate restatements and re-bound the store.
 

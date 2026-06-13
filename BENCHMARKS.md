@@ -172,6 +172,23 @@ category**: at these scales there is no naive fallback. The 1M and 10M tiers are
 embed-bound, so the 10M tier costs hours of local CPU — not the dollars-per-conversation an
 LLM-at-ingest pipeline pays there).
 
+**Indexing granularity — round-level is a measured trade-off, not a default.** Both LongMemEval
+and BEAM's own LIGHT method index at sub-session granularity (rounds / LLM key-value pairs), so we
+tested indexing user+assistant **rounds** instead of single turns (`--beam-merge-rounds 2`). Cleanly
+isolated against a char-cap control (the cap 600→1200 was a **null result** — turns fit in 600):
+round-level **lifts the aggregation categories** (instruction-following recall@k **0.28 → 0.53**,
+summarization 0.18 → 0.23, precision@k 0.06 → 0.08) but **hurts the precise-single-turn belief
+categories** (temporal 0.90 → 0.79, knowledge-update 0.86 → 0.75, contradiction 0.77 → 0.72),
+overall recall flat. Merging dilutes the exact dated-fact signal that the belief categories — our
+strength — depend on. So it stays opt-in (off by default). The obvious synthesis — a *dual-granularity* index (turns
+**and** rounds together, `--beam-dual-rounds 2`) — is a **measured negative**: overall recall@k
+0.55 → **0.48**, instruction 0.28 → **0.17** (worse than either alone), because a round and its
+turns are near-duplicates that compete for the same top-k slots and displace diverse evidence. The
+useful lesson: LIGHT's gains are **not** about granularity (all three forms now tested) but about
+LLM **distillation** — compact, high-signal key-value records that *replace* raw turns, not a
+coarser index added on top. That points squarely at agent-driven distillation (the host LLM, $0 to
+Midas), not more retrieval granularity.
+
 **Pinned standing directives (measured fix for the instruction gap).** A durable user rule
 ("from now on, reply in Spanish") applies to *every* turn yet is semantically unrelated to most
 queries, so relevance-ranked recall structurally misses it. Midas now detects standing directives
