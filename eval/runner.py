@@ -514,13 +514,14 @@ def _load(
     abstention_only: bool = False,
     beam_tier: str = "100K",
     beam_path: str | None = None,
+    beam_merge_rounds: int = 0,
 ) -> Dataset:
     if dataset == "synthetic":
         return synthetic()
     if dataset == "synthetic-es":
         return synthetic_es()
     if dataset == "beam":
-        return beam(path=beam_path, tier=beam_tier, max_conversations=max_convs or None)
+        return beam(path=beam_path, tier=beam_tier, max_conversations=max_convs or None, merge_rounds=beam_merge_rounds)
     if dataset == "multiday":
         return multiday()
     if dataset == "conflicts":
@@ -568,6 +569,7 @@ def main() -> None:
     parser.add_argument("--longmemeval-path", type=str, default=None, help="Path to LongMemEval JSON file (overrides variant default)")
     parser.add_argument("--beam-tier", type=str, default="100K", choices=["100K", "500K", "1M", "10M"], help="BEAM: conversation-length tier")
     parser.add_argument("--beam-path", type=str, default=None, help="Path to a BEAM parquet (overrides tier default)")
+    parser.add_argument("--beam-merge-rounds", type=int, default=0, help="BEAM: index N consecutive turns as one round-event (LongMemEval/LIGHT granularity; 0 = single turns)")
     parser.add_argument("--longmemeval-abstention", action="store_true", help="LongMemEval: load only the abstention (unanswerable) questions, to measure Calibrated/abstention")
     parser.add_argument("--local", action="store_true", help="use local fastembed semantic embeddings (no key)")
     parser.add_argument("--local-model", type=str, default="BAAI/bge-base-en-v1.5", help="fastembed model for --local (e.g. sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2)")
@@ -630,6 +632,7 @@ def main() -> None:
         abstention_only=args.longmemeval_abstention,
         beam_tier=args.beam_tier,
         beam_path=args.beam_path,
+        beam_merge_rounds=args.beam_merge_rounds,
     )
     if max_q is not None:
         _resample_questions(dataset, seed=args.seed)
