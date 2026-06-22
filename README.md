@@ -248,7 +248,7 @@ operational trust, deployment support, team controls, and benchmark-grade evalua
 
 ## Honest status
 
-Midas is **early** (the API may change) but built narrow and measured-first. Where it stands, plainly:
+Midas is **early** but built narrow and measured-first. Where it stands, plainly:
 
 - **Retrieval is its strength and is essentially maxed** for a no-LLM design — confirmed by our own A/Bs
   *and* by the frontier papers (the retriever is not the bottleneck). The benchmark numbers above are the
