@@ -43,6 +43,6 @@ full eval methodology (anti-cheating checklist, failure cases, verbatim policy t
 
 ## License
 
-MIT
+Apache-2.0
 
 <!-- mcp-name: io.github.vornicx/midas -->

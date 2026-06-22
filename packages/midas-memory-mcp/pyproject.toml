@@ -3,7 +3,7 @@ name = "midas-memory-mcp"
 version = "0.0.1"
 description = "MCP server for Midas — local-first, source-traceable agent memory with no LLM at ingest"
 readme = "README.md"
-license = "MIT"
+license = "Apache-2.0"
 requires-python = ">=3.11"
 keywords = ["mcp", "agent", "memory", "llm", "rag", "embeddings", "long-horizon"]
 # Thin launcher: pulls the Midas SDK with the MCP + local-embedding extras and exposes the

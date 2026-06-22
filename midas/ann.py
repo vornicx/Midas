@@ -13,7 +13,7 @@ corpora (build once, query many); for write-heavy workloads keep `InMemoryStore`
 """
 from __future__ import annotations
 
-from typing import Callable, Sequence
+from typing import Callable, Collection, Sequence
 
 import numpy as np
 
@@ -144,11 +144,16 @@ class IVFStore:
         self._dirty = False
 
     def search(self, embedding: list[float], *, limit: int,
-               predicate: Callable[[MemoryRecord], bool] | None = None
+               predicate: Callable[[MemoryRecord], bool] | None = None,
+               allowed_ids: Collection[str] | None = None,
                ) -> list[tuple[float, MemoryRecord]]:
         self._ensure_index()
         if self._index is None:
             return []
+        if allowed_ids is not None:
+            allow = allowed_ids if isinstance(allowed_ids, (set, frozenset)) else set(allowed_ids)
+            base = predicate
+            predicate = lambda r: r.id in allow and (base is None or base(r))
         allowed = None
         if predicate is not None:
             allowed = np.fromiter((predicate(r) for r in self._rows), dtype=bool, count=len(self._rows))

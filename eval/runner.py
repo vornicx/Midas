@@ -542,6 +542,15 @@ def _make_embedder(args: argparse.Namespace) -> tuple[object | None, str]:
         from midas.embeddings import OpenAIEmbedder
 
         return OpenAIEmbedder(), "openai"
+    if getattr(args, "model2vec", None):
+        from midas.embeddings import DiskCachedEmbedder, Model2VecEmbedder
+
+        emb = Model2VecEmbedder(args.model2vec)
+        label = f"model2vec:{emb.model_name}, dim={emb.dim}"
+        if args.no_local_embedding_cache:
+            return emb, label
+        cached = DiskCachedEmbedder(emb, path=args.local_embedding_cache_path)
+        return cached, f"{label}, disk_cache={cached.path}"
     if args.local:
         from midas.embeddings import DiskCachedEmbedder, LocalEmbedder
 
@@ -551,10 +560,19 @@ def _make_embedder(args: argparse.Namespace) -> tuple[object | None, str]:
             max_text_chars=args.local_max_text_chars,
         )
         label = f"local:{emb.model_name}, chars={emb.max_text_chars}, batch={emb.batch_size}"
-        if args.no_local_embedding_cache:
-            return emb, label
-        cached = DiskCachedEmbedder(emb, path=args.local_embedding_cache_path)
-        return cached, f"{label}, disk_cache={cached.path}"
+        base = emb if args.no_local_embedding_cache else DiskCachedEmbedder(
+            emb, path=args.local_embedding_cache_path
+        )
+        if not args.no_local_embedding_cache:
+            label += f", disk_cache={base.path}"
+        # Truncation wraps the CACHED embedder, so Matryoshka dims reuse the full-vector cache
+        # instead of re-embedding the corpus per dim (mxbai/jina cost minutes-to-hours per corpus).
+        if getattr(args, "local_truncate_dim", 0):
+            from midas.embeddings import TruncatedEmbedder
+
+            base = TruncatedEmbedder(base, args.local_truncate_dim)
+            label += f", mrl_dim={args.local_truncate_dim}"
+        return base, label
     return None, "hashing (offline)"
 
 
@@ -578,6 +596,8 @@ def main() -> None:
     parser.add_argument("--local-batch-size", type=int, default=32, help="local embedder batch size")
     parser.add_argument("--local-max-text-chars", type=int, default=2000, help="truncate local embedding inputs")
     parser.add_argument("--no-local-embedding-cache", action="store_true", help="disable local SQLite embedding cache")
+    parser.add_argument("--local-truncate-dim", type=int, default=0, help="Matryoshka: truncate embeddings to the first N dims + renormalize (0 = off; MRL models keep quality at a fraction of the dims)")
+    parser.add_argument("--model2vec", type=str, default=None, help="use a Model2Vec static-embedding model (e.g. minishlab/potion-base-8M) instead of fastembed — ultra-fast CPU speed tier (needs `pip install model2vec`)")
     parser.add_argument("--local-embedding-cache-path", type=str, default=None, help="path for local SQLite embedding cache")
     parser.add_argument("--openai", action="store_true", help="use OpenAI embeddings (needs OPENAI_API_KEY)")
     parser.add_argument("--judge", action="store_true", help="use an LLM to answer + grade vs gold (key from .env)")
@@ -593,6 +613,7 @@ def main() -> None:
     parser.add_argument("--midas-pinned", type=int, default=0, help="pin up to N standing directives (no-LLM cue detector) into every context (0 = off)")
     parser.add_argument("--midas-anchor-boost", type=float, default=0.0, help="PRF expansion: records near a top hit earn BOOST x cosine-to-anchor relevance (0 = off)")
     parser.add_argument("--midas-max-record-chars", type=int, default=600, help="truncate Midas record bodies")
+    parser.add_argument("--midas-pool", type=int, default=40, help="semantic recall pool size before fusion/rerank (Phase A lever: 40 baseline -> 200)")
     parser.add_argument("--midas-only", action="store_true", help="only run Midas")
     parser.add_argument("--midas-supersede", action="store_true", help="enable Midas belief-revision (regression test)")
     parser.add_argument("--midas-supersede-convo", action="store_true", help="conversational belief revision: chat may revise chat on a strict cue (implies --midas-supersede)")
@@ -602,8 +623,13 @@ def main() -> None:
     parser.add_argument("--answer-verify-nli", type=float, default=0.0, help="Calibrated: post-hoc NLI grounding — override the reader's answer to 'I don't know' if no retrieved turn entails it at >= FLOOR")
     parser.add_argument("--answer-verify-llm", action="store_true", help="Calibrated: LOCAL reasoning verification — the reader self-checks if its answer is supported by the context (local, $0)")
     parser.add_argument("--midas-no-rerank", action="store_true", help="disable Midas cross-encoder reranker")
+    parser.add_argument("--midas-reranker", choices=["cross-encoder", "colbert"], default="cross-encoder", help="reranker family: cross-encoder (ms-marco MiniLM) or colbert (answerai-colbert-small, late interaction)")
     parser.add_argument("--midas-no-time", action="store_true", help="ablation: ignore dataset event time (recency = ingest order, not real timestamps)")
     parser.add_argument("--midas-hybrid", action="store_true", help="hybrid retrieval: fuse BM25 (lexical) with semantic recall (no LLM)")
+    parser.add_argument("--midas-sparse", type=str, default=None, help="learned-sparse lexical backend for hybrid (e.g. Qdrant/bm42-all-minilm-l6-v2-attentions or prithivida/Splade_PP_en_v1); implies --midas-hybrid")
+    parser.add_argument("--midas-store", choices=["exact", "turbovec"], default="exact", help="vector store backend: exact in-memory scan (default) or turbovec (compressed index + exact rerank)")
+    parser.add_argument("--midas-turbovec-bits", type=int, default=4, help="TurboVec quantization bit-width (2 or 4)")
+    parser.add_argument("--midas-turbovec-pool", type=int, default=200, help="TurboVec candidate pool before the exact rerank")
     parser.add_argument("--midas-hybrid-fusion", type=str, default="rrf", choices=["rrf", "max"], help="hybrid fusion method (default rrf; max = legacy)")
     parser.add_argument(
         "--midas-context-order",
@@ -677,7 +703,9 @@ def main() -> None:
     midas = MidasAdapter(
         embedder=embedder,
         limit=limit,
+        pool=args.midas_pool,
         rerank=midas_rerank,
+        reranker_kind=args.midas_reranker,
         min_relevance=midas_min_relevance,
         min_relevance_ratio=args.midas_min_relevance_ratio,
         thread_cap=args.midas_thread_cap,
@@ -690,8 +718,12 @@ def main() -> None:
         abstention_relevance_floor=args.midas_abstain_floor,
         abstention_entailment_floor=args.midas_abstain_nli,
         context_order=args.midas_context_order,
-        hybrid=args.midas_hybrid,
+        hybrid=args.midas_hybrid or bool(args.midas_sparse),
         hybrid_fusion=args.midas_hybrid_fusion,
+        sparse_model=args.midas_sparse,
+        store_kind=None if args.midas_store == "exact" else args.midas_store,
+        turbovec_bits=args.midas_turbovec_bits,
+        turbovec_pool=args.midas_turbovec_pool,
         time_aware=not args.midas_no_time,
     )
     adapters: list[MemoryAdapter] = [midas] if args.midas_only else [BaselineRawAdapter(), midas]

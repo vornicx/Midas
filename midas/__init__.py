@@ -28,6 +28,7 @@ from .distill import Distiller, HTTPDistiller, OllamaDistiller
 from .importance import ContentImportance, StructuralImportance, is_standing_instruction
 from .memory import CaptureResult, ContextBlock, Memory, Reranker, approx_tokens, format_record
 from .policy import AGENT_MEMORY_INSTRUCTIONS, DEFAULT_POLICY, MemoryPolicy, policy_summary
+from .index import MemoryStore, VectorIndex
 from .store import InMemoryStore
 from .types import MEMORY_KINDS, MEMORY_PROVENANCE, MemoryKind, MemoryProvenance, MemoryRecord, RecallHit
 
@@ -40,6 +41,12 @@ try:
     from .ann import IVFIndex, IVFStore
 except ImportError:
     IVFIndex = IVFStore = None  # numpy not installed (ANN backend is optional)
+
+try:
+    from .turbovec_index import TurboVecIndex
+    from .turbovec_store import TurboVecStore
+except ImportError:
+    TurboVecIndex = TurboVecStore = None  # `pip install turbovec` not present (compressed backend is optional)
 
 __all__ = [
     "Memory",
@@ -82,6 +89,8 @@ __all__ = [
     "cosine",
     "tokenize",
     "InMemoryStore",
+    "MemoryStore",
+    "VectorIndex",
     "SQLiteStore",
     "IVFIndex",
     "IVFStore",

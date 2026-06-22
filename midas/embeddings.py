@@ -77,6 +77,53 @@ class OpenAIEmbedder:
         return [l2_normalize(list(item.embedding)) for item in resp.data]
 
 
+class TruncatedEmbedder:
+    """Matryoshka dimensionality truncation: keep the first `dim` components of an inner embedder's
+    vectors and renormalize. MRL-trained models (jina-v3, mxbai, nomic) retain most retrieval
+    quality at a fraction of the dimensions → faster cosine and less RAM/disk; non-MRL models
+    degrade (the eval measures which). Implements the Embedder protocol, so it caches and slots in
+    like any other embedder — `model_name`/`dim` differ from the inner model, giving it its own
+    cache namespace."""
+
+    def __init__(self, inner: object, dim: int) -> None:
+        self.inner = inner
+        self.dim = dim
+        self.model_name = f"{getattr(inner, 'model_name', type(inner).__name__)}@mrl{dim}"
+        self.max_text_chars = getattr(inner, "max_text_chars", None)
+        self.batch_size = getattr(inner, "batch_size", None)
+
+    def _truncate(self, vec: list[float]) -> list[float]:
+        return l2_normalize(list(vec[: self.dim]))
+
+    def embed(self, text: str) -> list[float]:
+        return self._truncate(self.inner.embed(text))
+
+    def embed_many(self, texts: list[str]) -> list[list[float]]:
+        return [self._truncate(v) for v in self.inner.embed_many(texts)]
+
+
+class Model2VecEmbedder:
+    """Static (distilled) embeddings via Model2Vec — no transformer forward pass at encode time, so
+    it is ~CPU-instant. A speed/footprint tier: lower quality than a bi-encoder but orders of
+    magnitude faster, useful for cheap candidate generation. Needs `pip install model2vec`."""
+
+    def __init__(self, model_name: str = "minishlab/potion-base-8M") -> None:
+        from model2vec import StaticModel  # lazy import — optional dependency
+
+        self._model = StaticModel.from_pretrained(model_name)
+        self.model_name = model_name
+        probe = self._model.encode(["x"])
+        self.dim = int(getattr(self._model, "dim", 0)) or len(probe[0])
+
+    def embed(self, text: str) -> list[float]:
+        return l2_normalize([float(v) for v in self._model.encode([text])[0]])
+
+    def embed_many(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        return [l2_normalize([float(v) for v in vec]) for vec in self._model.encode(texts)]
+
+
 def _default_embedding_cache_path() -> Path:
     return _default_cache_root() / "midas-embeddings.sqlite3"
 

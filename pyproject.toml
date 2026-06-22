@@ -12,12 +12,16 @@ dependencies = []
 # Optional extras — install what you need (or `[all]` for everything):
 #   all       -> local embeddings + MCP server + LangGraph (the recommended one-shot install)
 #   local     -> local semantic embeddings (fastembed/ONNX — no API key, no torch)
+#   turbovec  -> compressed (2/4-bit) vector store + exact rerank — long-horizon memory at ~1/15 the RAM
+#   model2vec -> static (distilled) embeddings — an ultra-fast CPU speed tier
 #   mcp       -> expose Midas as an MCP server (`midas-mcp` / `python -m midas.mcp_server`)
 #   langgraph -> use Midas as a LangGraph BaseStore (long-term memory)
 #   openai    -> OpenAI embeddings + LLM-judge   ·   dev -> tests + exact token counts
 [project.optional-dependencies]
-all = ["fastembed>=0.7", "mcp>=1.0", "langgraph>=0.2"]
+all = ["fastembed>=0.7", "turbovec>=0.8", "model2vec>=0.8", "mcp>=1.0", "langgraph>=0.2"]
 local = ["fastembed>=0.7"]
+turbovec = ["turbovec>=0.8"]
+model2vec = ["model2vec>=0.8"]
 mcp = ["mcp>=1.0"]
 langgraph = ["langgraph>=0.2"]
 openai = ["openai>=1.0"]

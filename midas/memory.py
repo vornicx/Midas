@@ -214,6 +214,7 @@ class Memory:
         include_provenance: bool = False,
         detect_standing: bool = False,  # tag standing directives at ingest (no LLM cue detector)
         distiller: object | None = None,  # OPTIONAL LLM distiller (tier 3); None = pure no-LLM
+        lexical_index_factory: Callable[[list[MemoryRecord]], Any] | None = None,  # hybrid lexical backend; None = BM25
     ) -> None:
         self.store = store if store is not None else InMemoryStore()
         self.embedder = embedder if embedder is not None else HashingEmbedder()
@@ -254,6 +255,12 @@ class Memory:
         # Cached BM25 lexical index for hybrid recall, keyed by the store's change counter —
         # rebuilding it per query made hybrid ~35x slower at LongMemEval scale (66 ms vs 1.9 ms).
         self._bm25_cache: tuple[int, Any] | None = None
+        # Hybrid lexical backend factory (`records -> index` with `.scores(query)`); None = BM25.
+        # A learned-sparse factory (SPLADE/BM42) swaps in here without touching the fusion code.
+        self._lexical_index_factory = lexical_index_factory
+        # All-records-by-id, cached on the store's version counter — lets hybrid recall skip an
+        # O(N) per-query rebuild on the no-filter path.
+        self._rec_by_id_cache: tuple[int, dict[str, MemoryRecord]] | None = None
 
     def remember(
         self,
@@ -569,6 +576,7 @@ class Memory:
         thread_key: str = "session",
         as_of: float | None = None,
         anchor_boost: float = 0.0,
+        mmr_lambda: float = 0.0,
     ) -> list[RecallHit]:
         q_emb = self.embedder.embed(query)
         # `now` is the query's reference time (e.g. when the question is asked); recency decays
@@ -594,6 +602,12 @@ class Memory:
                     if record.metadata.get(key) != value:
                         return False
             return True
+
+        # When no scope filter is active, drop the predicate so the hybrid/semantic paths take their
+        # no-filter fast path — avoids an O(N) Python scan per query (the 11.6 s/query measured on the
+        # 246k-turn LongMemEval hybrid run; see docs/overnight-experiments.md).
+        if as_of is None and kind is None and min_importance is None and not metadata_filter:
+            predicate = None
 
         # Vector prefilter to a candidate pool, then score and (optionally) rerank.
         pool = pool or max(limit * 5, limit)
@@ -671,6 +685,10 @@ class Memory:
                         recency,
                     )
             hits = sorted(by_id.values(), key=lambda h: (h.score, h.record.updated_at), reverse=True)
+        if mmr_lambda and mmr_lambda > 0.0 and hits:
+            # Diversify via MMR (no LLM): relevant-but-not-redundant re-selection — helps multi-turn /
+            # summary questions where plain top-k crowds in near-duplicates of one region.
+            return self._mmr_select(hits, limit, mmr_lambda)
         if thread_cap and thread_cap > 0:
             # Thread diversification: multi-evidence questions ("when did I first…?") have gold
             # spread across sessions, and plain top-k lets consecutive turns of one session crowd
@@ -693,13 +711,38 @@ class Memory:
             return diversified
         return hits[:limit]
 
+    def _mmr_select(self, hits: list[RecallHit], limit: int, lam: float) -> list[RecallHit]:
+        """Maximal Marginal Relevance re-selection (no LLM): greedily pick hits that are relevant but
+        not redundant with those already chosen — score = λ·relevance − (1−λ)·max cosine-to-selected.
+        Spreads retrieval across diverse evidence, which helps multi-turn / summary questions where
+        plain top-k crowds in near-duplicates. Pure re-selection; the relevance scores are unchanged."""
+        selected: list[RecallHit] = []
+        remaining = list(hits)
+        while remaining and len(selected) < limit:
+            best_i, best_score = 0, float("-inf")
+            for i, h in enumerate(remaining):
+                emb = h.record.embedding
+                if emb is not None and selected:
+                    redundancy = max(
+                        (cosine(emb, s.record.embedding) for s in selected
+                         if s.record.embedding is not None),
+                        default=0.0,
+                    )
+                else:
+                    redundancy = 0.0
+                score = lam * h.relevance - (1.0 - lam) * redundancy
+                if score > best_score:
+                    best_score, best_i = score, i
+            selected.append(remaining.pop(best_i))
+        return selected
+
     def _hybrid_candidates(
         self,
         query: str,
         q_emb: list[float],
         *,
         pool: int,
-        predicate: Callable[[MemoryRecord], bool],
+        predicate: Callable[[MemoryRecord], bool] | None,
         fusion: str = "rrf",
     ) -> tuple[list[tuple[float, MemoryRecord]], dict[str, float]]:
         """Union the semantic top-`pool` with the BM25 top-`pool` (lexical), computing cosine for any
@@ -710,22 +753,35 @@ class Memory:
         lexical rankings — rank-based, so it sidesteps the cosine/BM25 scale mismatch that made the
         older fusion="max" (max of cosine and max-normalised BM25) displace true gold at tight budgets.
         """
-        semantic = self.store.search(q_emb, limit=pool, predicate=predicate)
-        records = [r for r in self.store.all() if predicate(r)]
-        allowed = {r.id for r in records}
-        # Score with the cached whole-store index, then keep only predicate-passing records. (IDF is
-        # corpus-wide either way at the default no-filter recall; rebuilding a filtered index per
-        # query was the 35x latency hole.)
+        # Apply the scope filter ONCE: build the allowed-id set, then push it into the semantic
+        # search as an id-allowlist (O(1) membership) instead of re-running `predicate` per row.
+        # Collapses the two O(N) predicate passes (here over all(), and inside the store's scan)
+        # into one — and is the seam id-based backends (IVF mask, TurboVec in-kernel) plug into.
+        # No-filter fast path (the common case): reuse the version-cached record map and skip the
+        # O(N) per-query scan; only build a filtered set when a scope filter is actually active.
+        if predicate is None:
+            rec_by_id = self._records_by_id()
+            allowed: set[str] | None = None
+            semantic = self.store.search(q_emb, limit=pool)
+        else:
+            records = [r for r in self.store.all() if predicate(r)]
+            allowed = {r.id for r in records}
+            rec_by_id = {r.id: r for r in records}
+            semantic = self.store.search(q_emb, limit=pool, allowed_ids=allowed)
+        # Score with the cached whole-store index, then keep only allowed records (IDF is corpus-wide
+        # either way; rebuilding a filtered index per query was the 35x latency hole).
         bm_scores = {
-            rid: s for rid, s in self._bm25_index().scores(query).items() if rid in allowed
+            rid: s for rid, s in self._bm25_index().scores(query).items()
+            if allowed is None or rid in allowed
         }
         bm_ranked = sorted(bm_scores, key=bm_scores.get, reverse=True)
 
         by_id: dict[str, tuple[float, MemoryRecord]] = {rec.id: (cos, rec) for cos, rec in semantic}
-        rec_by_id = {r.id: r for r in records}
         for rid in bm_ranked[:pool]:
             if rid not in by_id:
-                rec = rec_by_id[rid]
+                rec = rec_by_id.get(rid)
+                if rec is None:
+                    continue
                 cos = cosine(q_emb, rec.embedding) if rec.embedding is not None else 0.0
                 by_id[rid] = (cos, rec)
 
@@ -747,18 +803,31 @@ class Memory:
             }
         return list(by_id.values()), relevance_map
 
+    def _records_by_id(self) -> dict[str, MemoryRecord]:
+        """All records keyed by id, cached on the store's `version` (falls back to a per-call build
+        for stores without a counter). Lets hybrid recall reuse the map instead of rebuilding it per
+        query — the no-filter fast path."""
+        records = self.store.all()
+        version = getattr(self.store, "version", None)
+        if version is None:
+            return {r.id: r for r in records}
+        if self._rec_by_id_cache is None or self._rec_by_id_cache[0] != version:
+            self._rec_by_id_cache = (version, {r.id: r for r in records})
+        return self._rec_by_id_cache[1]
+
     def _bm25_index(self):
         """The BM25 index over the whole store, rebuilt only when the store has changed (keyed by
         the store's `version` counter). Falls back to a per-call build for custom stores without
         a counter."""
         from .bm25 import BM25
 
+        factory = self._lexical_index_factory or BM25
         records = self.store.all()  # for SQLiteStore this also refreshes from other processes
         version = getattr(self.store, "version", None)
         if version is None:
-            return BM25(records)
+            return factory(records)
         if self._bm25_cache is None or self._bm25_cache[0] != version:
-            self._bm25_cache = (version, BM25(records))
+            self._bm25_cache = (version, factory(records))
         return self._bm25_cache[1]
 
     def recall_confidence(self, query: str, **recall_kwargs: Any) -> tuple[list[RecallHit], float]:

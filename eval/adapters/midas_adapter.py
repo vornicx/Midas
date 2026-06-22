@@ -26,6 +26,7 @@ class MidasAdapter:
         limit: int = 8,
         neighbor_window: int = 1,
         rerank: bool = True,
+        reranker_kind: str = "cross-encoder",  # "cross-encoder" (ms-marco) | "colbert" (late interaction)
         pool: int = 40,
         min_relevance: float | None = None,
         min_relevance_ratio: float | None = None,  # scale-free parsimony: drop hits < ratio*top
@@ -50,6 +51,10 @@ class MidasAdapter:
         context_order: str = "recency",
         hybrid: bool = False,
         hybrid_fusion: str = "rrf",
+        sparse_model: str | None = None,  # learned-sparse lexical backend (SPLADE/BM42) for hybrid
+        store_kind: str | None = None,  # "turbovec" → compressed store + exact rerank; None = in-memory exact
+        turbovec_bits: int = 4,
+        turbovec_pool: int = 200,
         time_aware: bool = True,  # use dataset event time for recency/chronology (vs ingest order)
         importance_scorer=None,  # no-LLM ContentImportance: derive importance from raw turns
         novelty_weight: float = 0.0,  # >0: blend novelty-vs-store into derived importance
@@ -59,6 +64,7 @@ class MidasAdapter:
         self._limit = limit
         self._window = neighbor_window
         self._rerank = rerank and embedder is not None and os.getenv("MIDAS_RERANK", "1") != "0"
+        self._reranker_kind = reranker_kind
         self._pool = pool
         self._min_relevance = min_relevance
         self._min_relevance_ratio = min_relevance_ratio
@@ -82,6 +88,11 @@ class MidasAdapter:
         self._context_order = context_order
         self._hybrid = hybrid
         self._hybrid_fusion = hybrid_fusion
+        self._sparse_model = sparse_model
+        self._sparse_backend = None  # cached across resets so the sparse model loads once
+        self._store_kind = store_kind
+        self._turbovec_bits = turbovec_bits
+        self._turbovec_pool = turbovec_pool
         self._time_aware = time_aware
         self._importance_scorer = importance_scorer
         self._novelty_weight = novelty_weight
@@ -99,10 +110,33 @@ class MidasAdapter:
     def _get_reranker(self):
         # Loaded once and shared. Needed when retrieval reranks OR when abstention calibration does.
         if (self._rerank or self._abstention_relevance_floor > 0) and self._reranker is None:
-            from midas import LocalReranker
+            if self._reranker_kind == "colbert":
+                from midas.colbert import ColBERTReranker
 
-            self._reranker = LocalReranker()
+                self._reranker = ColBERTReranker()
+            else:
+                from midas import LocalReranker
+
+                self._reranker = LocalReranker()
         return self._reranker
+
+    def _get_sparse_backend(self):
+        # Loaded once and shared. Returns a `records -> SparseLexicalIndex` factory, or None (= BM25).
+        if self._sparse_model and self._sparse_backend is None:
+            from midas.sparse import SparseLexicalBackend
+
+            self._sparse_backend = SparseLexicalBackend(self._sparse_model)
+        return self._sparse_backend
+
+    def _get_store(self):
+        # A fresh TurboVecStore per reset (compressed index + exact rerank); None = default InMemoryStore.
+        if self._store_kind == "turbovec" and self._embedder is not None:
+            from midas import TurboVecStore
+
+            return TurboVecStore(
+                dim=self._embedder.dim, bit_width=self._turbovec_bits, rerank_pool=self._turbovec_pool
+            )
+        return None
 
     def reset(self) -> None:
         reranker = self._get_reranker()
@@ -126,6 +160,8 @@ class MidasAdapter:
             abstention_relevance_floor=self._abstention_relevance_floor,
             abstention_entailment_floor=self._abstention_entailment_floor,
             include_provenance=self._include_provenance,
+            lexical_index_factory=self._get_sparse_backend(),
+            store=self._get_store(),
         )
 
     def ingest(self, events: list[Event]) -> None:

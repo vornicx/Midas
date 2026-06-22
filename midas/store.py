@@ -6,7 +6,7 @@ are the planned next backends; they implement the same surface so `Memory` is st
 """
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Collection
 
 from .embeddings import cosine
 from .types import MemoryRecord
@@ -86,13 +86,21 @@ class InMemoryStore:
         *,
         limit: int,
         predicate: Callable[[MemoryRecord], bool] | None = None,
+        allowed_ids: Collection[str] | None = None,
     ) -> list[tuple[float, MemoryRecord]]:
         """Return up to `limit` (cosine, record) pairs, highest similarity first.
 
         Cosine = dot product (embeddings are L2-normalized). For larger stores this uses a vectorised
         numpy scan over a cached embedding matrix (rebuilt only when records change), with a
         pure-Python fallback that returns identical results. With `ann_threshold` set and reached,
-        search goes through the numpy-only IVF index instead (sub-linear, approximate)."""
+        search goes through the numpy-only IVF index instead (sub-linear, approximate).
+
+        `allowed_ids`, when given, restricts results to that id set (folded into
+        `predicate` as O(1) membership) — the scoped-recall pushdown path."""
+        if allowed_ids is not None:
+            allow = allowed_ids if isinstance(allowed_ids, (set, frozenset)) else set(allowed_ids)
+            base = predicate
+            predicate = lambda r: r.id in allow and (base is None or base(r))
         np = _numpy()
         if (
             self._ann_threshold is not None

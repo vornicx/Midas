@@ -5,7 +5,49 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
 
 ## [Unreleased]
 
-(nothing yet)
+### Fixed
+- **Guard no longer authorises actions on stale beliefs.** `decide_memory_use` checked provenance and
+  actor but not *currency*, so a **superseded** memory — even one user-confirmed when it was current —
+  could still justify an answer or an external/destructive action. It now blocks superseded evidence for
+  any non-planning use (planning may still weigh history); the guard verifies currency itself instead of
+  trusting recall to have filtered the stale record. `midas/guard.py`, `tests/test_guard.py`.
+- **Hybrid recall is no longer O(N)/query at scale (~250× faster).** `_hybrid_candidates` rebuilt the
+  allowed-record map by scanning the whole store on every query; the no-filter path now reuses a
+  version-cached `_records_by_id()` map (and `recall()` drops the predicate when no scope filter is
+  active). Measured on LongMemEval-`s` (246,750 turns): **11.6 s/query → 46 ms/query**, recall
+  unchanged (0.92, BM25 hybrid). Affects any `--midas-hybrid` use at scale.
+
+### Added
+- **Agent Continuity Bench v0** (`eval/continuity.py`) — a deterministic ($0, no-LLM) seed for the axis
+  retrieval benchmarks miss: across sessions, does memory keep a coding agent **safe** (Guard allows or
+  blocks a proposed use by provenance + currency) and **current** (a revised decision surfaces its live
+  value, not the superseded one)? Both scored end-to-end and pinned in `tests/test_continuity.py`.
+- **Judged summarization A/B + rubric-coverage judge** (`eval/summarization_ab.py`) — BEAM grades
+  `summarization` by a rubric (no reference string), so the prior distill A/B skipped the category
+  entirely. The loader now carries the rubric (`eval/datasets.py`, `tests/test_beam_rubric.py`) and the
+  new harness scores rubric coverage with a local (Ollama) or `--backend hosted` reader/judge/extractor.
+  Finding: local structure-preserving extraction does not lift summarization (raw 0.28 vs replace 0.07);
+  the lift is gated on a capable extractor — [`docs/frontier-2026.md §2b`](docs/frontier-2026.md).
+- **TurboVec compressed vector backend** (`[turbovec]` extra) — `TurboVecStore` runs a 2/4-bit
+  TurboQuant index (`TurboVecIndex` over `turbovec.IdMapIndex`) for cheap candidate generation, then
+  re-scores the candidates by **exact cosine** on full-precision vectors, so recall tracks an exact
+  scan while the index is ≈8–16× smaller in RAM. The RAM-saving mode (`vector_source=SQLiteVectorSource(…)`)
+  keeps full vectors on disk and strips them from memory, reading back only the candidate set per query.
+  Measured on BEAM-100K: recall **0.53 = exact** at both 4-bit and 2-bit; index RAM 153.6 MB → 10.2 MB
+  (15×); extrapolates to 10M×768 ≈ 31 GB → ~2 GB. `examples/turbovec_backend.py`; benchmarks in
+  [`docs/overnight-experiments.md`](docs/overnight-experiments.md).
+- **`MemoryStore` / `VectorIndex` Protocols + allowlist pushdown** — the store/index surface is now an
+  explicit contract (`midas/index.py`), and a query's scope is pushed into search as an `allowed_ids`
+  allowlist (O(1) membership / in-kernel for native backends) instead of a per-row Python predicate.
+- **Experimental retrieval backends (opt-in, measured).** Learned-sparse hybrid (`--midas-sparse` —
+  BM42 / SPLADE++ via fastembed), ColBERT late-interaction reranker (`--midas-reranker colbert`),
+  Matryoshka dim truncation (`--local-truncate-dim`), and Model2Vec static embeddings (`--model2vec`,
+  `[model2vec]` extra). Per-dataset results — which generalize and which don't — in
+  [`docs/overnight-experiments.md`](docs/overnight-experiments.md).
+
+### Changed
+- **License changed from MIT to Apache-2.0** to keep the core permissive while adding the explicit
+  patent grant and enterprise-facing terms expected by commercial adopters.
 
 ## [0.0.4] — 2026-06-13
 
