@@ -10,10 +10,6 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-green" alt="License: Apache-2.0"></a>
 </p>
 
-<p align="center">
-  <img src="docs/demo.gif" alt="Midas stores facts with no LLM, then recalls them by meaning in a later session — local, $0, source-traceable" width="820">
-</p>
-
 Your AI assistant forgets everything between sessions. **Midas is the memory that lives next to it, on
 your machine.** Your coding agent remembers the decisions, conventions, and bugs from three sessions
 ago — without piping every message through an LLM to "extract" facts. It costs **nothing per message**,
