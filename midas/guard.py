@@ -125,7 +125,10 @@ def decide_memory_use(
     - planning can use any provenance, because it does not change the outside world;
     - answers can use observations, completed actions, and user confirmations, but not internal plans;
     - external/destructive actions require `user_confirmation` memory. If an action was observed by
-      agent A, agent B still needs fresh user approval before acting on it.
+      agent A, agent B still needs fresh user approval before acting on it;
+    - a superseded belief is no longer current truth, so it cannot justify an answer or an action on
+      its own — even one that was user-confirmed when current (planning may still weigh the history).
+      The guard verifies currency itself rather than trusting recall to have filtered the stale record.
     """
     if intended_use not in MEMORY_USES:
         allowed = ", ".join(MEMORY_USES)
@@ -147,6 +150,12 @@ def decide_memory_use(
     for record in records:
         _validate_provenance(record.provenance)
         if record.provenance not in allowed_prov:
+            blocked.append(record.id)
+            continue
+        # Currency (defense-in-depth): a superseded belief is stale, so on its own it cannot justify an
+        # answer or an action — even if it was user-confirmed when current. Planning may still weigh
+        # superseded history. The guard checks this itself instead of trusting recall to have filtered it.
+        if intended_use != "planning" and record.superseded_by is not None:
             blocked.append(record.id)
             continue
         if (
