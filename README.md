@@ -1,24 +1,20 @@
 <h1 align="center">Midas</h1>
 
-<p align="center"><b>Durable memory for AI agents — no LLM at ingest, $0, fully local, source-traceable.</b></p>
+<p align="center"><b>The local memory layer for long-horizon AI agents — remembers across sessions, keeps what's current, and won't act on stale memory.</b><br/>No LLM at ingest · $0 per message · fully local · every recall traces to its source.</p>
 
 <p align="center">
   <a href="https://github.com/vornicx/Midas/actions/workflows/ci.yml"><img src="https://github.com/vornicx/Midas/actions/workflows/ci.yml/badge.svg" alt="tests"></a>
   <a href="https://pypi.org/project/midas-memory/"><img src="https://img.shields.io/pypi/v/midas-memory" alt="PyPI"></a>
   <a href="https://www.npmjs.com/package/midas-memory-mcp"><img src="https://img.shields.io/npm/v/midas-memory-mcp?label=npm" alt="npm"></a>
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-green" alt="License: Apache-2.0"></a>
 </p>
 
-<p align="center">
-  <img src="docs/demo.gif" alt="Midas stores facts with no LLM, then recalls them by meaning in a later session — local, $0, source-traceable" width="820">
-</p>
-
-Your AI assistant forgets everything between sessions. **Midas is a memory that lives next to it, on
-your machine** — for coding agents, research agents, assistants. It remembers the durable stuff
-across long, multi-session work *without* sending every turn through an LLM to "extract" facts. It
-costs nothing per message, nothing leaves your computer, and every recalled memory traces back to
-the exact moment it came from.
+Your AI assistant forgets everything between sessions. **Midas is the memory that lives next to it, on
+your machine.** Your coding agent remembers the decisions, conventions, and bugs from three sessions
+ago — without piping every message through an LLM to "extract" facts. It costs **nothing per message**,
+**nothing leaves your computer**, every memory **traces back to the exact turn it came from**, and it
+**won't let an agent act on memory that's stale or never confirmed**.
 
 ```bash
 uv tool install "midas-memory[mcp,local]"     # the midas-mcp command, for any MCP client
@@ -26,19 +22,51 @@ uv tool install "midas-memory[mcp,local]"     # the midas-mcp command, for any M
 # or, as a library:  pip install "midas-memory[local]"
 ```
 
+<p align="center">
+  <a href="#connect-it-to-your-coding-agent"><b>Install in your agent</b></a>
+  ·
+  <a href="#how-it-does-on-the-benchmarks"><b>See the benchmarks</b></a>
+  ·
+  <a href="https://github.com/vornicx/Midas/issues/new?title=Team%2FEnterprise%20Midas%20conversation"><b>Team / Enterprise</b></a>
+</p>
+
 ---
 
-## Why it's different
+## Why Midas
 
-Other memory tools call an LLM to summarize every session — you pay in tokens forever, in latency,
-and by sending every turn to a provider, and recall returns *rewritten* facts you can't audit. Midas
-makes the opposite bet:
+Most memory tools call an LLM to summarize every session — so you pay in tokens forever, add latency,
+ship every turn to a provider, and get back *rewritten* facts you can't audit. Midas makes the opposite
+bet, and that bet is what makes it cheap, private, and trustworthy:
 
-- **No LLM at ingest or query** → **$0 API spend, zero data egress**, fast local ops (embed-bound, ~tens of ms — no per-turn network round-trip).
-- **Source-traceable** → recall returns the **verbatim source turns**, not LLM-rewritten facts. No extraction step that can silently hallucinate.
-- **Stays current & bounded, all no-LLM** → typed belief revision (the old value is superseded, not duplicated), selective forgetting with an audit trail, dedup, time tiers.
-- **One file, many clients** → point several MCP apps at one SQLite file and they share live memory (more below).
-- **Eval-first** → every claim has a reproducible benchmark, *including the experiments that failed*.
+- **$0 and private by construction.** No LLM at ingest or query → no API spend, nothing leaves your
+  machine, fast local ops (~tens of ms, no per-turn network round-trip).
+- **You can trust what it recalls.** Recall returns the **verbatim source turn**, not an LLM rewrite —
+  so there's no extraction step that can silently hallucinate a "fact" you never said.
+- **It stays current on its own.** Typed belief revision supersedes the old value instead of piling up
+  duplicates; selective forgetting keeps it bounded — all with no LLM.
+- **It's safe to build on.** A provenance **guard** lets memory inform planning but **blocks
+  memory-justified external or destructive actions** unless you explicitly confirmed them — and a
+  *superseded* memory can't authorize an action at all.
+- **One file, many tools.** Point Claude Code, Cursor, and your chat app at one SQLite file and they
+  share one live memory.
+- **Proven, not asserted.** Every claim has a reproducible benchmark — *including the experiments that
+  failed.*
+
+## More than recall: a memory you can govern
+
+Finding a buried fact is table stakes. A long-horizon coding agent needs memory it can **act on
+safely** and **resume from cleanly** — which is where similarity search alone falls short:
+
+| You ask… | Midas answers with | Why top-k recall can't |
+|---|---|---|
+| *"Can I run this destructive migration?"* | **Guard**: allowed only if **you** confirmed it, and only if that confirmation is still current | provenance + currency aren't a similarity match |
+| *"What's the current state of project Apollo?"* | **`memory_state`**: the live, non-superseded decisions / constraints / facts | a broad "current state" query matches no single turn |
+| *"What changed since our last session?"* | **`memory_diff`**: beliefs added, and beliefs revised (old → new) | "what's new" isn't a content query at all |
+| *"How do I speed up the transactions list?"* | the **prior fix** resurfaces, so the agent doesn't re-diagnose it | — |
+
+These properties are measured, not asserted — the **[Agent Continuity Bench](eval/continuity.py)** scores
+action-safety, decision-adherence, and repeated-mistake avoidance across a scripted multi-session project
+(deterministic, no LLM).
 
 ## How it does on the benchmarks
 
@@ -58,13 +86,12 @@ And the cross-system metric, **judged answer-rate** (same gpt-4o judge the leade
 | LongMemEval-`s` (gpt-4o reader, ties LLM-ingest SOTA at **$0 ingest**) | — | **0.84** |
 | BEAM-100K (gpt-4o judge, raw-turn floor, $0 ingest) | 0.05 | **0.40** |
 
-All of it at **0 LLM calls, $0, and 0 data egress** at ingest. Full numbers, per-category
-breakdowns, reproduce commands, and the head-to-head framing vs Mem0/Zep/Mastra are in
-**[BENCHMARKS.md](BENCHMARKS.md)**.
+All of it at **0 LLM calls, $0, and 0 data egress** at ingest. Full numbers, per-category breakdowns,
+reproduce commands, and the head-to-head vs Mem0/Zep/Mastra are in **[BENCHMARKS.md](BENCHMARKS.md)**.
 
 > **Eval-first means we publish the misses too.** Hybrid retrieval, reranking, thread-diversification,
-> dual-granularity indexing, and *naive distillation* were all measured to **not** help (or to hurt)
-> and are documented as such. That honesty is the point — see BENCHMARKS.md and
+> dual-granularity indexing, and *naive distillation* were all measured to **not** help (or to hurt) and
+> are documented as such. That honesty is the point — see BENCHMARKS.md and
 > [`docs/frontier-2026.md`](docs/frontier-2026.md).
 
 ---
@@ -117,17 +144,18 @@ claude mcp add midas -s user \
 </details>
 
 **Once connected**, Midas injects a short policy into the agent (*recall first, then capture durable
-facts/decisions/preferences/constraints/corrections*). The agent captures freely; **Midas decides
-what's kept** — it scores importance (no LLM), drops trivia, skips duplicates, revises stale beliefs,
-and forgets the low-value tail to stay bounded. A **provenance guard** (`check_memory_use`) blocks
-memory-justified external/destructive actions unless they came from explicit user confirmation.
+facts/decisions/preferences/constraints/corrections*). The agent captures freely; **Midas decides what's
+kept** — it scores importance (no LLM), drops trivia, skips duplicates, revises stale beliefs, and forgets
+the low-value tail to stay bounded. Before any memory-justified external or destructive action, the agent
+calls `check_memory_use` and is **blocked unless you confirmed it** (and that confirmation is still
+current).
 
 ### One memory, many clients
 
-Point Claude Code, Claude Desktop, Cursor… at the **same** `MIDAS_MCP_DB` file and they share one
-*live* memory — each detects the others' writes (SQLite `data_version`) and refreshes, so a fact
-captured in your IDE is recallable from your chat app seconds later, no restarts. Scope it per
-project/agent/user with `MIDAS_MCP_NAMESPACE`.
+Point Claude Code, Claude Desktop, Cursor… at the **same** `MIDAS_MCP_DB` file and they share one *live*
+memory — each detects the others' writes (SQLite `data_version`) and refreshes, so a fact captured in your
+IDE is recallable from your chat app seconds later, no restarts. Scope it per project/agent/user with
+`MIDAS_MCP_NAMESPACE`.
 
 <p align="center">
   <img src="docs/demo-multi-client.gif" alt="Two live processes share one Midas SQLite file: a recall that finds nothing, a capture from a different process, then the same never-restarted session recalls it" width="820">
@@ -138,15 +166,15 @@ project/agent/user with `MIDAS_MCP_NAMESPACE`.
 <details>
 <summary><b>All tools & env knobs</b></summary>
 
-**Tools:** `remember`, `capture` (policy-gated auto-store), `recall` (source-traceable),
-`build_context` (compact, dated, today-anchored prompt block), `check_memory_use` (guard),
-`memory_policy`, `maintain` (dedup + forgetting, returns a deletion audit), `stats`,
-`forget` (chain-safe), `forget_matching` (topic-level erasure, dry-run by default), `forget_all`.
-Prompts: `memory_session`, `distill`.
+**Tools:** `remember`, `capture` (policy-gated auto-store), `recall` (source-traceable), `build_context`
+(compact, dated, today-anchored prompt block), `memory_state` (current project state), `memory_diff`
+(what changed since), `check_memory_use` (guard), `memory_policy`, `maintain` (dedup + forgetting, returns
+a deletion audit), `stats`, `forget` (chain-safe), `forget_matching` (topic-level erasure, dry-run by
+default), `forget_all`. Prompts: `memory_session`, `distill`.
 
-**Env:** `MIDAS_MCP_DB` · `MIDAS_MCP_EMBEDDER` (`local` / `hashing` / `multilingual` / any fastembed id)
-· `MIDAS_MCP_MAX_RECORDS` · `MIDAS_MCP_MIN_IMPORTANCE` · `MIDAS_MCP_NAMESPACE` · `MIDAS_MCP_ANN=1`
-(sub-linear IVF for huge stores) · `MIDAS_MCP_SUPERSEDE` · `MIDAS_MCP_NLI=1` (NLI-gated revision) ·
+**Env:** `MIDAS_MCP_DB` · `MIDAS_MCP_EMBEDDER` (`local` / `hashing` / `multilingual` / any fastembed id) ·
+`MIDAS_MCP_MAX_RECORDS` · `MIDAS_MCP_MIN_IMPORTANCE` · `MIDAS_MCP_NAMESPACE` · `MIDAS_MCP_ANN=1` (sub-linear
+IVF for huge stores) · `MIDAS_MCP_SUPERSEDE` · `MIDAS_MCP_NLI=1` (NLI-gated revision) ·
 `MIDAS_MCP_AUTO_MAINTAIN=<min>` (idle-time upkeep) · `MIDAS_MCP_PINNED` (pin standing directives).
 
 </details>
@@ -170,27 +198,28 @@ for hit in mem.recall("which database did we pick?", limit=3):
 ```
 
 <details>
-<summary><b>Belief revision · forgetting · namespaces · bitemporal · LangGraph · persistence</b></summary>
+<summary><b>Project state & diff · belief revision · forgetting · namespaces · bitemporal · LangGraph</b></summary>
 
 ```python
 from midas import Memory, LocalEmbedder
 from midas.nli import LocalNLI
 from midas.sqlite_store import SQLiteStore
+from midas.state import memory_state, memory_diff   # the control-plane views
 
 # Durable, shareable, no native extension. Safe across threads & processes (live data_version refresh).
 mem = Memory(store=SQLiteStore("memory.db"), embedder=LocalEmbedder(),
              supersede=True, nli=LocalNLI())   # a turn that CONTRADICTS an old belief supersedes it
 
+# Control-plane: the current state of a project, and what changed since a point in time (no LLM):
+memory_state(mem, scope={"project": "apollo"})          # live, non-superseded decisions/constraints/facts
+memory_diff(mem, since=last_session_epoch)              # {added: [...], revised: [(old, new), ...]}
+
 mem.forget_decayed(max_records=50_000)         # evict lowest value (importance × recency); protects facts
-mem.consolidate(similarity_threshold=0.95)     # collapse near-duplicate restatements (keeps provenance)
 mem.recall("when is the launch?", as_of=1_700_000_000)   # bitemporal: "what did we believe on date X"
 
 # Right-to-be-forgotten — preview, then erase, with an audit trail:
 mem.forget_matching("the user's home address", dry_run=True)
 mem.forget_matching("the user's home address")
-
-# Scoped memory: one store, many projects/users, no cross-talk:
-mem.recall("api gateway", metadata_filter={"namespace": "proj-a"})
 
 # Back LangGraph's long-term memory with Midas:
 from midas.integrations.langgraph_store import MidasStore
@@ -201,38 +230,57 @@ store = MidasStore(); store.put(("user", "123"), "pref", {"text": "prefers dark 
 
 ---
 
+## Commercial path
+
+The core stays open source under **Apache-2.0**: local SQLite memory, MCP tools, SDKs, and the eval
+harness are free to use, fork, and embed. Paid work is focused on what teams need around that core:
+
+| Option | For | Status |
+|---|---|---|
+| **OSS** | Local agent memory, SDK/MCP integration, reproducible benchmarks | Available now |
+| **Pro** | Encrypted sync, backups, profiles, easier multi-machine setup | Planned |
+| **Team** | Shared namespaces, hosted MCP, admin controls, audit trails, support | Founding customers |
+| **Enterprise / VPC** | On-prem or VPC deployment, SSO/SAML, RBAC, SLA, DPA, custom integration | By arrangement |
+| **Eval Pack** | Benchmark an agent-memory stack against BEAM / LongMemEval with raw outputs and failure traces | By arrangement |
+
+The commercial line is deliberate: **Midas does not monetize by closing the memory core.** It monetizes
+operational trust, deployment support, team controls, and benchmark-grade evaluation.
+
 ## Honest status
 
-Midas is **early** (the API may change) but built narrow and measured-first. Where it stands, plainly:
+Midas is **early** but built narrow and measured-first. Where it stands, plainly:
 
-- **Retrieval is its strength and is essentially maxed** for a no-LLM design — confirmed by our own
-  A/Bs *and* by the frontier papers (the retriever is not the bottleneck). The numbers above are the
+- **Retrieval is its strength and is essentially maxed** for a no-LLM design — confirmed by our own A/Bs
+  *and* by the frontier papers (the retriever is not the bottleneck). The benchmark numbers above are the
   result.
-- **Distillation (turning raw turns into compact facts) is the frontier's extra lever — and a *naive*
-  pass does not help here.** We built it, judged it on BEAM, and measured that replacing raw turns
-  with summarized facts is *catastrophic* (it drops the temporal/changed-value detail), while
-  augmenting is roughly neutral. So the optional distillation dial ships **off by default**, and we
-  don't claim it as a win. The real lift needs sophisticated, structure-preserving extraction —
-  open work. (Details: [`docs/frontier-2026.md`](docs/frontier-2026.md) §2b.)
-- **Next:** a no-LLM *self-learning* recall policy aimed at precision — the one untested lever left.
+- **The frontier's extra lever is structure-preserving extraction — and it needs a capable model Midas
+  deliberately won't run at ingest.** We built the judged harness and measured it on BEAM's summarization
+  category: a small local extractor doesn't help (raw 0.28 vs replace 0.07 rubric coverage), and the lift
+  is gated on a strong model — so it belongs to *the agent's* model, not Midas's. The optional distillation
+  dial ships **off by default**; we don't claim it as a win. (Details: [`docs/frontier-2026.md`](docs/frontier-2026.md) §2b.)
+- **Where it's heading:** from recall to a **governed memory control-plane** — `memory_state` / `memory_diff`,
+  the provenance guard that won't act on stale or unconfirmed memory, and the
+  [Agent Continuity Bench](eval/continuity.py) that measures those properties. Local, auditable, and
+  honest about what's proven.
 
 ## The eval harness
 
 `eval/` (dev-only) runs Midas and competitors through synthetic / LoCoMo / LongMemEval / multiday /
 conflicts-v1 / **BEAM** with deterministic `recall@k` + `precision@k`, cost/latency instrumentation, a
-**dumb-reader ablation** (proves the numbers aren't reader-inflated), and an optional local-or-hosted
-LLM judge. The anti-cheating checklist (no query rewriting, no LLM at ingest, no gold leakage, seeded
-sampling), conflict handling, failure traces, and the verbatim MCP policy are in
+**dumb-reader ablation** (proves the numbers aren't reader-inflated), and an optional local-or-hosted LLM
+judge. The anti-cheating checklist (no query rewriting, no LLM at ingest, no gold leakage, seeded sampling),
+conflict handling, failure traces, and the verbatim MCP policy are in
 [`docs/methodology.md`](docs/methodology.md).
 
 ```bash
 python -m eval.runner --dataset longmemeval --variant s --local --midas-no-rerank --max-questions 40
 python -m eval.runner --dataset beam --beam-tier 100K --local --dumb-reader   # frontier benchmark
+python -m eval.continuity                                                      # Agent Continuity Bench
 ```
 
 ## Privacy & license
 
-Local-first: every memory lives in a SQLite file on your machine, recall returns the exact stored
-text, and capture/recall/forget make **no network calls**. No account, API key, or telemetry. The
-only outbound traffic is a one-time embedding-model download (for the `local` backend) and the
-package install. Full details in [`PRIVACY.md`](PRIVACY.md) · [MIT](LICENSE).
+Local-first: every memory lives in a SQLite file on your machine, recall returns the exact stored text,
+and capture/recall/forget make **no network calls**. No account, API key, or telemetry. The only outbound
+traffic is a one-time embedding-model download (for the `local` backend) and the package install. Full
+details in [`PRIVACY.md`](PRIVACY.md) · [Apache-2.0](LICENSE).

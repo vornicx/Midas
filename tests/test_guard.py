@@ -61,6 +61,28 @@ def test_guard_blocks_internal_plans_as_answer_evidence() -> None:
     assert decision.allowed is False
 
 
+def test_guard_blocks_superseded_confirmation_for_destructive_action() -> None:
+    # Adversarial currency case: a memory the user confirmed WHEN CURRENT, later revised. The stale
+    # belief must not justify an action on its own — the guard's defense-in-depth against acting on an
+    # outdated confirmation (e.g. "delete the X bucket" after X was migrated away).
+    mem = Memory()
+    rec = mem.remember(
+        "User confirmed: delete the staging bucket.",
+        kind="constraint",
+        provenance="user_confirmation",
+        actor="user",
+    )
+    rec.superseded_by = "newer-belief-id"  # belief was revised after confirmation
+
+    destructive = decide_memory_use([rec], intended_use="destructive_action")
+    assert destructive.allowed is False
+    assert destructive.blocked_ids == (rec.id,)
+    # Answering from a stale belief is wrong too...
+    assert decide_memory_use([rec], intended_use="answer").allowed is False
+    # ...but planning may still consider the superseded history.
+    assert decide_memory_use([rec], intended_use="planning").allowed is True
+
+
 def test_memory_guard_reliance_recalls_and_checks_policy() -> None:
     mem = Memory()
     mem.remember("The billing limit is 200 dollars.", kind="constraint", provenance="observation")

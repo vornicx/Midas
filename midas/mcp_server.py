@@ -42,6 +42,7 @@ from midas import (
     AGENT_MEMORY_INSTRUCTIONS, MEMORY_PROVENANCE, MEMORY_USES, HashingEmbedder, Memory,
     MemoryPolicy, StructuralImportance, __version__, policy_summary,
 )
+from midas.state import memory_diff as _diff_view, memory_state as _state_view
 
 # Auto-retention cap: when set, the store is kept at or below this many records by no-LLM selective
 # forgetting after each write — bounded memory for long-running/enterprise deployments.
@@ -365,6 +366,43 @@ def build_context(
         # that lifted temporal recall@k 0.86 -> 0.95 in the eval; identical recency scoring.
         now=time.time(),
     )
+
+
+@server.tool(
+    title="Memory state",
+    annotations=ToolAnnotations(title="Memory state", readOnlyHint=True, openWorldHint=False),
+)
+def memory_state(namespace: str = "", kinds: str = "", limit: int = 50) -> dict:
+    """The CURRENT durable state of a project/scope: the live (non-superseded) decisions, constraints,
+    facts, and preferences, newest first. Use this to ONBOARD into a project or before planning — when
+    a broad 'what's the current state?' has no single matching turn, so `recall` under-retrieves. Not a
+    similarity search and no LLM. kinds: optional comma list (constraint,fact,preference,mission) to
+    narrow; empty = all durable kinds.
+    """
+    kind_tuple = tuple(k.strip() for k in kinds.split(",") if k.strip())
+    extra = {"kinds": kind_tuple} if kind_tuple else {}
+    records = _state_view(_mem, scope=_ns_filter(namespace), limit=int(limit), **extra)
+    return {"count": len(records), "state": [_serialize_record(r) for r in records]}
+
+
+@server.tool(
+    title="Memory diff",
+    annotations=ToolAnnotations(title="Memory diff", readOnlyHint=True, openWorldHint=False),
+)
+def memory_diff(hours: float = 24.0, namespace: str = "") -> dict:
+    """What CHANGED in memory in the last `hours`: beliefs newly added, and beliefs revised (old -> new).
+    The 'what's new since our last session' view for resuming long-horizon work without re-reading
+    everything. Deterministic, no LLM.
+    """
+    since = time.time() - float(hours) * 3600.0
+    diff = _diff_view(_mem, since, scope=_ns_filter(namespace))
+    return {
+        "since_hours": float(hours),
+        "added": [_serialize_record(r) for r in diff.added],
+        "revised": [
+            {"old": _serialize_record(o), "new": _serialize_record(n)} for o, n in diff.revised
+        ],
+    }
 
 
 @server.tool(

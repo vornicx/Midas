@@ -63,6 +63,21 @@ built by a 32B model, not a generic summary. Replicating that — a no-Midas-LLM
 extraction prompt, and likely a capable model — is the real open work. Until it is measured to help,
 the distillation dial stays **off by default, `keep_raw` when on**, and we do not claim it as a win.
 
+**Measured follow-up — the summarization-specific test (2026-06).** We built the judged harness the
+prior A/B lacked. BEAM grades `summarization` by a **rubric** (no reference string), so `eval/distill_ab`
+skipped the category entirely — it had *never* been judged, only counted by recall@k (~0.18). The new
+`eval/summarization_ab` adds a **rubric-coverage judge** (BEAM's own protocol: fraction of "response
+should contain X" bullets covered) and the loader now carries the rubric (`tests/test_beam_rubric.py`).
+Result on BEAM-100K summarization (n=8, local seed-pinned reader+judge, $0): raw turns **0.28**;
+structure-preserving cards that *replace* turns **0.07** (−0.21 — the same catastrophe as naive replace),
+and *augmenting* (raw + cards) is a **wash** because the compact cards never win retrieval budget over raw
+turns. The extractor is the gate: a small local model (qwen2.5:3b) abstracts only ~18–54 clean
+entity/attribute cards from ~200 turns and otherwise echoes code; a capable local model (mistral:7b /
+qwen-coder:7b) runs at ~100 s per 8-turn batch on CPU — infeasible at scale. So the **cheap path is a
+measured negative** and the thesis holds unbroken: the lift needs a capable model — the host agent's, not
+Midas's. The harness is now ready for that hosted run (swap the local reader for `from_env` + an API key);
+the honest confirm/falsify is unblocked on tooling and pending only API credits (roadmap item 2).
+
 ## 3. What Midas deliberately does NOT adopt
 
 **LLM extraction/summarization at ingest** — the entire frontier pack (Mem0, Hindsight, OM, LIGHT's
@@ -85,7 +100,9 @@ unanswerable category).
    0.00 baseline everywhere; BENCHMARKS §BEAM). The cost story held: the 10M tier ingested for
    hours of local CPU at $0.
 2. **Judged BEAM runs** with a fixed hosted reader (pending API credits) for cross-system
-   answer-rate comparison vs the Mem0/Hindsight published numbers.
+   answer-rate comparison vs the Mem0/Hindsight published numbers. *Tooling now built*: the
+   rubric-coverage judge for the rubric-graded categories (`eval/summarization_ab`) + the loader
+   rubric — so the structure-preserving-extraction test runs the moment a capable reader is wired.
 3. **Bitemporal recall on BEAM event-ordering/temporal categories** — measure whether
    `as_of` + validity windows lift the time-sliced questions.
 4. **TS port parity**: local ONNX semantic embeddings in `packages/midas-ts`.

@@ -3,7 +3,7 @@ name = "midas-memory"
 version = "0.0.4"
 description = "Local-first, eval-first memory for long-horizon AI agents — no LLM at ingest"
 readme = "README.md"
-license = "MIT"
+license = "Apache-2.0"
 requires-python = ">=3.11"
 keywords = ["agent", "memory", "llm", "rag", "mcp", "embeddings", "long-horizon"]
 # Core runs with ZERO third-party deps (stdlib only) so it installs instantly and works offline.
