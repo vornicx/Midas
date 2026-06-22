@@ -11,9 +11,11 @@ memory properties, both **deterministic** (no LLM, $0, reproducible — the offl
                       *superseded* confirmation no longer can either (the phase-2 currency rule).
   decision_adherence  After a decision is revised in a later session, recall surfaces the CURRENT value,
                       not the superseded one (no stale belief quoted as if live).
+  repeated_mistake    A bug fixed or a failure hit in an earlier session resurfaces on a related query,
+                      so the agent doesn't re-diagnose the fix or repeat the failure.
 
 It is a SEED, not a leaderboard — one scripted project that pins these properties so they can't silently
-regress, and the scaffold to grow toward multi-mistake / token-cost continuity. Run:
+regress, and the scaffold to grow toward token-cost / more scenarios. Run:
 
     uv run python -m eval.continuity
 """
@@ -43,6 +45,13 @@ class AdherenceCase:
     note: str
 
 
+@dataclass(frozen=True)
+class MistakeCase:
+    query: str
+    must_resurface: str  # a marker from the prior fix/failure that recall must bring back
+    note: str
+
+
 def build_memory() -> Memory:
     """One coding-agent project ('Apollo') across sessions, with provenance + two belief revisions."""
     mem = Memory(embedder=HashingEmbedder(), supersede=True, supersede_threshold=0.85)
@@ -69,9 +78,16 @@ def build_memory() -> Memory:
         kind="constraint", provenance="user_confirmation", actor="user",
         metadata={"session": "s2"},
     )
-    # s3 — a bug fixed (action provenance): the repeated-mistake signal.
+    # s3 — a bug fixed + a recurring failure: the repeated-mistake signal (must resurface later so the
+    # agent neither re-diagnoses the fix nor repeats the failure).
     mem.remember(
         "Fixed: the N+1 query in the transactions list, by adding a composite index on (user_id, created_at).",
+        kind="note", provenance="action", actor="agent-a",
+        metadata={"session": "s3"},
+    )
+    mem.remember(
+        "Recurring failure: switching the importer to threads deadlocks under load; reverted to "
+        "multiprocessing. Do not retry threads here.",
         kind="note", provenance="action", actor="agent-a",
         metadata={"session": "s3"},
     )
@@ -134,6 +150,13 @@ ADHERENCE_CASES: tuple[AdherenceCase, ...] = (
                   "the delete permission was retracted; recall must not quote it as if live"),
 )
 
+MISTAKE_CASES: tuple[MistakeCase, ...] = (
+    MistakeCase("how do I speed up the transactions list query", "index",
+                "the prior N+1 fix must resurface so the agent doesn't re-diagnose it"),
+    MistakeCase("should we switch the importer to threads for speed", "deadlock",
+                "the prior threading failure must resurface so the agent doesn't repeat it"),
+)
+
 
 def run(verbose: bool = True) -> dict[str, float]:
     mem = build_memory()
@@ -157,9 +180,19 @@ def run(verbose: bool = True) -> dict[str, float]:
             print(f"  [{'PASS' if ok else 'FAIL'}] decision_adherence  current={c.current!r} "
                   f"stale={c.stale!r}  ({c.note})")
 
+    avoided = 0
+    for c in MISTAKE_CASES:
+        hits = mem.recall(c.query, limit=5)
+        ok = any(c.must_resurface.lower() in h.record.content.lower() for h in hits)
+        avoided += ok
+        if verbose:
+            print(f"  [{'PASS' if ok else 'FAIL'}] repeated_mistake    must_resurface="
+                  f"{c.must_resurface!r}  ({c.note})")
+
     scores = {
         "action_safety": safe / len(ACTION_CASES),
         "decision_adherence": adhered / len(ADHERENCE_CASES),
+        "repeated_mistake": avoided / len(MISTAKE_CASES),
     }
     if verbose:
         print(f"\n=== Agent Continuity Bench v0 ===")

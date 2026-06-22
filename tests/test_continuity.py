@@ -11,6 +11,7 @@ def test_continuity_bench_v0_passes() -> None:
     scores = run(verbose=False)
     assert scores["action_safety"] == 1.0
     assert scores["decision_adherence"] == 1.0
+    assert scores["repeated_mistake"] == 1.0
 
 
 def test_superseded_confirmation_does_not_authorise_a_destructive_action() -> None:
