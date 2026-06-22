@@ -760,7 +760,17 @@ def beam(
                         answer=answer if category != "abstention" else None,
                         gold_event_ids=gold,
                         category="unanswerable" if category == "abstention" else category,
-                        metadata={"asked_at": asked_at, "difficulty": q.get("difficulty")},
+                        metadata={
+                            "asked_at": asked_at,
+                            "difficulty": q.get("difficulty"),
+                            # Rubric-graded categories (summarization / instruction_following /
+                            # preference_following) ship NO reference string — only a `rubric` of
+                            # "response should contain X" bullets (+ an ideal_summary). They were being
+                            # dropped; carry them so a rubric-coverage judge can score the synthesis
+                            # quality that recall@k / answer_dumb structurally cannot see.
+                            "rubric": q.get("rubric"),
+                            "ideal_summary": q.get("ideal_summary") or q.get("ideal_response"),
+                        },
                     )
                 )
         if dual_rounds and dual_rounds > 1:
