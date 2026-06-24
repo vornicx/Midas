@@ -27,6 +27,8 @@ uv tool install "midas-memory[mcp,local]"     # the midas-mcp command, for any M
   ·
   <a href="#how-it-does-on-the-benchmarks"><b>See the benchmarks</b></a>
   ·
+  <a href="docs/MIDAS.md"><b>Complete overview</b></a>
+  ·
   <a href="https://github.com/vornicx/Midas/issues/new?title=Team%2FEnterprise%20Midas%20conversation"><b>Team / Enterprise</b></a>
 </p>
 
