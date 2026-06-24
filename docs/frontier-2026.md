@@ -74,9 +74,15 @@ and *augmenting* (raw + cards) is a **wash** because the compact cards never win
 turns. The extractor is the gate: a small local model (qwen2.5:3b) abstracts only ~18–54 clean
 entity/attribute cards from ~200 turns and otherwise echoes code; a capable local model (mistral:7b /
 qwen-coder:7b) runs at ~100 s per 8-turn batch on CPU — infeasible at scale. So the **cheap path is a
-measured negative** and the thesis holds unbroken: the lift needs a capable model — the host agent's, not
-Midas's. The harness is now ready for that hosted run (swap the local reader for `from_env` + an API key);
-the honest confirm/falsify is unblocked on tooling and pending only API credits (roadmap item 2).
+measured negative**. **And now the capable-model test is in** (hosted: gpt-4o as the structure-preserving
+extractor, reader gpt-4.1-mini, fixed gpt-4o judge, n=8): raw **0.45** · *augment* (raw + gpt-4o cards)
+**0.49 (+0.04, within n=8 noise)** · *replace* (cards only) **0.34 (−0.11)**. A capable extractor makes the
+cards far better — the *replace* arm jumps **0.07 (3b) → 0.34 (gpt-4o)** — but **still does not beat raw**,
+and augment is at best a marginal, in-noise lift. The honest verdict, now that the "use a capable model"
+objection is removed: **structure-preserving extraction does NOT break the summarization ceiling even with
+gpt-4o.** The bottleneck is **structural** — broad summary queries under-retrieve by similarity, and any
+abstraction loses the verbatim detail the rubric rewards — **not** extractor quality. We therefore do
+**not** claim distillation as a summarization win at any extractor tier; the dial stays off by default.
 
 ## 3. What Midas deliberately does NOT adopt
 
@@ -99,10 +105,11 @@ unanswerable category).
 1. ~~BEAM 500K → 1M → 10M tiers~~ — **done, all four tiers** (recall@k 0.56/0.51/0.40/0.32 vs a
    0.00 baseline everywhere; BENCHMARKS §BEAM). The cost story held: the 10M tier ingested for
    hours of local CPU at $0.
-2. **Judged BEAM runs** with a fixed hosted reader (pending API credits) for cross-system
-   answer-rate comparison vs the Mem0/Hindsight published numbers. *Tooling now built*: the
-   rubric-coverage judge for the rubric-graded categories (`eval/summarization_ab`) + the loader
-   rubric — so the structure-preserving-extraction test runs the moment a capable reader is wired.
+2. **Judged BEAM runs** with a fixed hosted reader for cross-system answer-rate comparison vs the
+   Mem0/Hindsight published numbers. ~~The structure-preserving-extraction test~~ — **done** (hosted
+   gpt-4o, §2b): no meaningful summarization lift (augment +0.04 in-noise, replace −0.11), so the
+   ceiling is structural, not extractor-quality. The broader cross-system judged BEAM comparison
+   (full tiers, multiple categories) remains open.
 3. **Bitemporal recall on BEAM event-ordering/temporal categories** — measure whether
    `as_of` + validity windows lift the time-sliced questions.
 4. **TS port parity**: local ONNX semantic embeddings in `packages/midas-ts`.

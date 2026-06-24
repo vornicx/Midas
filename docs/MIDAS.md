@@ -282,11 +282,14 @@ recall@k 0.80, **0 API calls / $0 / nothing leaves the box**.
 
 - **Naive distillation** (replace raw turns with LLM summaries): judged **0.37 → 0.08** (catastrophic);
   augmenting recovers to 0.32 (still below raw). Default: distillation **off**, `keep_raw` when on.
-- **Structure-preserving extraction on summarization** (this session, Fase 1): built the judged
-  rubric-coverage harness (`eval/summarization_ab.py`; summarization had *never* been judgeable before).
-  Local result: raw **0.28** vs structure-replace **0.07**; augment ≡ raw. **Gated on a capable
-  extractor** (small local models echo code; 7B infeasible on CPU). The lift, if any, belongs to the
-  host agent's model — hosted test wired (`--backend hosted`), pending API credits.
+- **Structure-preserving extraction on summarization** (Fase 1): built the judged rubric-coverage
+  harness (`eval/summarization_ab.py`; summarization had *never* been judgeable before). Local (qwen2.5:3b):
+  raw **0.28** vs replace **0.07**. **Hosted with a capable extractor (gpt-4o, judge gpt-4o, n=8): raw
+  0.45 · augment 0.49 (+0.04, within n=8 noise) · replace 0.34 (−0.11).** A strong model makes the cards
+  far better (replace 0.07 → 0.34) but **still does not beat raw** — so the summarization ceiling is
+  **structural** (broad queries under-retrieve by similarity; any abstraction loses the verbatim detail
+  the rubric rewards), **not** an extractor-quality gap. Distillation is not claimed as a summarization
+  win at any extractor tier — the "use a capable model" objection is now measured and removed.
 - **Query linear-adapter** (this session, Fase 5; inspired by Santander's `linear-adapter-trainer`):
   numpy-only, torch kept out even of the experiment. BEAM held-out: train recall@10 **+0.13** but
   **test −0.13** — classic overfit, does **not** generalize. Not shipped.
