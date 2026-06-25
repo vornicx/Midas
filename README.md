@@ -233,6 +233,24 @@ store = MidasStore(); store.put(("user", "123"), "pref", {"text": "prefers dark 
 
 ---
 
+## See &amp; control your memory — `midas inspect`
+
+Most memory is a black box of LLM-rewritten facts. Midas is **glass-box**: run a **local** inspector over
+your store and see exactly what your agent remembers, why, and from what source — then correct, pin, or
+forget it.
+
+```bash
+midas inspect --db ~/.midas/memory.sqlite3      # opens http://localhost:7777 — local only, zero egress
+# before install:  python -m midas.inspector --db <your.sqlite3> --embedder hashing
+```
+
+- **Browse + search** every memory (verbatim, with provenance + source).
+- **Belief history + time-travel** — what you believed, what it superseded, and when.
+- **Project state** (decisions / bugs / forbidden) and **what changed** since a date.
+- **Governance** — would memory authorize an action, and why (the audit trail); **forget** with a receipt.
+
+No LLM, no account, runs on your file. The thing a black-box memory can't show.
+
 ## Commercial path
 
 The core stays open source under **Apache-2.0** — local SQLite memory, MCP tools, SDKs, and the bench
