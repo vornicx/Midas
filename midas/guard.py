@@ -149,6 +149,16 @@ def decide_memory_use(
     blocked = []
     for record in records:
         _validate_provenance(record.provenance)
+        # A prohibition ("never do X") is a gate, not an authorization: even though it is stamped as a
+        # user-confirmed constraint, it must never *justify acting* — only block. So a forbidden-action
+        # rule is excluded from the authorizing evidence for an external/destructive action. (It still
+        # informs planning and answers, and is enforced separately by `is_forbidden`.)
+        if (
+            intended_use in ("external_action", "destructive_action")
+            and (record.metadata or {}).get("code_kind") == "forbidden_action"
+        ):
+            blocked.append(record.id)
+            continue
         if record.provenance not in allowed_prov:
             blocked.append(record.id)
             continue

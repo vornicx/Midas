@@ -151,3 +151,25 @@ def test_mcp_remember_code_tool() -> None:
     assert out["metadata"]["project"] == "apollo-rc"
     state = project_state_tool(project="apollo-rc")
     assert any("gRPC" in r["content"] for r in state["state"]["architecture_decision"])
+
+
+def test_forbidden_rule_never_authorizes_an_action() -> None:
+    """A prohibition is a gate, not an authorization: a forbidden-action rule (stamped as a confirmed
+    constraint) must never *justify acting* — even though its provenance would otherwise satisfy the
+    external/destructive policy. Regression for the guard counting a 'never do X' rule as approval."""
+    from midas.guard import decide_memory_use
+
+    mem = _mem()
+    rule = remember_forbidden_action(
+        mem, "Never run destructive database migrations without confirmation.", project="apollo"
+    )
+    assert rule.provenance == "user_confirmation"  # stamped as a confirmed constraint…
+    # …yet it must NOT authorize a destructive or external action:
+    assert decide_memory_use([rule], intended_use="destructive_action").allowed is False
+    assert decide_memory_use([rule], intended_use="external_action").allowed is False
+    # a genuine, non-prohibition confirmation still authorizes:
+    ok = mem.remember(
+        "User confirmed: deploying to staging is approved.",
+        kind="constraint", provenance="user_confirmation",
+    )
+    assert decide_memory_use([ok], intended_use="external_action").allowed is True
