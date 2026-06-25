@@ -43,6 +43,7 @@ from midas import (
     MemoryPolicy, StructuralImportance, __version__, policy_summary,
 )
 from midas.state import memory_diff as _diff_view, memory_state as _state_view
+from midas.coding import project_state as _project_state_view
 
 # Auto-retention cap: when set, the store is kept at or below this many records by no-LLM selective
 # forgetting after each write — bounded memory for long-running/enterprise deployments.
@@ -402,6 +403,25 @@ def memory_diff(hours: float = 24.0, namespace: str = "") -> dict:
         "revised": [
             {"old": _serialize_record(o), "new": _serialize_record(n)} for o, n in diff.revised
         ],
+    }
+
+
+@server.tool(
+    title="Project state",
+    annotations=ToolAnnotations(title="Project state", readOnlyHint=True, openWorldHint=False),
+)
+def project_state(project: str, limit: int = 200) -> dict:
+    """The current code-state of a project for a coding agent, grouped by code_kind
+    (architecture_decision, bug_fixed, convention, forbidden_action, dependency_choice, ...). Live
+    (non-superseded) memories only — call this to ONBOARD into a project, or to see what is decided and
+    what is forbidden before acting. Deterministic, no LLM. Capture code memories with the SDK's
+    `midas.coding.remember_*` helpers (they tag `code_kind` + `project`).
+    """
+    grouped = _project_state_view(_mem, project, limit=int(limit))
+    return {
+        "project": project,
+        "counts": {k: len(recs) for k, recs in grouped.items()},
+        "state": {k: [_serialize_record(r) for r in recs] for k, recs in grouped.items()},
     }
 
 
