@@ -33,6 +33,7 @@ Repository = "https://github.com/vornicx/Midas"
 
 [project.scripts]
 midas-mcp = "midas.mcp_server:main"
+midas-inspect = "midas.inspector:main"
 
 [build-system]
 requires = ["hatchling"]
