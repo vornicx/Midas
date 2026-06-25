@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import pytest
 
+import hashlib
+
 from midas import HashingEmbedder, Memory
-from midas.audit import audit_completeness, audit_use, belief_history
+from midas.audit import audit_completeness, audit_use, belief_history, forgetting_receipt
 
 
 def _mem() -> Memory:
@@ -46,6 +48,18 @@ def test_audit_use_produces_a_traceable_artifact() -> None:
     ev = art["evidence"][0]
     assert ev["provenance"] == "user_confirmation" and ev["actor"] == "user"
     assert "belief_history" in ev and ev["belief_history"]
+
+
+def test_forgetting_receipt_proves_erasure_without_keeping_content() -> None:
+    mem = _mem()
+    r = mem.remember("the user's home address is 1 Foo Street", kind="fact")
+    receipt = forgetting_receipt([r], actor="user", reason="GDPR erasure")
+    assert receipt["forgotten_count"] == 1
+    assert receipt["actor"] == "user" and receipt["reason"] == "GDPR erasure"
+    item = receipt["items"][0]
+    assert item["id"] == r.id
+    assert item["content_sha256"] == hashlib.sha256(f"{r.id}\x00{r.content}".encode()).hexdigest()
+    assert "Foo Street" not in str(receipt)  # the erased content is NOT retained in the certificate
 
 
 def test_mcp_audit_use_tool_is_wired() -> None:

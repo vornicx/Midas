@@ -15,12 +15,37 @@ No LLM.
 """
 from __future__ import annotations
 
+import hashlib
+import time
 from typing import TYPE_CHECKING, Any
 
 from .types import MemoryRecord
 
 if TYPE_CHECKING:
     from .memory import Memory
+
+
+def forgetting_receipt(
+    removed: list[MemoryRecord], *, actor: str | None = None, reason: str | None = None
+) -> dict[str, Any]:
+    """A tamper-evident **erasure certificate** — prove WHAT was forgotten without retaining the content
+    (the right-to-be-forgotten artifact). For each removed record it keeps the id + a sha256 of
+    `id\\x00content`: enough to later prove a specific item was erased, not enough to reconstruct it. Pair
+    with `Memory.forget_matching(...)`'s returned records. Deterministic, no LLM."""
+    return {
+        "forgotten_count": len(removed),
+        "at": time.time(),
+        "actor": actor,
+        "reason": reason,
+        "items": [
+            {
+                "id": r.id,
+                "kind": r.kind,
+                "content_sha256": hashlib.sha256(f"{r.id}\x00{r.content}".encode()).hexdigest(),
+            }
+            for r in removed
+        ],
+    }
 
 
 def audit_record(r: MemoryRecord) -> dict[str, Any]:

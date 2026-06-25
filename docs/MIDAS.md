@@ -422,8 +422,11 @@ Ordered by the vision (governance A → coding-agent vertical B → benchmark we
    advisory** (cosine F1 0.79, ~31% FP, overlapping distributions), so the MCP gate splits hard-lexical
    from advisory-semantic. **NLI entailment was also measured (F1 0.72 < cosine) — doesn't help.** A
    *reliable* semantic gate remains open: a trained classifier, or an unmeasured cosine∧NLI combination.
-4. **Governance levels (mech-gov-inspired)** — formalize `check_memory_use` into explicit levels — **only
-   where the safety evals show a gap** (measure first, don't add levels speculatively).
+4. ~~Governance levels (L0–L4, mech-gov)~~ — **evaluated, NOT added** (eval-first restraint): a boundary
+   case (`eval/memory_safety.py` — an internal plan justifying a recommendation must block) confirms the
+   4-use model (planning / answer / external / destructive) already gates the safety-relevant tiers
+   (L0–L1 planning, L2 recommendation = answer, L3–L4 action = confirmation). ASR 0 / benign 1, **no gap**;
+   the finer levels are presentational, so we don't add the complexity.
 5. **Package the benches as the public standard (C)** — Continuity + Memory-Safety + Coding bench as the
    way to measure agent memory; the eval-as-wedge.
 
@@ -431,9 +434,12 @@ Ordered by the vision (governance A → coding-agent vertical B → benchmark we
 5. **Structure-preserving extraction by the host agent** — if Fase 1 hosted confirms it, ship the
    "no-*Midas*-LLM" path (the agent's model writes entity/attribute/time cards; Midas validates,
    versions, traces, governs).
-6. **Enterprise/regulated hardening** — **started**: the audit trail (`midas/audit.py` — `audit_use` /
-   `belief_history` / `audit_completeness`, the "prove why the agent acted" artifact). Remaining: RBAC,
-   data-residency attestations, provable forgetting — the compliance story `mech-gov-framework` validates.
+6. **Enterprise/regulated hardening** — the audit trail (`audit_use` / `belief_history` /
+   `audit_completeness`), **provable forgetting** (`forgetting_receipt` — a content-hashed erasure
+   certificate that proves *what* was erased without retaining it), and **RBAC** (`midas/access.py` —
+   scope a store to a caller's allowed namespaces; multi-tenant isolation). Data residency is inherent
+   (local SQLite, zero egress). Remaining: signed receipts/attestations and hosted Team controls — the
+   compliance story `mech-gov-framework` validates.
 7. **TS parity** — local ONNX semantic embeddings in `packages/midas-ts`.
 8. **Entity index (`midas/entity.py`)** — a no-LLM nod to graph memory, **only if** it measures a win on
    multi-hop.
@@ -487,9 +493,9 @@ selling "graph memory" before it measures; shipping any lever that doesn't gener
 guard_reliance/forget) · `store` / `sqlite_store` (backends) · `index` / `ann` / `turbovec_index` /
 `turbovec_store` / `vector_source` (scale) · `embeddings` · `importance` · `bm25` / `sparse` / `colbert`
 (optional retrieval) · `nli` (contradiction/entailment) · `guard` (governance) · `audit` (compliance trail: audit_use /
-belief_history / completeness) · `state` (control-plane views) · `coding` (coding-agent vertical:
-code_kind / project_state / is_forbidden) · `policy` (MCP policy text) · `distill` (optional tier) ·
-`entity` (experimental) · `mcp_server`
+belief_history / completeness / forgetting_receipt) · `access` (RBAC scoping) · `state` (control-plane
+views) · `coding` (coding-agent vertical: code_kind / project_state / is_forbidden) · `policy` (MCP policy
+text) · `distill` (optional tier) · `entity` (experimental) · `mcp_server`
 · `integrations/langgraph_store`.
 
 **Eval** (`eval/`): `runner` · `datasets` · `schema` · `metrics` · `adapters/*` (midas / baseline_raw /
