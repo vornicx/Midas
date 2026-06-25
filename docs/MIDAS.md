@@ -335,10 +335,12 @@ recall@k 0.80, **0 API calls / $0 / nothing leaves the box**.
   **decision_currency** (a revised architecture decision surfaces its live value via `project_state`),
   **repeated_mistake** (a prior bug/failure resurfaces), **forbidden_accuracy** (violations flagged, benign
   actions not — a benign floor). Midas **1.00 / 1.00 / 1.00**.
-- **Semantic forbidden-action matching** (measured, bge-base, n=6) — paraphrases score ~0.59–0.60 vs benign
-  ~0.49–0.55: a **real but narrow (~0.04) separation**. So semantic is a *soft* recall signal (default
-  threshold 0.58) layered on the high-precision lexical gate — **not** a standalone hard block. Honest
-  first cut; a larger labelled eval is the next step to trust it alone.
+- **Semantic forbidden-action matching** (labelled eval, `eval/forbidden_eval.py`, bge-base, n=24) — the
+  verdict the n=6 spot-check hid: paraphrase and benign cosine distributions **overlap** (paraphrases
+  0.56–0.72, benign 0.49–0.69), so there is **no clean threshold**. Best semantic F1 **0.79** (recall 0.92,
+  precision **0.69 ⇒ ~31% false positives**). So semantic is **advisory, not a reliable hard block**: the
+  MCP gate now returns `forbidden` (lexical match → refuse) vs `possibly_forbidden` (semantic → ask the
+  user). A clean case of eval-first catching an overclaim — the larger eval reversed the small one.
 
 ### 5.7 Scaling research
 
@@ -385,11 +387,12 @@ measured negative). `sota-stressed-datasets` is a tabular credit set (not memory
 - **Aggregation / summarization is a structural weakness** — top-k returns turns, not abstracts; at 10M
   the aggregation categories collapse (instruction-following 0.00, event-ordering 0.02, summarization
   0.03). This is *the* ceiling, and it's gated on a capable extractor Midas won't run at ingest.
-- **Governance is mostly mechanical; semantics is early** — the guard trusts a `user_confirmation` stamp
+- **Governance is mostly mechanical; semantics is hard** — the guard trusts a `user_confirmation` stamp
   (provenance *integrity* — forging it — is a capture-time concern) and can't tell a confirmation
-  authorizes a *different* action than asked. Semantic-authorization is now **started** for forbidden
-  actions (lexical + embedding match) but measured a *soft* signal (~0.04 margin, §5.6); a robust semantic
-  gate needs a larger labelled eval (the next roadmap item).
+  authorizes a *different* action than asked. Semantic-authorization is **started** for forbidden actions
+  (lexical + embedding) but a labelled eval (n=24, §5.6) measured it **advisory, not reliable** (F1 0.79,
+  ~31% false positives, overlapping distributions), so the gate treats lexical as a hard refuse and
+  semantic as "verify with the user". A reliable semantic gate is genuinely open work.
 - **Correctness is reader-dominated** — a bigger reader moves the headline more than the memory does, so
   we lead with reader-independent `recall@k`.
 - **TypeScript port lacks semantic embeddings** — parity is partial (ONNX embeddings pending).
@@ -407,8 +410,10 @@ Ordered by the vision (governance A → coding-agent vertical B → benchmark we
    in-noise, replace −0.11); the ceiling is structural, not extractor-quality (§5.5).
 2. ~~Coding-agent vertical (B)~~ — **done (foundation)**: `code_kind` vocabulary, `project_state`,
    forbidden-action enforcement, code-aware capture policy, the Coding bench (§4.8b, §5.6).
-3. **Validate semantic-authorization** — a larger labelled forbidden-action eval (~40 paraphrase/benign
-   pairs) to turn the soft n=6 signal into a measured capability, or bound it honestly. *(next)*
+3. ~~Validate semantic-authorization~~ — **done** (`eval/forbidden_eval.py`, n=24): **bounded as
+   advisory** (F1 0.79, ~31% FP, overlapping distributions), so the MCP gate splits hard-lexical from
+   advisory-semantic. A *reliable* semantic gate (a better matcher — cross-encoder / NLI / a trained
+   classifier) is the genuine open work.
 4. **Governance levels (mech-gov-inspired)** — formalize `check_memory_use` into explicit levels — **only
    where the safety evals show a gap** (measure first, don't add levels speculatively).
 5. **Package the benches as the public standard (C)** — Continuity + Memory-Safety + Coding bench as the
@@ -480,7 +485,8 @@ text) · `distill` (optional tier) · `entity` (experimental) · `mcp_server`
 **Eval** (`eval/`): `runner` · `datasets` · `schema` · `metrics` · `adapters/*` (midas / baseline_raw /
 mem0) · `llm` · `retention` · `multiday` · `bench_perf` / `bench_ann` · `distill_ab` · **`summarization_ab`**
 (Fase 1) · **`continuity`** (Continuity Bench) · **`memory_safety`** (Safety eval) · **`coding_bench`**
-(Coding bench) · **`retrieval_adapter`** (Fase 5) · `midas_sweep`.
+(Coding bench) · **`forbidden_eval`** (labelled semantic forbidden-action eval) · **`retrieval_adapter`**
+(Fase 5) · `midas_sweep`.
 
 **Docs**: `BENCHMARKS.md` (numbers) · `methodology.md` (anti-cheating, traces) · `frontier-2026.md`
 (landscape, what to adopt/reject) · `overnight-experiments.md` (the retrieval sweep) ·

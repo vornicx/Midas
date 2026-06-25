@@ -146,14 +146,15 @@ def is_forbidden(
     - **semantic** — cosine(action, rule) ≥ `min_similarity` over the embedder's vectors, so a paraphrase
       ("remove the accounts table" under "never delete user data") is caught even with zero shared words.
       Only meaningful with a *semantic* embedder (`LocalEmbedder`); on the hashing embedder it degenerates
-      to lexical. Measured (bge-base, n=6): paraphrases score ~0.59–0.60, benign actions ~0.49–0.55 — a
-      real but **narrow (~0.04) separation**, so semantic is a SOFT recall signal, not a hard gate. The
-      default 0.58 caught all paraphrases at zero false-positives on that set, but `min_similarity` is an
-      absolute, **embedder-dependent** cosine threshold worth tuning per model; lexical stays the
-      high-precision floor, and the agent also SEES forbidden rules via `project_state`/context (defence
-      in depth). A larger labelled eval would be needed to trust semantic as a standalone block.
+      to lexical. **Measured on a labelled set (bge-base, n=24, `eval.forbidden_eval`): the distributions
+      OVERLAP** — paraphrase cosines 0.56–0.72, benign 0.49–0.69 — so there is no clean threshold. Best
+      semantic F1 0.79 (recall 0.92, precision 0.69 at ~0.58) ⇒ **~31% false positives.** So semantic is an
+      **ADVISORY recall signal, NOT a reliable hard block**: callers should treat a semantic-only match as
+      "verify with the user" and use the LEXICAL signal for high-confidence refusal (the MCP
+      `check_forbidden_action` splits the two). The agent also sees forbidden rules via
+      `project_state`/context (defence in depth). `min_similarity` is absolute and embedder-dependent.
 
-    Set `use_embeddings=False` for the lexical-only behaviour."""
+    Set `use_embeddings=False` for the lexical-only (high-precision) behaviour."""
     action_words = _words(action)
     action_emb = None
     if use_embeddings:

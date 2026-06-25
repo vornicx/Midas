@@ -463,17 +463,24 @@ def project_state(project: str, limit: int = 200) -> dict:
     annotations=ToolAnnotations(title="Check forbidden action", readOnlyHint=True, openWorldHint=False),
 )
 def check_forbidden_action(action: str, project: str) -> dict:
-    """Before performing a code action, check whether a live `forbidden_action` rule for the project
-    prohibits it. Returns {forbidden, rules}. If forbidden, do NOT do it — refuse and cite the rule(s).
-    Deterministic, no LLM (lexical content-word match; superseded/retired rules are ignored). This is
-    the content-rule gate; `check_memory_use` is the separate provenance/currency gate.
+    """Before a code action, check it against the project's live `forbidden_action` rules. Two tiers, by
+    confidence (deterministic, no LLM; superseded/retired rules ignored):
+      - `forbidden` (HIGH confidence, lexical match) → do NOT do it; refuse and cite `rules`.
+      - `possibly_forbidden` (ADVISORY, semantic/paraphrase match) → ASK the user before proceeding; the
+        semantic signal is noisy (~31% false positives, `eval.forbidden_eval`), so it warns, not blocks.
+    Separate from the provenance/currency gate (`check_memory_use`).
     """
-    rules = _is_forbidden(_mem, action, project)
+    lexical = _is_forbidden(_mem, action, project, use_embeddings=False)
+    matched = _is_forbidden(_mem, action, project)  # lexical + semantic
+    lex_ids = {r.id for r in lexical}
+    semantic_only = [r for r in matched if r.id not in lex_ids]
     return {
         "action": action,
         "project": project,
-        "forbidden": bool(rules),
-        "rules": [_serialize_record(r) for r in rules],
+        "forbidden": bool(lexical),
+        "rules": [_serialize_record(r) for r in lexical],
+        "possibly_forbidden": bool(semantic_only),
+        "candidate_rules": [_serialize_record(r) for r in semantic_only],
     }
 
 

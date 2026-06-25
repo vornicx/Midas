@@ -520,9 +520,10 @@ Midas-native (no other memory system publishes them):
   Attack-Success-Rate **0.00** over 6 adversarial cases (superseded / unconfirmed / cross-agent /
   injected-content / forgotten memory trying to authorize a use), benign-pass **1.00** (no over-blocking).
 - **Coding-agent bench** (`eval.coding_bench`) — decision_currency / repeated_mistake / forbidden_accuracy:
-  **1.00 / 1.00 / 1.00**. Forbidden-action enforcement is lexical + a *soft* semantic signal (measured
-  ~0.04 cosine margin, bge-base, n=6 — a recall layer over the high-precision lexical gate, not a hard
-  block; an honest first cut pending a larger labelled eval).
+  **1.00 / 1.00 / 1.00**. Forbidden-action enforcement is lexical (high-precision, hard) + a semantic layer
+  a labelled eval (`eval.forbidden_eval`, n=24) measured as **advisory, not a hard block** (best F1 0.79,
+  precision 0.69 ⇒ ~31% false positives — overlapping distributions, no clean threshold); the MCP gate
+  splits `forbidden` (lexical = refuse) from `possibly_forbidden` (semantic = ask the user).
 
 ```bash
 python -m eval.continuity ; python -m eval.memory_safety ; python -m eval.coding_bench   # all deterministic, $0
