@@ -87,6 +87,30 @@ def _sweep(pos: list[float], neg: list[float], lo: float, hi: float, step: float
     return best, rows
 
 
+def _logreg_loo(X, y, *, epochs: int = 400, lr: float = 0.3, l2: float = 0.02):
+    """Leave-one-out predictions of a standardized logistic regression — an honest small-n estimate of
+    whether COMBINING the features beats any single one (n is too small to trust a single split)."""
+    import numpy as np
+
+    X = np.asarray(X, float)
+    y = np.asarray(y, float)
+    mu, sd = X.mean(0), X.std(0) + 1e-9
+    Xn = (X - mu) / sd
+    preds = np.zeros(len(y))
+    for i in range(len(y)):
+        mask = np.ones(len(y), bool)
+        mask[i] = False
+        Xt, yt = Xn[mask], y[mask]
+        w = np.zeros(Xn.shape[1])
+        b = 0.0
+        for _ in range(epochs):
+            p = 1.0 / (1.0 + np.exp(-(Xt @ w + b)))
+            w -= lr * (Xt.T @ (p - yt) / len(yt) + l2 * w)
+            b -= lr * float((p - yt).mean())
+        preds[i] = 1.0 / (1.0 + np.exp(-(Xn[i] @ w + b)))
+    return preds
+
+
 def _dist(name: str, pos: list[float], neg: list[float]) -> None:
     sp, sn = sorted(pos), sorted(neg)
     print(f"{name:>7} cos/score — positive: min {sp[0]:.3f} med {sp[len(sp)//2]:.3f} max {sp[-1]:.3f}  | "
@@ -125,20 +149,35 @@ def run(verbose: bool = True) -> dict:
         if verbose:
             print(f"(NLI matcher unavailable: {exc})\n")
 
+    # Combined classifier (leave-one-out): does cosine + NLI + lexical, together, beat any single signal?
+    clf_best = None
+    if pos_nli is not None:
+        pos_lex = [float(bool(is_forbidden(mem, a, PROJECT, use_embeddings=False))) for a in POSITIVES]
+        neg_lex = [float(bool(is_forbidden(mem, a, PROJECT, use_embeddings=False))) for a in NEGATIVES]
+        feats = list(zip(pos_cos + neg_cos, pos_nli + neg_nli, pos_lex + neg_lex))
+        labels = [1.0] * len(POSITIVES) + [0.0] * len(NEGATIVES)
+        preds = _logreg_loo([list(f) for f in feats], labels)
+        clf_best, _ = _sweep(list(preds[: len(POSITIVES)]), list(preds[len(POSITIVES):]), 0.30, 0.70, 0.05)
+
     if verbose:
         print(f"rules={len(RULES)}  positives={len(POSITIVES)}  negatives={len(NEGATIVES)}\n")
         print(f"lexical-only: recall {lex_tp}/{len(POSITIVES)}  false-positives {lex_fp}/{len(NEGATIVES)}\n")
         _dist("cosine", pos_cos, neg_cos)
         if pos_nli is not None:
             _dist("NLI", pos_nli, neg_nli)
-        print(f"\n{'matcher':>8}{'thr':>6}{'prec':>7}{'recall':>8}{'F1':>6}")
-        print(f"{'cosine':>8}{cos_best['thr']:>6.2f}{cos_best['prec']:>7.2f}{cos_best['recall']:>8.2f}{cos_best['f1']:>6.2f}")
+        print(f"\n{'matcher':>11}{'thr':>6}{'prec':>7}{'recall':>8}{'F1':>6}")
+        print(f"{'cosine':>11}{cos_best['thr']:>6.2f}{cos_best['prec']:>7.2f}{cos_best['recall']:>8.2f}{cos_best['f1']:>6.2f}")
         if nli_best:
-            print(f"{'NLI':>8}{nli_best['thr']:>6.2f}{nli_best['prec']:>7.2f}{nli_best['recall']:>8.2f}{nli_best['f1']:>6.2f}")
-        winner = ("NLI" if (nli_best and nli_best["f1"] > cos_best["f1"]) else "cosine")
-        print(f"\nBest matcher by F1: {winner}. Ship a semantic gate only if a matcher reaches HIGH "
-              "precision at usable recall; otherwise it stays advisory over the lexical hard gate.")
-    return {"cosine_best": cos_best, "nli_best": nli_best, "lexical_recall": lex_tp / len(POSITIVES)}
+            print(f"{'NLI':>11}{nli_best['thr']:>6.2f}{nli_best['prec']:>7.2f}{nli_best['recall']:>8.2f}{nli_best['f1']:>6.2f}")
+        if clf_best:
+            print(f"{'cos+nli+lex':>11}{clf_best['thr']:>6.2f}{clf_best['prec']:>7.2f}{clf_best['recall']:>8.2f}{clf_best['f1']:>6.2f}")
+        cands = [("cosine", cos_best)] + ([("NLI", nli_best)] if nli_best else []) + ([("classifier", clf_best)] if clf_best else [])
+        win = max(cands, key=lambda c: c[1]["f1"])
+        print(f"\nBest by F1: {win[0]} (F1 {win[1]['f1']:.2f}, prec {win[1]['prec']:.2f}, recall {win[1]['recall']:.2f}). "
+              "Ship a semantic gate only if it reaches HIGH precision at usable recall (LOO, n=24); else it "
+              "stays advisory over the lexical hard gate.")
+    return {"cosine_best": cos_best, "nli_best": nli_best, "classifier_best": clf_best,
+            "lexical_recall": lex_tp / len(POSITIVES)}
 
 
 if __name__ == "__main__":

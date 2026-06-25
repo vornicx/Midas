@@ -343,8 +343,10 @@ recall@k 0.80, **0 API calls / $0 / nothing leaves the box**.
   vs 0.07 for benign) but its **tails** sink it — some paraphrases entail ~0, one near-miss benign entails
   0.88 — so its best F1 is **0.72 < cosine's 0.79**. **Neither matcher is a reliable gate**, so semantic
   stays **advisory**: the MCP gate returns `forbidden` (lexical → refuse) vs `possibly_forbidden` (semantic
-  → ask the user). A clean case of eval-first catching an overclaim — the larger eval reversed the small
-  one, and the "better matcher" didn't help either. (A cosine∧NLI combination is unmeasured future work.)
+  → ask the user). We also trained a **combined classifier** (cosine + NLI + lexical, leave-one-out):
+  **worse still** (F1 0.71) — at n=24 the combination overfits. So **none of cosine, NLI, or their
+  classifier is a reliable gate** at this data scale; a reliable one would need a substantially larger
+  labelled set (real work, not a quick win). A clean case of eval-first catching an overclaim three times.
 
 ### 5.7 Scaling research
 
@@ -420,8 +422,9 @@ Ordered by the vision (governance A → coding-agent vertical B → benchmark we
    forbidden-action enforcement, code-aware capture policy, the Coding bench (§4.8b, §5.6).
 3. ~~Validate semantic-authorization~~ — **done** (`eval/forbidden_eval.py`, n=24): **bounded as
    advisory** (cosine F1 0.79, ~31% FP, overlapping distributions), so the MCP gate splits hard-lexical
-   from advisory-semantic. **NLI entailment was also measured (F1 0.72 < cosine) — doesn't help.** A
-   *reliable* semantic gate remains open: a trained classifier, or an unmeasured cosine∧NLI combination.
+   from advisory-semantic. **NLI (F1 0.72) and a combined cosine+NLI+lexical classifier (LOO F1 0.71) were
+   both measured — neither beats cosine.** A *reliable* gate is genuinely open: it needs a much larger
+   labelled set (the n=24 LOO can't generalize), not a cleverer matcher on this data.
 4. ~~Governance levels (L0–L4, mech-gov)~~ — **evaluated, NOT added** (eval-first restraint): a boundary
    case (`eval/memory_safety.py` — an internal plan justifying a recommendation must block) confirms the
    4-use model (planning / answer / external / destructive) already gates the safety-relevant tiers
@@ -440,7 +443,12 @@ Ordered by the vision (governance A → coding-agent vertical B → benchmark we
    scope a store to a caller's allowed namespaces; multi-tenant isolation). Data residency is inherent
    (local SQLite, zero egress). Remaining: signed receipts/attestations and hosted Team controls — the
    compliance story `mech-gov-framework` validates.
-7. **TS parity** — local ONNX semantic embeddings in `packages/midas-ts`.
+7. **TS parity** — local ONNX semantic embeddings in `packages/midas-ts`. *Assessed*: the port is
+   feature-complete on the no-embedding path (`HashingEmbedder` is a byte-for-byte port — same vectors,
+   store, guard, MCP tools as Python). Semantic parity needs `@xenova/transformers` (ONNX bge in Node)
+   **and** reconciling the **sync** `Embedder` interface with transformers.js's **async** model load (a
+   preload-then-sync-cache, or an async embedder variant), plus cross-language vector-parity tests vs
+   Python bge. A dedicated build, not a quick edit — scoped here, not rushed.
 8. **Entity index (`midas/entity.py`)** — a no-LLM nod to graph memory, **only if** it measures a win on
    multi-hop.
 
