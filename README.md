@@ -235,19 +235,19 @@ store = MidasStore(); store.put(("user", "123"), "pref", {"text": "prefers dark 
 
 ## Commercial path
 
-The core stays open source under **Apache-2.0**: local SQLite memory, MCP tools, SDKs, and the eval
-harness are free to use, fork, and embed. Paid work is focused on what teams need around that core:
+The core stays open source under **Apache-2.0** — local SQLite memory, MCP tools, SDKs, and the bench
+suite are free to use, fork, and embed. Midas is **dev / enterprise-led**: paid work is what *teams* and
+*regulated orgs* need around that core. It does **not** monetize by closing the memory core.
 
-| Option | For | Status |
-|---|---|---|
-| **OSS** | Local agent memory, SDK/MCP integration, reproducible benchmarks | Available now |
-| **Pro** | Encrypted sync, backups, profiles, easier multi-machine setup | Planned |
-| **Team** | Shared namespaces, hosted MCP, admin controls, audit trails, support | Founding customers |
-| **Enterprise / VPC** | On-prem or VPC deployment, SSO/SAML, RBAC, SLA, DPA, custom integration | By arrangement |
-| **Eval Pack** | Benchmark an agent-memory stack against BEAM / LongMemEval with raw outputs and failure traces | By arrangement |
+| Edition | For | Includes | Status |
+|---|---|---|---|
+| **OSS** | every dev | local core, SDK, MCP, the [bench suite](docs/agent-memory-benches.md) | Available now |
+| **Team** | agent teams | hosted MCP, RBAC namespaces, admin + audit trail, SSO | Founding customers |
+| **Enterprise / VPC** | regulated | on-prem/VPC, provable forgetting, audit-completeness, data residency, SSO/SAML, SLA, DPA | By arrangement |
+| **[Agent-Memory Audit](docs/agent-memory-audit.md)** | memory buyers / builders | benchmark *your* stack vs the suite + `recall@k`, with failure traces + recommendations | By arrangement |
 
-The commercial line is deliberate: **Midas does not monetize by closing the memory core.** It monetizes
-operational trust, deployment support, team controls, and benchmark-grade evaluation.
+The differentiator isn't recall — it's **memory an agent can be trusted to act on**, proven by the benches
+and the audit. Strategy and editions in full: **[docs/gtm.md](docs/gtm.md)**.
 
 ## Honest status
 
