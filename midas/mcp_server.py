@@ -43,6 +43,7 @@ from midas import (
     MemoryPolicy, StructuralImportance, __version__, policy_summary,
 )
 from midas.state import memory_diff as _diff_view, memory_state as _state_view
+from midas.audit import audit_use as _audit_use
 from midas.coding import (
     is_forbidden as _is_forbidden,
     project_state as _project_state_view,
@@ -482,6 +483,19 @@ def check_forbidden_action(action: str, project: str) -> dict:
         "possibly_forbidden": bool(semantic_only),
         "candidate_rules": [_serialize_record(r) for r in semantic_only],
     }
+
+
+@server.tool(
+    title="Audit memory use",
+    annotations=ToolAnnotations(title="Audit memory use", readOnlyHint=True, openWorldHint=False),
+)
+def audit_use(query: str, intended_use: str = "external_action", namespace: str = "") -> dict:
+    """The compliance audit artifact for a memory-justified use: the guard decision + the full provenance
+    and belief-revision history of every supporting memory + an attributability score (fraction of evidence
+    with both a source and an actor). Hand this to an auditor to prove WHY an action is or isn't justified.
+    Source-traceable, deterministic, no LLM.
+    """
+    return _audit_use(_mem, query, intended_use, metadata_filter=_ns_filter(namespace))
 
 
 @server.tool(

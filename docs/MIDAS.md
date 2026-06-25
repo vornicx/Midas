@@ -374,6 +374,10 @@ measured negative). `sota-stressed-datasets` is a tabular credit set (not memory
 - **The governance / trust plane** — provenance, the mechanical guard, the **currency rule** (stale
   beliefs can't authorize actions), `check_memory_use`, and the control-plane views `memory_state` /
   `memory_diff`.
+- **A compliance-grade audit trail** (`midas/audit.py`) — `audit_use` packages a guard decision into a
+  traceable artifact (evidence + provenance + actor + the full belief-revision history + an
+  attributability score) — *prove why the agent did or didn't act*, the regulated story
+  `mech-gov-framework` validates.
 - **Three Midas-native benchmarks nobody else has** — the Agent Continuity Bench, the Memory-Safety eval
   (ASR 0.00 / benign_pass 1.00), and the Coding-agent bench (1.00 across decision-currency / repeated-mistake
   / forbidden-accuracy).
@@ -382,7 +386,7 @@ measured negative). `sota-stressed-datasets` is a tabular credit set (not memory
   i.e. *"remembers decisions, won't act on stale or forbidden memory, and proves it"* made into product.
 - **Capacity to 10M-on-a-laptop** — TurboVec 15× RAM compression with recall intact.
 - **Shipping surfaces** — Python SDK, MCP server (one file, many clients), TS port, LangGraph store;
-  Apache-2.0; **247 tests green**.
+  Apache-2.0; **252 tests green**.
 
 ---
 
@@ -427,8 +431,9 @@ Ordered by the vision (governance A → coding-agent vertical B → benchmark we
 5. **Structure-preserving extraction by the host agent** — if Fase 1 hosted confirms it, ship the
    "no-*Midas*-LLM" path (the agent's model writes entity/attribute/time cards; Midas validates,
    versions, traces, governs).
-6. **Enterprise/regulated hardening** — audit-completeness metric, RBAC/namespaces, data-residency,
-   provable forgetting — the compliance story `mech-gov-framework` validates.
+6. **Enterprise/regulated hardening** — **started**: the audit trail (`midas/audit.py` — `audit_use` /
+   `belief_history` / `audit_completeness`, the "prove why the agent acted" artifact). Remaining: RBAC,
+   data-residency attestations, provable forgetting — the compliance story `mech-gov-framework` validates.
 7. **TS parity** — local ONNX semantic embeddings in `packages/midas-ts`.
 8. **Entity index (`midas/entity.py`)** — a no-LLM nod to graph memory, **only if** it measures a win on
    multi-hop.
@@ -481,9 +486,10 @@ selling "graph memory" before it measures; shipping any lever that doesn't gener
 **Core** (`midas/`): `types` (data model) · `memory` (the engine: remember/capture/recall/build_context/
 guard_reliance/forget) · `store` / `sqlite_store` (backends) · `index` / `ann` / `turbovec_index` /
 `turbovec_store` / `vector_source` (scale) · `embeddings` · `importance` · `bm25` / `sparse` / `colbert`
-(optional retrieval) · `nli` (contradiction/entailment) · `guard` (governance) · `state` (control-plane
-views) · `coding` (coding-agent vertical: code_kind / project_state / is_forbidden) · `policy` (MCP policy
-text) · `distill` (optional tier) · `entity` (experimental) · `mcp_server`
+(optional retrieval) · `nli` (contradiction/entailment) · `guard` (governance) · `audit` (compliance trail: audit_use /
+belief_history / completeness) · `state` (control-plane views) · `coding` (coding-agent vertical:
+code_kind / project_state / is_forbidden) · `policy` (MCP policy text) · `distill` (optional tier) ·
+`entity` (experimental) · `mcp_server`
 · `integrations/langgraph_store`.
 
 **Eval** (`eval/`): `runner` · `datasets` · `schema` · `metrics` · `adapters/*` (midas / baseline_raw /
