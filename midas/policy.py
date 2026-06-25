@@ -55,6 +55,9 @@ AGENT_MEMORY_INSTRUCTIONS = (
     "call `check_memory_use`. If it is not allowed, ask the user to confirm in this turn.\n\n"
     "4) FORGET ON REQUEST. Use `forget_matching` as a dry-run first, show matches, then repeat with "
     "dry_run=false after confirmation.\n\n"
+    "5) CODE WORK. For software projects, capture decisions/bugs/conventions/forbidden-rules with "
+    "`remember_code` (set `code_kind` and `project`); onboard with `project_state`; and before any code "
+    "action memory suggests, call `check_forbidden_action` and refuse it if a live rule forbids it.\n\n"
     "Midas stores verbatim source records and bounds memory automatically; compact context is for cheap "
     "reader prompts, audit tools are for traceability."
 )

@@ -6,6 +6,7 @@ import pytest
 
 from midas import HashingEmbedder, Memory
 from midas.coding import (
+    is_forbidden,
     project_state,
     remember_architecture_decision,
     remember_bug_fixed,
@@ -60,6 +61,39 @@ def test_unknown_code_kind_fails_fast() -> None:
         remember_code(_mem(), "x", "not_a_kind", project="apollo")
 
 
+def test_is_forbidden_catches_a_matching_action() -> None:
+    mem = _mem()
+    remember_forbidden_action(mem, "Never force-push to the main branch.", project="apollo")
+    hits = is_forbidden(mem, "force-push to main now", "apollo")
+    assert hits and hits[0].metadata["code_kind"] == "forbidden_action"
+
+
+def test_is_forbidden_allows_unrelated_actions() -> None:
+    mem = _mem()
+    remember_forbidden_action(mem, "Never force-push to the main branch.", project="apollo")
+    assert is_forbidden(mem, "run the unit test suite", "apollo") == []
+
+
+def test_superseded_forbidden_rule_no_longer_blocks() -> None:
+    mem = _mem()
+    rule = remember_forbidden_action(mem, "Never deploy on Fridays.", project="apollo", created_at=100)
+    repeal = remember_code(mem, "Friday deploys are now allowed.", "convention", project="apollo", created_at=200)
+    rule.superseded_by = repeal.id  # the rule was retired
+    assert is_forbidden(mem, "deploy on Friday afternoon", "apollo") == []
+
+
+def test_mcp_check_forbidden_action_tool() -> None:
+    import os
+
+    os.environ.setdefault("MIDAS_MCP_EMBEDDER", "hashing")
+    pytest.importorskip("mcp")
+    from midas.mcp_server import _mem, check_forbidden_action
+
+    remember_forbidden_action(_mem, "Never drop the production database.", project="apollo-fb")
+    assert check_forbidden_action(action="drop the production database", project="apollo-fb")["forbidden"] is True
+    assert check_forbidden_action(action="read the production logs", project="apollo-fb")["forbidden"] is False
+
+
 def test_mcp_project_state_tool_is_wired() -> None:
     import os
 
@@ -73,3 +107,27 @@ def test_mcp_project_state_tool_is_wired() -> None:
     assert out["project"] == "apollo-mcp"
     assert out["counts"].get("architecture_decision", 0) >= 1
     assert any("event sourcing" in r["content"] for r in out["state"]["architecture_decision"])
+
+
+def test_capture_policy_is_code_aware() -> None:
+    from midas import AGENT_MEMORY_INSTRUCTIONS
+
+    for tool in ("remember_code", "project_state", "check_forbidden_action"):
+        assert tool in AGENT_MEMORY_INSTRUCTIONS
+
+
+def test_mcp_remember_code_tool() -> None:
+    import os
+
+    os.environ.setdefault("MIDAS_MCP_EMBEDDER", "hashing")
+    pytest.importorskip("mcp")
+    from midas.mcp_server import project_state as project_state_tool
+    from midas.mcp_server import remember_code as remember_code_tool
+
+    out = remember_code_tool(
+        content="Apollo uses gRPC between services.", code_kind="architecture_decision", project="apollo-rc"
+    )
+    assert out["metadata"]["code_kind"] == "architecture_decision"
+    assert out["metadata"]["project"] == "apollo-rc"
+    state = project_state_tool(project="apollo-rc")
+    assert any("gRPC" in r["content"] for r in state["state"]["architecture_decision"])

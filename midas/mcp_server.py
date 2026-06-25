@@ -43,7 +43,11 @@ from midas import (
     MemoryPolicy, StructuralImportance, __version__, policy_summary,
 )
 from midas.state import memory_diff as _diff_view, memory_state as _state_view
-from midas.coding import project_state as _project_state_view
+from midas.coding import (
+    is_forbidden as _is_forbidden,
+    project_state as _project_state_view,
+    remember_code as _remember_code_impl,
+)
 
 # Auto-retention cap: when set, the store is kept at or below this many records by no-LLM selective
 # forgetting after each write — bounded memory for long-running/enterprise deployments.
@@ -222,6 +226,35 @@ def capture(
         "provenance": result.record.provenance if result.record else None,
         "actor": result.record.actor if result.record else None,
     }
+
+
+@server.tool(
+    title="Remember code memory",
+    annotations=ToolAnnotations(title="Remember code memory", readOnlyHint=False, destructiveHint=False),
+)
+def remember_code(
+    content: str,
+    code_kind: str,
+    project: str,
+    provenance: str = "",
+    importance: int = 0,
+    session: str = "default",
+    namespace: str = "",
+) -> dict:
+    """Capture a CODE memory tagged by category + project, for the coding-agent views. code_kind: one of
+    architecture_decision | dependency_choice | convention | bug_fixed | recurring_failure |
+    forbidden_action | command_worked | command_failed. Use forbidden_action for rules the agent must not
+    violate (they gate `check_forbidden_action`); afterwards `project_state` shows the live state by
+    category. No LLM. Set provenance="user_confirmation" only when the user explicitly confirmed it.
+    """
+    rec = _remember_code_impl(
+        _mem, content, code_kind, project=project,
+        provenance=(provenance or None), importance=(int(importance) or None),
+        metadata=_ns_metadata(namespace, session),
+    )
+    if _MAX_RECORDS and len(_mem.store.all()) > _MAX_RECORDS:
+        _mem.forget_decayed(max_records=_MAX_RECORDS)  # keep memory bounded (no LLM)
+    return _serialize_record(rec)
 
 
 def _round_score(value: float) -> float:
@@ -422,6 +455,25 @@ def project_state(project: str, limit: int = 200) -> dict:
         "project": project,
         "counts": {k: len(recs) for k, recs in grouped.items()},
         "state": {k: [_serialize_record(r) for r in recs] for k, recs in grouped.items()},
+    }
+
+
+@server.tool(
+    title="Check forbidden action",
+    annotations=ToolAnnotations(title="Check forbidden action", readOnlyHint=True, openWorldHint=False),
+)
+def check_forbidden_action(action: str, project: str) -> dict:
+    """Before performing a code action, check whether a live `forbidden_action` rule for the project
+    prohibits it. Returns {forbidden, rules}. If forbidden, do NOT do it — refuse and cite the rule(s).
+    Deterministic, no LLM (lexical content-word match; superseded/retired rules are ignored). This is
+    the content-rule gate; `check_memory_use` is the separate provenance/currency gate.
+    """
+    rules = _is_forbidden(_mem, action, project)
+    return {
+        "action": action,
+        "project": project,
+        "forbidden": bool(rules),
+        "rules": [_serialize_record(r) for r in rules],
     }
 
 

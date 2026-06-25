@@ -12,6 +12,7 @@ governance layer behaves correctly (e.g. a `forbidden_action` is a user-confirme
 """
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
@@ -102,3 +103,48 @@ def project_state(mem: "Memory", project: str, *, limit: int = 200) -> dict[str,
     for r in records[:limit]:
         grouped[r.metadata["code_kind"]].append(r)
     return dict(grouped)
+
+
+_WORD_RE = re.compile(r"[a-z0-9]+")
+# Glue words that shouldn't count toward an action↔rule match (the rule's *negation* — "never", "don't"
+# — is intentionally dropped: a forbidden rule and its action describe the SAME act, just framed opposite).
+_STOP = frozenset(
+    "a an the to of in on at for and or but no not never dont do does did is are was were be been "
+    "this that these those it its with without your you we i our us me my".split()
+)
+
+
+def _words(text: str) -> set[str]:
+    return {w for w in _WORD_RE.findall(text.lower()) if len(w) > 1 and w not in _STOP}
+
+
+def is_forbidden(
+    mem: "Memory",
+    action: str,
+    project: str,
+    *,
+    min_overlap: float = 0.5,
+    min_shared: int = 2,
+) -> list[MemoryRecord]:
+    """Return the live `forbidden_action` rules a proposed `action` falls under (empty list ⇒ allowed).
+
+    A coding agent calls this BEFORE acting: if it returns rules, refuse and cite them. The match is a
+    deterministic content-word overlap (no LLM, embedder-independent, reproducible): a rule matches when
+    it shares ≥ `min_shared` content words with the action AND covers ≥ `min_overlap` of the action's
+    content words — the two-word floor keeps a single common verb ("update") from false-matching. This
+    is the lexical first cut; the semantic version (intent-level matching) is the next governance axis.
+    Superseded (retired) rules are ignored, so revoking a rule actually revokes the block."""
+    action_words = _words(action)
+    if len(action_words) < min_shared:
+        return []
+    hits: list[MemoryRecord] = []
+    for r in mem.store.all():
+        if (
+            r.superseded_by is None
+            and r.metadata.get("project") == project
+            and r.metadata.get("code_kind") == "forbidden_action"
+        ):
+            shared = action_words & _words(r.content)
+            if len(shared) >= min_shared and len(shared) / len(action_words) >= min_overlap:
+                hits.append(r)
+    return hits
