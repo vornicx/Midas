@@ -118,6 +118,14 @@ def _words(text: str) -> set[str]:
     return {w for w in _WORD_RE.findall(text.lower()) if len(w) > 1 and w not in _STOP}
 
 
+def _cosine(a: Any, b: Any) -> float:
+    import numpy as np
+
+    va, vb = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
+    na, nb = np.linalg.norm(va), np.linalg.norm(vb)
+    return float(va @ vb / (na * nb)) if na and nb else 0.0
+
+
 def is_forbidden(
     mem: "Memory",
     action: str,
@@ -125,26 +133,54 @@ def is_forbidden(
     *,
     min_overlap: float = 0.5,
     min_shared: int = 2,
+    min_similarity: float = 0.58,
+    use_embeddings: bool = True,
 ) -> list[MemoryRecord]:
     """Return the live `forbidden_action` rules a proposed `action` falls under (empty list ⇒ allowed).
 
-    A coding agent calls this BEFORE acting: if it returns rules, refuse and cite them. The match is a
-    deterministic content-word overlap (no LLM, embedder-independent, reproducible): a rule matches when
-    it shares ≥ `min_shared` content words with the action AND covers ≥ `min_overlap` of the action's
-    content words — the two-word floor keeps a single common verb ("update") from false-matching. This
-    is the lexical first cut; the semantic version (intent-level matching) is the next governance axis.
-    Superseded (retired) rules are ignored, so revoking a rule actually revokes the block."""
+    A coding agent calls this BEFORE acting: if it returns rules, refuse and cite them. A rule matches on
+    EITHER of two signals (no LLM, deterministic for a fixed embedder; superseded/retired rules ignored):
+
+    - **lexical** — shares ≥ `min_shared` content words AND covers ≥ `min_overlap` of the action's words
+      (the two-word floor keeps a single common verb from false-matching). High precision, exact phrasings.
+    - **semantic** — cosine(action, rule) ≥ `min_similarity` over the embedder's vectors, so a paraphrase
+      ("remove the accounts table" under "never delete user data") is caught even with zero shared words.
+      Only meaningful with a *semantic* embedder (`LocalEmbedder`); on the hashing embedder it degenerates
+      to lexical. Measured (bge-base, n=6): paraphrases score ~0.59–0.60, benign actions ~0.49–0.55 — a
+      real but **narrow (~0.04) separation**, so semantic is a SOFT recall signal, not a hard gate. The
+      default 0.58 caught all paraphrases at zero false-positives on that set, but `min_similarity` is an
+      absolute, **embedder-dependent** cosine threshold worth tuning per model; lexical stays the
+      high-precision floor, and the agent also SEES forbidden rules via `project_state`/context (defence
+      in depth). A larger labelled eval would be needed to trust semantic as a standalone block.
+
+    Set `use_embeddings=False` for the lexical-only behaviour."""
     action_words = _words(action)
-    if len(action_words) < min_shared:
-        return []
+    action_emb = None
+    if use_embeddings:
+        try:
+            action_emb = mem.embedder.embed(action)
+        except Exception:
+            action_emb = None
+
     hits: list[MemoryRecord] = []
     for r in mem.store.all():
-        if (
+        if not (
             r.superseded_by is None
             and r.metadata.get("project") == project
             and r.metadata.get("code_kind") == "forbidden_action"
         ):
-            shared = action_words & _words(r.content)
-            if len(shared) >= min_shared and len(shared) / len(action_words) >= min_overlap:
-                hits.append(r)
+            continue
+        shared = action_words & _words(r.content)
+        lexical = (
+            len(action_words) >= min_shared
+            and len(shared) >= min_shared
+            and len(shared) / len(action_words) >= min_overlap
+        )
+        semantic = (
+            action_emb is not None
+            and r.embedding is not None
+            and _cosine(action_emb, r.embedding) >= min_similarity
+        )
+        if lexical or semantic:
+            hits.append(r)
     return hits

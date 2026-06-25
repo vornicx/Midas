@@ -82,6 +82,26 @@ def test_superseded_forbidden_rule_no_longer_blocks() -> None:
     assert is_forbidden(mem, "deploy on Friday afternoon", "apollo") == []
 
 
+def test_is_forbidden_semantic_catches_paraphrase() -> None:
+    # A controlled embedder: the paraphrase is close to the rule and the benign action is far, while
+    # NEITHER shares content words with the rule — so only the semantic path can catch the paraphrase.
+    class _Stub:
+        _M = {
+            "Never delete user data.": [1.0, 0.0],
+            "remove the accounts table": [0.96, 0.28],  # cosine ~0.96 with the rule
+            "read the deployment logs": [0.0, 1.0],      # cosine 0 with the rule
+        }
+
+        def embed(self, text: str) -> list[float]:
+            return self._M.get(text, [0.0, 0.0])
+
+    mem = Memory(embedder=_Stub())
+    remember_forbidden_action(mem, "Never delete user data.", project="apollo")
+    assert is_forbidden(mem, "remove the accounts table", "apollo")  # semantic catch (lexical misses)
+    assert is_forbidden(mem, "remove the accounts table", "apollo", use_embeddings=False) == []  # lexical alone misses
+    assert is_forbidden(mem, "read the deployment logs", "apollo") == []  # neither signal fires
+
+
 def test_mcp_check_forbidden_action_tool() -> None:
     import os
 
