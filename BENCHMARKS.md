@@ -506,6 +506,28 @@ python -m eval.runner --dataset longmemeval --variant s --local \
   --judge --max-questions 40 --limit 20 --seed 0      # add --midas-no-time for the A/B
 ```
 
+## 7. Governance & safety — deterministic, no-LLM (the trust axis)
+
+Beyond retrieval, Midas measures what a *governed* memory layer must guarantee — all $0, no-LLM, and
+reproducible. These are the wedge that competes on **trust**, not just `recall@k`, and they are
+Midas-native (no other memory system publishes them):
+
+- **Agent Continuity Bench** (`eval.continuity`) — action_safety / decision_adherence / repeated_mistake:
+  **1.00 / 1.00 / 1.00** over a scripted multi-session project. The guard blocks actions justified by stale
+  or unconfirmed memory while still allowing a current user-confirmed action (an allow-discriminator, so a
+  "block everything" policy can't pass).
+- **Memory-Safety eval** (`eval.memory_safety`; framing from Banco Santander AI Lab's autoguardrails) —
+  Attack-Success-Rate **0.00** over 6 adversarial cases (superseded / unconfirmed / cross-agent /
+  injected-content / forgotten memory trying to authorize a use), benign-pass **1.00** (no over-blocking).
+- **Coding-agent bench** (`eval.coding_bench`) — decision_currency / repeated_mistake / forbidden_accuracy:
+  **1.00 / 1.00 / 1.00**. Forbidden-action enforcement is lexical + a *soft* semantic signal (measured
+  ~0.04 cosine margin, bge-base, n=6 — a recall layer over the high-precision lexical gate, not a hard
+  block; an honest first cut pending a larger labelled eval).
+
+```bash
+python -m eval.continuity ; python -m eval.memory_safety ; python -m eval.coding_bench   # all deterministic, $0
+```
+
 ## Methodology — why reader-independent metrics
 
 End-to-end "answer correctness" on these benchmarks is **dominated by the reader LLM, not the memory

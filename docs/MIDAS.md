@@ -186,6 +186,23 @@ Two deterministic, no-LLM views that top-k recall is bad at (the query doesn't r
 - **`memory_diff(since)`** — what was *added* and what was *revised* (old→new) since a timestamp. The
   "what changed since our last session" view. Both exposed as read-only MCP tools.
 
+### 4.8b The coding-agent vertical (`midas/coding.py`)
+
+The Fase-B layer that makes Midas concretely *for code agents* — a **non-invasive** vocabulary over the
+core (each code memory maps to a `MemoryKind` + a `code_kind`/`project` tag, so recall, supersession,
+forgetting, and the Guard all keep working unchanged):
+- **`code_kind`s** — `architecture_decision`, `dependency_choice`, `convention`, `bug_fixed`,
+  `recurring_failure`, `forbidden_action`, `command_worked/failed`; captured via `remember_code` (+ named
+  helpers), exposed as the MCP `remember_code` tool.
+- **`project_state(project)`** — the live, grouped onboarding view (what's decided / fixed / forbidden),
+  revised decisions showing their current value. MCP tool.
+- **`is_forbidden(action, project)`** — a no-LLM gate: a proposed action under a live `forbidden_action`
+  rule is flagged on **either** lexical overlap (high precision) **or** embedding cosine (recall on
+  paraphrases — semantic-authorization, a *soft* signal, §5.6). MCP `check_forbidden_action`. The A×B tie:
+  a forbidden action is a user-confirmed constraint, so the agent won't do it and can cite the rule.
+- The injected MCP capture policy is **code-aware** (point 5): capture decisions/bugs/rules, onboard with
+  `project_state`, check `check_forbidden_action` before acting.
+
 ### 4.9 Storage & scale (`store.py`, `sqlite_store.py`, `index.py`, `ann.py`, `turbovec_*`, `vector_source.py`)
 
 - **`InMemoryStore`** (default) — exact cached cosine scan, fast in absolute terms.
@@ -314,6 +331,14 @@ recall@k 0.80, **0 API calls / $0 / nothing leaves the box**.
   6 attacks (superseded / unconfirmed / cross-agent / **injected-content** / **forgotten** memory trying
   to authorize a use) + 3 benign. Metrics **ASR** (target 0) + **benign_pass** (target 1). Midas **0.00 /
   1.00**.
+- **Coding-agent memory bench** (`eval/coding_bench.py`, Fase B×C) — deterministic, no-LLM:
+  **decision_currency** (a revised architecture decision surfaces its live value via `project_state`),
+  **repeated_mistake** (a prior bug/failure resurfaces), **forbidden_accuracy** (violations flagged, benign
+  actions not — a benign floor). Midas **1.00 / 1.00 / 1.00**.
+- **Semantic forbidden-action matching** (measured, bge-base, n=6) — paraphrases score ~0.59–0.60 vs benign
+  ~0.49–0.55: a **real but narrow (~0.04) separation**. So semantic is a *soft* recall signal (default
+  threshold 0.58) layered on the high-precision lexical gate — **not** a standalone hard block. Honest
+  first cut; a larger labelled eval is the next step to trust it alone.
 
 ### 5.7 Scaling research
 
@@ -343,11 +368,15 @@ measured negative). `sota-stressed-datasets` is a tabular credit set (not memory
 - **The governance / trust plane** — provenance, the mechanical guard, the **currency rule** (stale
   beliefs can't authorize actions), `check_memory_use`, and the control-plane views `memory_state` /
   `memory_diff`.
-- **Two Midas-native benchmarks nobody else has** — the Agent Continuity Bench and the Memory-Safety
-  eval (ASR 0.00 / benign_pass 1.00).
+- **Three Midas-native benchmarks nobody else has** — the Agent Continuity Bench, the Memory-Safety eval
+  (ASR 0.00 / benign_pass 1.00), and the Coding-agent bench (1.00 across decision-currency / repeated-mistake
+  / forbidden-accuracy).
+- **The coding-agent vertical (Fase B)** — a `code_kind` memory vocabulary, `project_state` onboarding,
+  **forbidden-action enforcement** (lexical + a first semantic signal), and a code-aware capture policy —
+  i.e. *"remembers decisions, won't act on stale or forbidden memory, and proves it"* made into product.
 - **Capacity to 10M-on-a-laptop** — TurboVec 15× RAM compression with recall intact.
 - **Shipping surfaces** — Python SDK, MCP server (one file, many clients), TS port, LangGraph store;
-  Apache-2.0; **233 tests green**.
+  Apache-2.0; **247 tests green**.
 
 ---
 
@@ -356,10 +385,11 @@ measured negative). `sota-stressed-datasets` is a tabular credit set (not memory
 - **Aggregation / summarization is a structural weakness** — top-k returns turns, not abstracts; at 10M
   the aggregation categories collapse (instruction-following 0.00, event-ordering 0.02, summarization
   0.03). This is *the* ceiling, and it's gated on a capable extractor Midas won't run at ingest.
-- **The guard is provenance-based, not semantic** — it trusts a `user_confirmation` stamp and can't tell
-  that a current confirmation authorizes a *different* action than the one asked. Provenance *integrity*
-  (forging the stamp) is a capture-time concern, out of scope for the guard. Next axis: semantic
-  authorization.
+- **Governance is mostly mechanical; semantics is early** — the guard trusts a `user_confirmation` stamp
+  (provenance *integrity* — forging it — is a capture-time concern) and can't tell a confirmation
+  authorizes a *different* action than asked. Semantic-authorization is now **started** for forbidden
+  actions (lexical + embedding match) but measured a *soft* signal (~0.04 margin, §5.6); a robust semantic
+  gate needs a larger labelled eval (the next roadmap item).
 - **Correctness is reader-dominated** — a bigger reader moves the headline more than the memory does, so
   we lead with reader-independent `recall@k`.
 - **TypeScript port lacks semantic embeddings** — parity is partial (ONNX embeddings pending).
@@ -373,16 +403,16 @@ measured negative). `sota-stressed-datasets` is a tabular credit set (not memory
 Ordered by the vision (governance A → coding-agent vertical B → benchmark wedge C).
 
 ### Near-term
-1. **Close Fase 1 honestly** — run the hosted judged summarization test (`--backend hosted`) with a
-   capable extractor: confirm or falsify the structure-preserving leap. Blocked only on an API key.
-2. **Governance levels (mech-gov-inspired)** — formalize `check_memory_use` into explicit levels
-   (recall-only → planning → recommendation → action+confirmation → destructive) — **only where the
-   safety evals show a gap** (measure first, don't add levels speculatively).
-3. **Grow the Memory-Safety & Continuity benches** — semantic-authorization cases, multi-agent
-   provenance, token-cost axis, more scenarios. Publish them as **the** agent-memory safety standard (C).
-4. **Coding-agent memory kinds (B)** — first-class `architecture_decision`, `bug_fixed`,
-   `convention`, `forbidden_action`, `command_that_worked/failed`; `memory_state(project)` as the
-   onboarding surface for a code agent. Apollo as design partner.
+1. ~~Close Fase 1 honestly~~ — **done**: hosted gpt-4o summarization test showed **no lift** (augment +0.04
+   in-noise, replace −0.11); the ceiling is structural, not extractor-quality (§5.5).
+2. ~~Coding-agent vertical (B)~~ — **done (foundation)**: `code_kind` vocabulary, `project_state`,
+   forbidden-action enforcement, code-aware capture policy, the Coding bench (§4.8b, §5.6).
+3. **Validate semantic-authorization** — a larger labelled forbidden-action eval (~40 paraphrase/benign
+   pairs) to turn the soft n=6 signal into a measured capability, or bound it honestly. *(next)*
+4. **Governance levels (mech-gov-inspired)** — formalize `check_memory_use` into explicit levels — **only
+   where the safety evals show a gap** (measure first, don't add levels speculatively).
+5. **Package the benches as the public standard (C)** — Continuity + Memory-Safety + Coding bench as the
+   way to measure agent memory; the eval-as-wedge.
 
 ### Mid-term
 5. **Structure-preserving extraction by the host agent** — if Fase 1 hosted confirms it, ship the
@@ -443,13 +473,14 @@ selling "graph memory" before it measures; shipping any lever that doesn't gener
 guard_reliance/forget) · `store` / `sqlite_store` (backends) · `index` / `ann` / `turbovec_index` /
 `turbovec_store` / `vector_source` (scale) · `embeddings` · `importance` · `bm25` / `sparse` / `colbert`
 (optional retrieval) · `nli` (contradiction/entailment) · `guard` (governance) · `state` (control-plane
-views) · `policy` (MCP policy text) · `distill` (optional tier) · `entity` (experimental) · `mcp_server`
+views) · `coding` (coding-agent vertical: code_kind / project_state / is_forbidden) · `policy` (MCP policy
+text) · `distill` (optional tier) · `entity` (experimental) · `mcp_server`
 · `integrations/langgraph_store`.
 
 **Eval** (`eval/`): `runner` · `datasets` · `schema` · `metrics` · `adapters/*` (midas / baseline_raw /
 mem0) · `llm` · `retention` · `multiday` · `bench_perf` / `bench_ann` · `distill_ab` · **`summarization_ab`**
-(Fase 1) · **`continuity`** (Continuity Bench) · **`memory_safety`** (Safety eval) · **`retrieval_adapter`**
-(Fase 5) · `midas_sweep`.
+(Fase 1) · **`continuity`** (Continuity Bench) · **`memory_safety`** (Safety eval) · **`coding_bench`**
+(Coding bench) · **`retrieval_adapter`** (Fase 5) · `midas_sweep`.
 
 **Docs**: `BENCHMARKS.md` (numbers) · `methodology.md` (anti-cheating, traces) · `frontier-2026.md`
 (landscape, what to adopt/reject) · `overnight-experiments.md` (the retrieval sweep) ·
@@ -471,6 +502,7 @@ python -m eval.runner --dataset longmemeval --variant s --local --midas-no-reran
 python -m eval.runner --dataset beam --beam-tier 100K --local --dumb-reader   # frontier benchmark
 python -m eval.continuity        # Agent Continuity Bench (action-safety, decision-adherence, repeated-mistake)
 python -m eval.memory_safety     # Memory-Safety eval (ASR + benign-pass)
+python -m eval.coding_bench       # Coding-agent bench (decision-currency, repeated-mistake, forbidden-accuracy)
 ```
 
 ---
