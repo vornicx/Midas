@@ -66,9 +66,10 @@ safely** and **resume from cleanly** — which is where similarity search alone 
 | *"What changed since our last session?"* | **`memory_diff`**: beliefs added, and beliefs revised (old → new) | "what's new" isn't a content query at all |
 | *"How do I speed up the transactions list?"* | the **prior fix** resurfaces, so the agent doesn't re-diagnose it | — |
 
-These properties are measured, not asserted — the **[Agent Continuity Bench](eval/continuity.py)** scores
-action-safety, decision-adherence, and repeated-mistake avoidance across a scripted multi-session project
-(deterministic, no LLM).
+These properties are measured, not asserted — the **[agent-memory bench suite](docs/agent-memory-benches.md)**
+(`python -m eval.benches`) scores action-safety, decision-adherence, repeated-mistake avoidance, and
+adversarial **memory-safety** (attack-success-rate) across scripted multi-session projects — deterministic,
+$0, no LLM. It's the standard we propose for measuring agent memory **beyond `recall@k`**.
 
 ## How it does on the benchmarks
 
