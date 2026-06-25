@@ -90,83 +90,148 @@ def api_stats(mem: "Memory") -> dict[str, Any]:
 # --- The embedded UI ---------------------------------------------------------------------------
 
 INDEX_HTML = r"""<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Midas Inspector</title><style>
-:root{--ink:#1A1A2E;--gold:#FFD700;--steel:#B0C4DE}
-*{box-sizing:border-box}body{margin:0;background:var(--ink);color:#fff;font:14px/1.5 ui-sans-serif,system-ui,sans-serif}
-a{color:var(--gold)}header{display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid #ffffff1a}
-.logo{display:grid;place-items:center;width:26px;height:26px;border-radius:6px;background:var(--gold);color:var(--ink);font-weight:800}
-.tabs{display:flex;gap:6px;margin-left:auto}.tab{padding:6px 12px;border-radius:8px;cursor:pointer;color:var(--steel)}
-.tab.on{background:#ffffff14;color:#fff}main{padding:20px;max-width:1100px;margin:0 auto}
-input,select{background:#00000040;border:1px solid #ffffff26;color:#fff;border-radius:8px;padding:8px 10px;font:inherit}
-.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
-.card{border:1px solid #ffffff1a;background:#ffffff08;border-radius:12px;padding:12px 14px;margin-bottom:10px}
-.badge{display:inline-block;font-size:11px;padding:1px 7px;border-radius:999px;background:#ffffff14;color:var(--steel);margin-right:6px}
-.gold{color:var(--gold)}.muted{color:var(--steel)}.mono{font-family:ui-monospace,monospace;font-size:12px}
-.btn{background:var(--gold);color:var(--ink);border:none;border-radius:8px;padding:6px 12px;font-weight:600;cursor:pointer}
-.btn.ghost{background:transparent;border:1px solid #ffffff33;color:#fff}
-.detail{border-left:2px solid var(--gold);padding-left:12px;margin-top:8px}
-h3{margin:18px 0 8px}.ok{color:#4ade80}.no{color:#f87171}
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Midas Inspector</title><style>
+:root{--ink:#13131f;--gold:#FFD700;--gsoft:#ffd7001f;--steel:#9aa4c0;--text:#eef0f7;--line:#ffffff14;
+--green:#34d399;--red:#f87171;--blue:#7aa2ff}
+*{box-sizing:border-box}html,body{height:100%}
+body{margin:0;color:var(--text);font:14px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+background:radial-gradient(1100px 560px at 8% -12%,#2a2a4d40,transparent),
+radial-gradient(820px 480px at 112% 6%,#ffd70012,transparent),var(--ink)}
+a{color:var(--gold);text-decoration:none}
+.app{display:grid;grid-template-columns:230px 1fr;min-height:100vh}
+.side{border-right:1px solid var(--line);padding:18px 14px;display:flex;flex-direction:column;gap:4px;
+position:sticky;top:0;height:100vh}
+.brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:16px;padding:4px 8px 16px}
+.brand .m{display:grid;place-items:center;width:30px;height:30px;border-radius:9px;color:#1a1a2e;font-weight:900;
+background:linear-gradient(145deg,#ffe96b,#e6b800);box-shadow:0 3px 14px #ffd70044}
+.nav a{display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:10px;color:var(--steel);
+cursor:pointer;font-weight:500}
+.nav a:hover{background:#ffffff0a;color:var(--text)}.nav a.on{background:var(--gsoft);color:var(--gold)}
+.nav svg{width:17px;height:17px}
+.foot{margin-top:auto;padding-top:12px;border-top:1px solid var(--line)}
+.pill{display:inline-flex;gap:5px;align-items:center;background:#ffffff0a;border:1px solid var(--line);
+border-radius:999px;padding:3px 10px;font-size:11px;color:var(--steel);margin:4px 5px 0 0}
+.pill b{color:var(--text)}
+.main{padding:28px 32px;max-width:1000px}
+.vhead h1{font-size:21px;margin:0}.vhead p{margin:3px 0 18px;color:var(--steel);font-size:13px}
+.controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:18px}
+input,select{background:#0000003a;border:1px solid var(--line);color:var(--text);border-radius:10px;
+padding:10px 12px;font:inherit;outline:none}input:focus,select:focus{border-color:#ffd70066}
+.search{flex:1;min-width:220px}
+.btn{background:linear-gradient(145deg,#ffe96b,#e6b800);color:#1a1a2e;border:none;border-radius:10px;
+padding:9px 16px;font-weight:600;cursor:pointer}.btn:hover{filter:brightness(1.06)}
+.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--text)}
+.btn.sm{padding:5px 11px;font-size:12px;border-radius:8px}
+.card{border:1px solid var(--line);border-radius:13px;padding:14px 16px;margin-bottom:11px;
+background:linear-gradient(180deg,#ffffff08,#ffffff03);transition:border-color .15s}
+.card:hover{border-color:#ffffff24}.card.dim{opacity:.5}
+.meta{display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin-bottom:9px}
+.tag{font-size:11px;padding:2px 9px;border-radius:999px;background:#ffffff12;color:var(--steel);font-weight:500}
+.tag.p-user_confirmation{background:#ffd7001f;color:var(--gold)}.tag.p-action{background:#7aa2ff26;color:var(--blue)}
+.tag.sup{background:#f871711f;color:var(--red)}.tag.imp{background:#ffffff0a}
+.when{margin-left:auto;font-size:11px;color:var(--steel)}
+.content{font-size:14px;white-space:pre-wrap}
+.src{margin-top:9px;font-family:ui-monospace,monospace;font-size:11px;color:var(--steel)}
+.acts{margin-top:11px;display:flex;gap:8px}
+.muted{color:var(--steel)}.gold{color:var(--gold)}.green{color:var(--green)}.red{color:var(--red)}
+.empty{text-align:center;color:var(--steel);padding:46px;border:1px dashed var(--line);border-radius:14px}
+.tl{margin-top:11px;border-left:2px solid #ffd70038;padding-left:16px;display:flex;flex-direction:column;gap:9px}
+.tl .ev{position:relative}.tl .ev::before{content:"";position:absolute;left:-23px;top:6px;width:9px;height:9px;
+border-radius:50%;background:#8a8aa6}.tl .ev.cur::before{background:var(--gold);box-shadow:0 0 0 4px #ffd70033}
+.tl .t{font-size:11px;color:var(--steel)}
+.verdict{border-radius:15px;padding:18px 20px;border:1px solid var(--line);margin-bottom:18px;
+display:flex;align-items:center;gap:16px}
+.verdict.ok{background:#34d3990f;border-color:#34d39944}.verdict.no{background:#f871710f;border-color:#f8717144}
+.verdict .big{font-size:26px}.verdict h2{margin:0;font-size:18px}.verdict .r{color:var(--steel);font-size:13px;margin-top:3px}
+.meter{height:6px;background:#ffffff14;border-radius:999px;overflow:hidden;margin-top:7px;width:150px}
+.meter i{display:block;height:100%;background:var(--gold)}
+h3.grp{margin:22px 0 11px;font-size:12px;text-transform:uppercase;letter-spacing:.09em;color:var(--gold)}
+@media(max-width:720px){.app{grid-template-columns:1fr}.side{position:static;height:auto;flex-direction:row;
+flex-wrap:wrap}.nav{display:flex;gap:2px}.foot{display:none}}
 </style></head><body>
-<header><span class="logo">M</span><b>Midas Inspector</b><span class="muted" id="stat"></span>
-<nav class="tabs">
-<span class="tab on" data-t="browse">Browse</span><span class="tab" data-t="project">Project</span>
-<span class="tab" data-t="changed">Changed</span><span class="tab" data-t="gov">Governance</span></nav></header>
-<main id="app"></main>
+<div class="app">
+<aside class="side">
+<div class="brand"><span class="m">M</span> Midas <span class="muted" style="font-weight:500;font-size:12px">Inspector</span></div>
+<nav class="nav" id="nav">
+<a data-t="browse" class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h11"/></svg>Browse</a>
+<a data-t="project"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Project</a>
+<a data-t="changed"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/></svg>Changed</a>
+<a data-t="gov"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 3v6c0 5-3.5 7.6-8 9-4.5-1.4-8-4-8-9V6z"/></svg>Governance</a>
+</nav>
+<div class="foot" id="foot"></div>
+</aside>
+<main class="main" id="main"></main>
+</div>
 <script>
-const app=document.getElementById('app'), stat=document.getElementById('stat');
-let tab='browse';
+const main=document.getElementById('main'),foot=document.getElementById('foot');let tab='browse';
 const esc=s=>(s==null?'':String(s)).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-const fmt=t=>t?new Date(t*1000).toISOString().slice(0,16).replace('T',' '):'';
-async function get(u){return (await fetch(u)).json()}
-async function post(u,b){return (await fetch(u,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)})).json()}
-function recCard(r,extra=''){return `<div class="card"><div><span class="badge">${esc(r.kind)}</span>
-<span class="badge">imp ${r.importance}</span><span class="badge">${esc(r.provenance)}</span>
-${r.superseded_by?'<span class="badge no">superseded</span>':''}<span class="muted">${fmt(r.created_at)}</span></div>
-<div style="margin-top:6px">${esc(r.content)}</div>
-<div class="muted mono" style="margin-top:4px">${esc(r.actor||'')} ${esc(r.source||'')}</div>
-<div style="margin-top:8px">${extra}</div></div>`}
-async function loadStat(){const s=await get('/api/stats');stat.textContent=`· ${s.total} records (${s.live} live)`}
-const tabs={
- async browse(){app.innerHTML=`<div class="row"><input id="q" placeholder="Search memory…" style="flex:1">
+const ago=t=>{if(!t)return'';const s=(Date.now()/1000)-t;const d=s/86400;
+ return d>=1?Math.round(d)+'d ago':s>=3600?Math.round(s/3600)+'h ago':Math.max(1,Math.round(s/60))+'m ago'};
+const get=async u=>(await fetch(u)).json();
+const post=async(u,b)=>(await fetch(u,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)})).json();
+function card(r,acts=''){const sup=r.superseded_by?'<span class="tag sup">superseded</span>':'';
+ return `<div class="card${r.superseded_by?' dim':''}"><div class="meta">
+ <span class="tag">${esc(r.kind)}</span><span class="tag imp">imp ${r.importance}</span>
+ <span class="tag p-${esc(r.provenance)}">${esc(r.provenance)}</span>${sup}
+ <span class="when">${ago(r.created_at)}</span></div>
+ <div class="content">${esc(r.content)}</div>
+ ${(r.actor||r.source)?`<div class="src">${esc(r.actor||'')}${r.source?' · '+esc(r.source):''}</div>`:''}
+ ${acts?`<div class="acts">${acts}</div><div id="d-${r.id}"></div>`:''}</div>`}
+function head(t,d){return `<div class="vhead"><h1>${t}</h1><p>${d}</p></div>`}
+async function loadFoot(){const s=await get('/api/stats');
+ foot.innerHTML=`<span class="pill"><b>${s.total}</b> records</span><span class="pill"><b>${s.live}</b> live</span>`
+ +Object.entries(s.kinds).map(([k,n])=>`<span class="pill">${esc(k)} <b>${n}</b></span>`).join('');}
+const V={
+ async browse(){main.innerHTML=head('Browse','Every memory, verbatim and source-traceable — search or scan.')
+  +`<div class="controls"><input id="q" class="search" placeholder="Search your memory…">
    <select id="kind"><option value="">all kinds</option><option>fact</option><option>constraint</option>
    <option>preference</option><option>note</option><option>chat</option><option>mission</option></select>
    <button class="btn" id="go">Search</button></div><div id="list"></div>`;
-  const run=async()=>{const q=document.getElementById('q').value,k=document.getElementById('kind').value;
-   const recs=await get('/api/records?q='+encodeURIComponent(q)+'&kind='+encodeURIComponent(k));
-   document.getElementById('list').innerHTML=recs.map(r=>recCard(r,
-     `<button class="btn ghost" onclick="openRec('${r.id}')">history</button>
-      <button class="btn ghost" onclick="forget('${r.id}')">forget</button>
-      <div id="d-${r.id}"></div>`)).join('')||'<div class="muted">no records</div>';};
-  document.getElementById('go').onclick=run;document.getElementById('q').onkeydown=e=>{if(e.key==='Enter')run()};run();},
- async project(){app.innerHTML=`<div class="row"><input id="p" placeholder="project (e.g. apollo)">
-   <button class="btn" id="go">Load state</button></div><div id="out"></div>`;
-  document.getElementById('go').onclick=async()=>{const g=await get('/api/project_state?project='+encodeURIComponent(document.getElementById('p').value));
-   document.getElementById('out').innerHTML=Object.keys(g).length?Object.entries(g).map(([k,rs])=>
-     `<h3 class="gold">${esc(k)}</h3>`+rs.map(r=>recCard(r)).join('')).join(''):'<div class="muted">nothing for that project</div>';};},
- async changed(){app.innerHTML=`<div class="row"><input id="h" type="number" value="24" style="width:90px"> hours
-   <button class="btn" id="go">Show diff</button></div><div id="out"></div>`;
-  document.getElementById('go').onclick=async()=>{const d=await get('/api/diff?hours='+document.getElementById('h').value);
-   document.getElementById('out').innerHTML=`<h3 class="gold">Added (${d.added.length})</h3>`+(d.added.map(r=>recCard(r)).join('')||'<div class="muted">—</div>')
-     +`<h3 class="gold">Revised (${d.revised.length})</h3>`+(d.revised.map(p=>`<div class="card"><div class="muted no">${esc(p.old.content)}</div>
-       <div class="gold">→ ${esc(p.new.content)}</div></div>`).join('')||'<div class="muted">—</div>');};},
- async gov(){app.innerHTML=`<div class="row"><input id="q" placeholder="proposed action / query" style="flex:1">
+  const run=async()=>{const recs=await get('/api/records?q='+encodeURIComponent(q.value)+'&kind='+encodeURIComponent(kind.value));
+   list.innerHTML=recs.length?recs.map(r=>card(r,
+    `<button class="btn ghost sm" onclick="hist('${r.id}')">history</button>
+     <button class="btn ghost sm" onclick="forget('${r.id}')">forget</button>`)).join(''):'<div class="empty">No memories.</div>';};
+  go.onclick=run;q.onkeydown=e=>{if(e.key==='Enter')run()};run();},
+ async project(){main.innerHTML=head('Project state','The live, governed state of a project — by category.')
+  +`<div class="controls"><input id="p" class="search" placeholder="project (e.g. apollo)">
+   <button class="btn" id="go">Load</button></div><div id="out"></div>`;
+  go.onclick=async()=>{const g=await get('/api/project_state?project='+encodeURIComponent(p.value));
+   out.innerHTML=Object.keys(g).length?Object.entries(g).map(([k,rs])=>
+    `<h3 class="grp">${esc(k.replace(/_/g,' '))} · ${rs.length}</h3>`+rs.map(r=>card(r)).join('')).join('')
+    :'<div class="empty">Nothing tagged for that project.</div>';};
+  p.onkeydown=e=>{if(e.key==='Enter')go.click()};},
+ async changed(){main.innerHTML=head('What changed','Beliefs added or revised since a point in time.')
+  +`<div class="controls">last <input id="h" type="number" value="24" style="width:84px"> hours
+   <button class="btn" id="go">Show</button></div><div id="out"></div>`;
+  go.onclick=async()=>{const d=await get('/api/diff?hours='+h.value);
+   out.innerHTML=`<h3 class="grp">Added · ${d.added.length}</h3>`+(d.added.map(r=>card(r)).join('')||'<div class="muted">—</div>')
+   +`<h3 class="grp">Revised · ${d.revised.length}</h3>`+(d.revised.map(p=>`<div class="card"><div class="meta">
+     <span class="tag sup">revised</span><span class="when">${ago(p.new.created_at)}</span></div>
+     <div class="content"><span class="red" style="text-decoration:line-through">${esc(p.old.content)}</span>
+     <span class="gold"> → ${esc(p.new.content)}</span></div></div>`).join('')||'<div class="muted">—</div>');};
+  go.click();},
+ async gov(){main.innerHTML=head('Governance &amp; audit','Would memory authorize this action — and why? The audit trail.')
+  +`<div class="controls"><input id="q" class="search" placeholder="proposed action / query">
    <select id="use"><option>external_action</option><option>destructive_action</option><option>answer</option><option>planning</option></select>
    <button class="btn" id="go">Check</button></div><div id="out"></div>`;
-  document.getElementById('go').onclick=async()=>{const a=await get('/api/audit?query='+encodeURIComponent(document.getElementById('q').value)+'&use='+document.getElementById('use').value);
-   document.getElementById('out').innerHTML=`<div class="card"><b class="${a.allowed?'ok':'no'}">${a.allowed?'ALLOWED':'BLOCKED'}</b>
-     <span class="badge">${esc(a.intended_use)}</span> <span class="badge">attributable ${(a.audit_completeness*100|0)}%</span>
-     <div class="muted" style="margin-top:6px">${esc(a.reason)}</div></div>
-     <h3 class="gold">Evidence (${a.evidence.length})</h3>`+(a.evidence.map(e=>recCard(e)).join('')||'<div class="muted">none</div>');};},
+  go.onclick=async()=>{const a=await get('/api/audit?query='+encodeURIComponent(q.value)+'&use='+use.value);
+   const pct=Math.round((a.audit_completeness||0)*100);
+   out.innerHTML=`<div class="verdict ${a.allowed?'ok':'no'}"><div class="big">${a.allowed?'✓':'✕'}</div>
+    <div><h2 class="${a.allowed?'green':'red'}">${a.allowed?'ALLOWED':'BLOCKED'}</h2>
+    <div class="r">${esc(a.reason)}</div><div class="r">attributable evidence
+    <div class="meter"><i style="width:${pct}%"></i></div></div></div></div>
+    <h3 class="grp">Evidence · ${a.evidence.length}</h3>`+(a.evidence.map(e=>card(e)).join('')||'<div class="empty">No supporting memory.</div>');};
+  q.onkeydown=e=>{if(e.key==='Enter')go.click()};},
 };
-async function openRec(id){const el=document.getElementById('d-'+id);if(el.innerHTML){el.innerHTML='';return}
- const d=await get('/api/record/'+id);el.innerHTML='<div class="detail"><b class="gold">Belief history</b>'
-  +d.history.map(h=>`<div class="muted">${fmt(h.created_at)} — ${esc(h.content)}</div>`).join('')+'</div>';}
-async function forget(id){if(!confirm('Forget this memory? An erasure receipt is recorded.'))return;
- await post('/api/forget',{id});loadStat();tabs[tab]();}
-document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{tab=t.dataset.t;
- document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x===t));tabs[tab]();});
-loadStat();tabs.browse();
+async function hist(id){const el=document.getElementById('d-'+id);if(el.innerHTML){el.innerHTML='';return}
+ const d=await get('/api/record/'+id);const last=d.history.length-1;
+ el.innerHTML=`<div class="tl">`+d.history.map((h,i)=>`<div class="ev${i===last?' cur':''}">
+  <div class="t">${ago(h.created_at)}${i===last?' · current':''}</div><div>${esc(h.content)}</div></div>`).join('')+`</div>`;}
+async function forget(id){if(!confirm('Forget this memory? A tamper-evident erasure receipt is recorded.'))return;
+ await post('/api/forget',{id});loadFoot();V[tab]();}
+document.querySelectorAll('#nav a').forEach(a=>a.onclick=()=>{tab=a.dataset.t;
+ document.querySelectorAll('#nav a').forEach(x=>x.classList.toggle('on',x===a));V[tab]();});
+loadFoot();V.browse();
 </script></body></html>"""
 
 
