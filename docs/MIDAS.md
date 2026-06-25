@@ -338,9 +338,13 @@ recall@k 0.80, **0 API calls / $0 / nothing leaves the box**.
 - **Semantic forbidden-action matching** (labelled eval, `eval/forbidden_eval.py`, bge-base, n=24) — the
   verdict the n=6 spot-check hid: paraphrase and benign cosine distributions **overlap** (paraphrases
   0.56–0.72, benign 0.49–0.69), so there is **no clean threshold**. Best semantic F1 **0.79** (recall 0.92,
-  precision **0.69 ⇒ ~31% false positives**). So semantic is **advisory, not a reliable hard block**: the
-  MCP gate now returns `forbidden` (lexical match → refuse) vs `possibly_forbidden` (semantic → ask the
-  user). A clean case of eval-first catching an overclaim — the larger eval reversed the small one.
+  precision **0.69 ⇒ ~31% false positives**). We also tested an **NLI entailment** matcher (action → the
+  prohibited act): it separates the *typical* case far more sharply (entailment median 0.72 for positives
+  vs 0.07 for benign) but its **tails** sink it — some paraphrases entail ~0, one near-miss benign entails
+  0.88 — so its best F1 is **0.72 < cosine's 0.79**. **Neither matcher is a reliable gate**, so semantic
+  stays **advisory**: the MCP gate returns `forbidden` (lexical → refuse) vs `possibly_forbidden` (semantic
+  → ask the user). A clean case of eval-first catching an overclaim — the larger eval reversed the small
+  one, and the "better matcher" didn't help either. (A cosine∧NLI combination is unmeasured future work.)
 
 ### 5.7 Scaling research
 
@@ -411,9 +415,9 @@ Ordered by the vision (governance A → coding-agent vertical B → benchmark we
 2. ~~Coding-agent vertical (B)~~ — **done (foundation)**: `code_kind` vocabulary, `project_state`,
    forbidden-action enforcement, code-aware capture policy, the Coding bench (§4.8b, §5.6).
 3. ~~Validate semantic-authorization~~ — **done** (`eval/forbidden_eval.py`, n=24): **bounded as
-   advisory** (F1 0.79, ~31% FP, overlapping distributions), so the MCP gate splits hard-lexical from
-   advisory-semantic. A *reliable* semantic gate (a better matcher — cross-encoder / NLI / a trained
-   classifier) is the genuine open work.
+   advisory** (cosine F1 0.79, ~31% FP, overlapping distributions), so the MCP gate splits hard-lexical
+   from advisory-semantic. **NLI entailment was also measured (F1 0.72 < cosine) — doesn't help.** A
+   *reliable* semantic gate remains open: a trained classifier, or an unmeasured cosine∧NLI combination.
 4. **Governance levels (mech-gov-inspired)** — formalize `check_memory_use` into explicit levels — **only
    where the safety evals show a gap** (measure first, don't add levels speculatively).
 5. **Package the benches as the public standard (C)** — Continuity + Memory-Safety + Coding bench as the

@@ -522,8 +522,9 @@ Midas-native (no other memory system publishes them):
 - **Coding-agent bench** (`eval.coding_bench`) — decision_currency / repeated_mistake / forbidden_accuracy:
   **1.00 / 1.00 / 1.00**. Forbidden-action enforcement is lexical (high-precision, hard) + a semantic layer
   a labelled eval (`eval.forbidden_eval`, n=24) measured as **advisory, not a hard block** (best F1 0.79,
-  precision 0.69 ⇒ ~31% false positives — overlapping distributions, no clean threshold); the MCP gate
-  splits `forbidden` (lexical = refuse) from `possibly_forbidden` (semantic = ask the user).
+  precision 0.69 ⇒ ~31% false positives — overlapping distributions, no clean threshold; an NLI-entailment
+  matcher, also measured, is worse at F1 0.72); the MCP gate splits `forbidden` (lexical = refuse) from
+  `possibly_forbidden` (semantic = ask the user).
 
 ```bash
 python -m eval.continuity ; python -m eval.memory_safety ; python -m eval.coding_bench   # all deterministic, $0
