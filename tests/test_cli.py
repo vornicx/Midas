@@ -50,3 +50,51 @@ def test_status_runs(capsys) -> None:
     assert rc == 0
     out = capsys.readouterr().out
     assert "Midas" in out and "clients:" in out
+
+
+def test_doctor_runs(capsys) -> None:
+    rc = cli.cmd_doctor(argparse.Namespace(db=":memory:"))
+    assert rc in (0, 1)  # may flag the missing store under :memory:
+    assert "Midas" in capsys.readouterr().out
+
+
+def test_export_import_roundtrip(tmp_path) -> None:
+    from midas import HashingEmbedder, Memory
+    from midas.sqlite_store import SQLiteStore
+
+    src = str(tmp_path / "src.sqlite3")
+    mem = Memory(store=SQLiteStore(src), embedder=HashingEmbedder())
+    mem.remember("Apollo uses PostgreSQL.", kind="constraint", importance=5, actor="user", source="s1")
+    mem.remember("The launch date is Sept 14.", kind="fact")
+
+    out = tmp_path / "dump.json"
+    assert cli.cmd_export(argparse.Namespace(db=src, out=str(out))) == 0
+    assert json.loads(out.read_text())["count"] == 2
+
+    dst = str(tmp_path / "dst.sqlite3")
+    assert cli.cmd_import(argparse.Namespace(file=str(out), db=dst, overwrite=False)) == 0
+    got = {r.content for r in SQLiteStore(dst).all()}
+    assert "Apollo uses PostgreSQL." in got and "The launch date is Sept 14." in got
+
+    cli.cmd_import(argparse.Namespace(file=str(out), db=dst, overwrite=False))  # idempotent
+    assert len(SQLiteStore(dst).all()) == 2
+
+
+def test_schema_version_and_newer_guard(tmp_path) -> None:
+    import sqlite3
+
+    import pytest
+
+    from midas.sqlite_store import SCHEMA_VERSION, SQLiteStore
+
+    db = str(tmp_path / "m.sqlite3")
+    s = SQLiteStore(db)
+    assert s.schema_version() == SCHEMA_VERSION
+    s.close()
+
+    con = sqlite3.connect(db)  # simulate a store written by a newer Midas
+    con.execute("PRAGMA user_version = 999")
+    con.commit()
+    con.close()
+    with pytest.raises(RuntimeError):
+        SQLiteStore(db)

@@ -33,6 +33,8 @@ from typing import Callable
 from .store import InMemoryStore
 from .types import MemoryRecord
 
+SCHEMA_VERSION = 1  # bump when the `memories` schema changes; add a guarded migration step in _migrate()
+
 
 class SQLiteStore(InMemoryStore):
     """In-memory store (fast vectorised search) mirrored to a SQLite file for persistence."""
@@ -73,6 +75,16 @@ class SQLiteStore(InMemoryStore):
         self._data_version = self._current_data_version()
 
     def _migrate(self) -> None:
+        """Bring the schema up to SCHEMA_VERSION (idempotent), and refuse a store written by a NEWER
+        Midas so an out-of-date client can't misread it. Runs on every open, so a `midas update` is
+        picked up the next time the store opens — there is nothing separate to run."""
+        cur = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
+        if cur > SCHEMA_VERSION:
+            raise RuntimeError(
+                f"This memory store uses schema v{cur}, newer than this Midas (v{SCHEMA_VERSION}). "
+                f"Upgrade Midas first:  midas update"
+            )
+        # Legacy/uninitialized stores: ensure the columns exist (older files predate these).
         columns = {row[1] for row in self._conn.execute("PRAGMA table_info(memories)").fetchall()}
         if "provenance" not in columns:
             self._conn.execute(
@@ -80,6 +92,12 @@ class SQLiteStore(InMemoryStore):
             )
         if "actor" not in columns:
             self._conn.execute("ALTER TABLE memories ADD COLUMN actor TEXT")
+        # --- future migrations go here: `if cur < 2: <ALTER/UPDATE…>` then bump SCHEMA_VERSION ---
+        if cur != SCHEMA_VERSION:
+            self._conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
+    def schema_version(self) -> int:
+        return int(self._conn.execute("PRAGMA user_version").fetchone()[0])
 
     def _load(self) -> None:
         cur = self._conn.execute(
