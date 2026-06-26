@@ -43,3 +43,19 @@ def test_inspector_project_api() -> None:
     assert any(p["name"] == "apollo" for p in api_projects(mem))
     d = api_project(mem, "apollo")
     assert d["overview"]["name"] == "apollo" and "architecture_decision" in d["state"]
+    assert "governance" in d and "by_provenance" in d["governance"]
+
+
+def test_project_governance() -> None:
+    from midas.coding import remember_forbidden_action
+    from midas.projects import project_governance
+
+    mem = _mem()
+    A = dict(actor="claude-code", source="mcp:claude-code:s1")
+    remember_architecture_decision(mem, "Apollo uses PostgreSQL.", project="apollo", **A)
+    remember_forbidden_action(mem, "Never force-push to main.", project="apollo", **A)
+    g = project_governance(mem, "apollo")
+    assert len(g["forbidden"]) == 1
+    assert g["by_actor"].get("claude-code") == 2
+    assert sum(g["by_provenance"].values()) == 2
+    assert g["confirmations"] >= 1  # the forbidden rule is a user-confirmed constraint

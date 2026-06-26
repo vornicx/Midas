@@ -405,6 +405,33 @@ def cmd_projects(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_project(args: argparse.Namespace) -> int:
+    from types import SimpleNamespace
+
+    from midas.projects import project_governance, project_overview
+    from midas.sqlite_store import SQLiteStore
+
+    db = _store_path(args.db)
+    if not Path(db).exists():
+        print(f"no store at {db} — run `midas init`", file=sys.stderr)
+        return 1
+    mem = SimpleNamespace(store=SQLiteStore(db))
+    ov = project_overview(mem, args.name)
+    if ov["total"] == 0:
+        print(f"no memory for project '{args.name}'.")
+        return 1
+    gov = project_governance(mem, args.name)
+    join = lambda d: ", ".join(f"{k} {v}" for k, v in d.items()) or "—"  # noqa: E731
+    print(args.name)
+    print(f"  {ov['live']} live / {ov['total']} total · {round(ov['attributable'] * 100)}% attributable "
+          f"· {ov['superseded']} revised")
+    print(f"  governance: {gov['confirmations']} user-confirmed · {len(gov['forbidden'])} forbidden rules")
+    print(f"  by kind:       {join(ov['by_kind'])}")
+    print(f"  by provenance: {join(gov['by_provenance'])}")
+    print(f"  by actor:      {join(gov['by_actor'])}")
+    return 0
+
+
 def main() -> None:
     p = argparse.ArgumentParser(prog="midas", description="Local-first, governed memory for AI agents.")
     sub = p.add_subparsers(dest="cmd")
@@ -465,6 +492,11 @@ def main() -> None:
     ppr = sub.add_parser("projects", help="list the projects Midas has memory for")
     ppr.add_argument("--db")
     ppr.set_defaults(func=cmd_projects)
+
+    ppd = sub.add_parser("project", help="show a project's state, governance, and attribution")
+    ppd.add_argument("name")
+    ppd.add_argument("--db")
+    ppd.set_defaults(func=cmd_project)
 
     args = p.parse_args()
     if not getattr(args, "func", None):

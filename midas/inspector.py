@@ -22,7 +22,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .audit import audit_completeness, audit_record, audit_use, belief_history, forgetting_receipt
 from .coding import project_state
-from .projects import list_projects, project_of, project_overview
+from .projects import list_projects, project_governance, project_of, project_overview
 from .state import memory_diff
 
 if TYPE_CHECKING:
@@ -62,11 +62,20 @@ def api_projects(mem: "Memory") -> list[dict[str, Any]]:
 
 
 def api_project(mem: "Memory", name: str) -> dict[str, Any]:
-    """Per-project detail: overview stats + the code-state grouped by kind + recent records."""
+    """Per-project detail: overview stats + governance (prohibitions, trust mix, actors) + the code-state
+    grouped by kind + recent records."""
     recs = sorted((r for r in mem.store.all() if project_of(r) == name),
                   key=lambda r: r.updated_at, reverse=True)
+    gov = project_governance(mem, name)
     return {
         "overview": project_overview(mem, name),
+        "governance": {
+            "forbidden": [audit_record(r) for r in gov["forbidden"]],
+            "by_provenance": gov["by_provenance"],
+            "by_actor": gov["by_actor"],
+            "confirmations": gov["confirmations"],
+            "revisions": gov["revisions"],
+        },
         "state": {k: [audit_record(r) for r in v] for k, v in project_state(mem, name).items()},
         "recent": [audit_record(r) for r in recs[:12]],
     }
@@ -317,7 +326,7 @@ const V={
      <div class="pstat"><b>${p.live}</b> live · ${p.total} total</div>
      <div class="pstat">${Math.round(p.attributable*100)}% attributable · ${ago(p.last_active)}</div></div>`).join('')+`</div>`
     :'<div class="empty">No projects yet — captures get grouped by project / namespace / cwd.</div>');
-  document.querySelectorAll('.pcard').forEach(c=>c.onclick=()=>openProj(c.dataset.p));},
+  document.querySelectorAll('.pcard').forEach(c=>c.onclick=()=>{location.hash='project='+encodeURIComponent(c.dataset.p);openProj(c.dataset.p);});},
  async changed(){main.innerHTML=head('What changed','Beliefs added or revised since a point in time.')
   +`<div class="controls">last <input id="h" type="number" value="24" style="width:84px"> hours
    <button class="btn" id="go">Show</button></div><div id="out"></div>`;
@@ -341,13 +350,18 @@ const V={
     <h3 class="grp">Evidence · ${a.evidence.length}</h3>`+(a.evidence.map(e=>card(e)).join('')||'<div class="empty">No supporting memory.</div>');};
   q.onkeydown=e=>{if(e.key==='Enter')go.click()};},
 };
-async function openProj(name){const d=await get('/api/project?name='+encodeURIComponent(name));const o=d.overview;
+async function openProj(name){const d=await get('/api/project?name='+encodeURIComponent(name));const o=d.overview,g=d.governance;
  const stat=(l,v,s='')=>`<div class="stat"><div class="sv">${v}</div><div class="sl">${l}</div>${s?`<div class="ss">${s}</div>`:''}</div>`;
- main.innerHTML=`<div class="vhead"><div class="back" id="backp">← Projects</div><h1>${esc(name)}</h1><p>Per-project state, attributability, and recent activity.</p></div>
-  <div class="stats">${stat('Total',o.total)}${stat('Live',o.live,'current')}${stat('Superseded',o.superseded,'revised')}${stat('Attributable',Math.round(o.attributable*100)+'%','source + actor')}</div>`
+ const bars=ob=>{const e=Object.entries(ob);if(!e.length)return '<div class="muted">—</div>';const mx=Math.max(...e.map(x=>x[1]));
+  return e.map(([k,v])=>`<div class="bar"><div class="bk">${esc(k)}</div><div class="bt"><i style="width:${Math.round(v/mx*100)}%"></i></div><div class="bv">${v}</div></div>`).join('');};
+ main.innerHTML=`<div class="vhead"><div class="back" id="backp">← Projects</div><h1>${esc(name)}</h1><p>Per-project state, governance, and attributability.</p></div>
+  <div class="stats">${stat('Total',o.total)}${stat('Live',o.live,'current')}${stat('Superseded',o.superseded,'revised')}${stat('Attributable',Math.round(o.attributable*100)+'%','source + actor')}${stat('Confirmations',g.confirmations,'user-confirmed')}${stat('Forbidden',g.forbidden.length,'active rules')}</div>
+  <h3 class="grp">Governance</h3>
+  <div class="panels"><div class="panel"><h3 class="grp">Trust · by provenance</h3>${bars(g.by_provenance)}</div>
+   <div class="panel"><h3 class="grp">Contributors · by actor</h3>${bars(g.by_actor)}</div></div>`
   +Object.entries(d.state).map(([k,rs])=>`<h3 class="grp">${esc(k.replace(/_/g,' '))} · ${rs.length}</h3>`+rs.map(r=>card(r)).join('')).join('')
   +`<h3 class="grp">Recent · ${d.recent.length}</h3>`+(d.recent.map(r=>card(r)).join('')||'<div class="muted">—</div>');
- document.getElementById('backp').onclick=()=>V.project();}
+ document.getElementById('backp').onclick=()=>{location.hash='project';V.project();};}
 async function hist(id){const el=document.getElementById('d-'+id);if(el.innerHTML){el.innerHTML='';return}
  const d=await get('/api/record/'+id);const last=d.history.length-1;
  el.innerHTML=`<div class="tl">`+d.history.map((h,i)=>`<div class="ev${i===last?' cur':''}">
@@ -356,9 +370,10 @@ async function forget(id){if(!confirm('Forget this memory? A tamper-evident eras
  await post('/api/forget',{id});loadFoot();V[tab]();}
 document.querySelectorAll('#nav a').forEach(a=>a.onclick=()=>{tab=a.dataset.t;location.hash=tab;
  document.querySelectorAll('#nav a').forEach(x=>x.classList.toggle('on',x===a));V[tab]();});
-const _h=location.hash.slice(1),_start=V[_h]?_h:'overview';tab=_start;
-document.querySelectorAll('#nav a').forEach(x=>x.classList.toggle('on',x.dataset.t===_start));
-loadFoot();V[_start]();
+function start(){const h=location.hash.slice(1);
+ if(h.startsWith('project=')){tab='project';document.querySelectorAll('#nav a').forEach(x=>x.classList.toggle('on',x.dataset.t==='project'));openProj(decodeURIComponent(h.slice(8)));return;}
+ const s=V[h]?h:'overview';tab=s;document.querySelectorAll('#nav a').forEach(x=>x.classList.toggle('on',x.dataset.t===s));V[s]();}
+loadFoot();start();
 </script></body></html>"""
 
 

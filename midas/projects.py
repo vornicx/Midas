@@ -62,3 +62,25 @@ def project_overview(mem: "Memory", name: str) -> dict[str, Any]:
         "last_active": max((r.updated_at for r in recs), default=0.0),
         "by_kind": dict(sorted(by_kind.items(), key=lambda kv: -kv[1])),
     }
+
+
+def project_governance(mem: "Memory", name: str) -> dict[str, Any]:
+    """The governance picture of a project: its active prohibitions, the trust mix (by provenance), who
+    contributed (by actor), and how much has been revised. The same view the paid Team dashboard renders,
+    multi-user. `forbidden` is returned as records — the caller serializes."""
+    recs = [r for r in mem.store.all() if project_of(r) == name]
+    by_prov: dict[str, int] = {}
+    by_actor: dict[str, int] = {}
+    for r in recs:
+        by_prov[r.provenance] = by_prov.get(r.provenance, 0) + 1
+        actor = r.actor or "—"
+        by_actor[actor] = by_actor.get(actor, 0) + 1
+    forbidden = [r for r in recs
+                 if r.superseded_by is None and (r.metadata or {}).get("code_kind") == "forbidden_action"]
+    return {
+        "forbidden": forbidden,
+        "by_provenance": dict(sorted(by_prov.items(), key=lambda kv: -kv[1])),
+        "by_actor": dict(sorted(by_actor.items(), key=lambda kv: -kv[1])),
+        "confirmations": sum(1 for r in recs if r.provenance == "user_confirmation"),
+        "revisions": sum(1 for r in recs if r.superseded_by is not None),
+    }
