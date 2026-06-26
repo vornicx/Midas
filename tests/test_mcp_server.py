@@ -105,8 +105,9 @@ def test_inspect_memory_by_id_is_read_only_and_auditable():
     assert inspected["importance"] == 5
     assert inspected["provenance"] == "user_confirmation"
     assert inspected["actor"] == "user"
-    assert inspected["source"] == "mcp:release"
-    assert inspected["metadata"] == {"session": "release"}
+    assert inspected["source"] == "mcp:agent:release"  # mcp:<client>:<session> (client defaults to "agent")
+    assert inspected["metadata"]["session"] == "release"
+    assert "origin" in inspected["metadata"]  # Phase-1 traceability: where (git/cwd) it was captured
     assert inspected["superseded_by"] is None
     assert "created_at" in inspected and "updated_at" in inspected
     assert "embedding" not in inspected
@@ -144,7 +145,7 @@ def test_build_context_is_lean_while_recall_keeps_audit_details():
     assert "actor:" not in ctx
     assert "source:" not in ctx
     assert hits and hits[0]["provenance"] == "user_confirmation"
-    assert hits[0]["source"] == "mcp:db"
+    assert hits[0]["source"] == "mcp:agent:db"  # mcp:<client>:<session>
     assert "score" in hits[0]
 
 

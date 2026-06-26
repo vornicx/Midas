@@ -109,3 +109,12 @@ def test_resolve_namespace_modes(monkeypatch) -> None:
     assert mcp_server._resolve_namespace() == "team-a"      # explicit scope
     monkeypatch.setenv("MIDAS_MCP_NAMESPACE", "auto")
     assert mcp_server._resolve_namespace()                 # auto derives a non-empty project scope
+
+
+def test_source_and_origin_attribution() -> None:
+    from midas import mcp_server
+
+    s = mcp_server._source("s1")
+    assert s.startswith("mcp:") and s.endswith(":s1") and s.count(":") == 2  # mcp:<client>:<session>
+    o = mcp_server._resolve_origin()
+    assert isinstance(o, dict) and ("git" in o or "cwd" in o)  # where it was captured (git/cwd)

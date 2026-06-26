@@ -112,33 +112,42 @@ def cmd_init(args: argparse.Namespace) -> int:
     print("  mode: per-project — memory auto-separates by project (git repo / cwd).\n" if scoped
           else "  all clients below point here → they share one memory, autonomously.\n")
 
-    env = {"MIDAS_MCP_EMBEDDER": "local"}
-    if scoped:
-        env["MIDAS_MCP_NAMESPACE"] = "auto"
-    block = {"command": "midas-mcp", "env": env}
-    claude_env = ["-e", "MIDAS_MCP_EMBEDDER=local"] + (["-e", "MIDAS_MCP_NAMESPACE=auto"] if scoped else [])
+    def env_for(client_id: str) -> dict:
+        e = {"MIDAS_MCP_EMBEDDER": "local", "MIDAS_MCP_CLIENT": client_id}
+        if scoped:
+            e["MIDAS_MCP_NAMESPACE"] = "auto"   # each project gets its own partition
+        return e
+
+    def eflags(e: dict) -> list[str]:
+        out: list[str] = []
+        for k, v in e.items():
+            out += ["-e", f"{k}={v}"]
+        return out
 
     force = getattr(args, "force", False)
     results: list[tuple[str, str]] = []
-    # Clients with their own CLI (cleanest, no file editing):
-    r = _cli_add(["claude", "mcp", "add", "midas", "-s", "user", *claude_env, "--", "midas-mcp"],
-                 dry=args.dry_run, force=force, remove=["claude", "mcp", "remove", "midas", "-s", "user"])
+    # Clients with their own CLI (cleanest, no file editing) — each stamped with its client id:
+    r = _cli_add(["claude", "mcp", "add", "midas", "-s", "user", *eflags(env_for("claude-code")),
+                  "--", "midas-mcp"], dry=args.dry_run, force=force,
+                 remove=["claude", "mcp", "remove", "midas", "-s", "user"])
     if r:
         results.append(("Claude Code", r))
+    codex_note = "  — set MIDAS_MCP_CLIENT=codex" + (" + MIDAS_MCP_NAMESPACE=auto" if scoped else "") + \
+                 " in ~/.codex/config.toml"
     r = _cli_add(["codex", "mcp", "add", "midas", "--", "midas-mcp"], dry=args.dry_run, force=force,
                  remove=["codex", "mcp", "remove", "midas"])
     if r:
-        results.append(("Codex", r + (" — set MIDAS_MCP_NAMESPACE=auto in ~/.codex/config.toml for per-project"
-                                      if scoped else "")))
+        results.append(("Codex", r + codex_note))
 
     # Clients configured by a JSON file (only the ones already present, unless --all):
-    targets = [("Cursor", Path.home() / ".cursor/mcp.json"),
-               ("Windsurf", Path.home() / ".codeium/windsurf/mcp_config.json")]
+    targets = [("Cursor", "cursor", Path.home() / ".cursor/mcp.json"),
+               ("Windsurf", "windsurf", Path.home() / ".codeium/windsurf/mcp_config.json")]
     cd = _claude_desktop_path()
     if cd:
-        targets.append(("Claude Desktop", cd))
-    for name, path in targets:
+        targets.append(("Claude Desktop", "claude-desktop", cd))
+    for name, client_id, path in targets:
         if path.exists() or args.all:
+            block = {"command": "midas-mcp", "env": env_for(client_id)}
             results.append((name, _merge_mcp_json(path, block, dry=args.dry_run)))
 
     for name, msg in results:

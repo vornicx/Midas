@@ -16,7 +16,9 @@ Config (env):
                              (no LLM) so memory stays bounded out of the box (default: unbounded)
     MIDAS_MCP_MIN_IMPORTANCE = relevance floor for `capture` (1-5); turns scoring below it are skipped
                              (default: 2 — keeps anything with a real fact/name/number, drops chit-chat)
-    MIDAS_MCP_ACTOR        = actor id stamped on MCP memories (default: midas-mcp)
+    MIDAS_MCP_CLIENT       = the client/agent id (claude-code | codex | cursor…) — stamped as actor and
+                             into source so every memory is traceable (default: agent; `midas init` sets it)
+    MIDAS_MCP_ACTOR        = override the actor id stamped on MCP memories (default: the client)
     MIDAS_MCP_NAMESPACE    = default namespace stamped on writes and applied to reads — lets many
                              projects/agents share one DB file with scoped memory (default: none)
     MIDAS_MCP_SUPERSEDE    = 1/0 typed belief revision for stale facts (default: 1)
@@ -55,7 +57,10 @@ from midas.coding import (
 _MAX_RECORDS = int(os.getenv("MIDAS_MCP_MAX_RECORDS", "0")) or None
 # The relevance parameters Midas imposes on `capture` (the no-LLM "what's worth keeping" gate).
 _POLICY = MemoryPolicy(min_importance=int(os.getenv("MIDAS_MCP_MIN_IMPORTANCE", "2")))
-_ACTOR = os.getenv("MIDAS_MCP_ACTOR", "midas-mcp")
+# The MCP client/agent this server serves (set per-client by `midas init`: claude-code / codex / cursor…)
+# — stamped as the actor and into the source so every memory is traceable to *who* produced it.
+_CLIENT = os.getenv("MIDAS_MCP_CLIENT", "agent")
+_ACTOR = os.getenv("MIDAS_MCP_ACTOR") or _CLIENT
 def _resolve_namespace() -> str:
     """Default scope for this server instance. A per-call `namespace` arg overrides it; empty = unscoped
     (reads see everything, writes carry no namespace) — fully backward compatible. MIDAS_MCP_NAMESPACE=
@@ -84,9 +89,41 @@ def _ns(namespace: str) -> str:
     return namespace or _NAMESPACE
 
 
+def _source(session: str) -> str:
+    """A structured, traceable source for every write: who (client) + which thread (session)."""
+    return f"mcp:{_CLIENT}:{session}"
+
+
+def _resolve_origin() -> dict:
+    """Where the server runs — the git commit/branch + cwd — stamped on every memory so a belief traces
+    back to the code state it came from. Resolved once at startup (cheap); empty outside a repo."""
+    cwd = os.path.basename(os.getcwd())
+    try:
+        import subprocess
+
+        def _git(*a: str) -> str:
+            r = subprocess.run(["git", *a], capture_output=True, text=True, timeout=2)
+            return r.stdout.strip() if r.returncode == 0 else ""
+
+        commit = _git("rev-parse", "--short", "HEAD")
+        if commit:
+            return {"git": commit, "branch": _git("rev-parse", "--abbrev-ref", "HEAD"), "cwd": cwd}
+    except Exception:
+        pass
+    return {"cwd": cwd} if cwd else {}
+
+
+_ORIGIN = _resolve_origin()
+
+
 def _ns_metadata(namespace: str, session: str) -> dict:
     ns = _ns(namespace)
-    return {"session": session, **({"namespace": ns} if ns else {})}
+    md: dict = {"session": session}
+    if ns:
+        md["namespace"] = ns
+    if _ORIGIN:
+        md["origin"] = _ORIGIN  # where (git/cwd) it was captured — links the memory to the code state
+    return md
 
 
 def _ns_filter(namespace: str) -> dict | None:
@@ -207,7 +244,7 @@ def remember(
         content,
         kind=kind,
         importance=imp,
-        source=f"mcp:{session}",
+        source=_source(session),
         provenance=provenance,
         actor=actor or _ACTOR,
         metadata=_ns_metadata(namespace, session),
@@ -241,7 +278,7 @@ def capture(
     result = _mem.capture(
         content,
         kind=kind,
-        source=f"mcp:{session}",
+        source=_source(session),
         provenance=provenance,
         actor=actor or _ACTOR,
         metadata=_ns_metadata(namespace, session),
@@ -280,6 +317,7 @@ def remember_code(
     rec = _remember_code_impl(
         _mem, content, code_kind, project=project,
         provenance=(provenance or None), importance=(int(importance) or None),
+        actor=_ACTOR, source=_source(session),
         metadata=_ns_metadata(namespace, session),
     )
     if _MAX_RECORDS and len(_mem.store.all()) > _MAX_RECORDS:

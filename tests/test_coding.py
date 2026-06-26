@@ -173,3 +173,14 @@ def test_forbidden_rule_never_authorizes_an_action() -> None:
         kind="constraint", provenance="user_confirmation",
     )
     assert decide_memory_use([ok], intended_use="external_action").allowed is True
+
+
+def test_remember_code_is_attributable() -> None:
+    """Phase-1 traceability: a code memory now carries source + actor, so it's fully attributable."""
+    from midas.audit import audit_completeness
+
+    mem = _mem()
+    rec = remember_code(mem, "Apollo uses PostgreSQL.", "architecture_decision", project="apollo",
+                        actor="claude-code", source="mcp:claude-code:s1")
+    assert rec.actor == "claude-code" and rec.source == "mcp:claude-code:s1"
+    assert audit_completeness([rec]) == 1.0

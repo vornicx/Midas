@@ -46,6 +46,7 @@ def remember_code(
     provenance: MemoryProvenance | None = None,
     importance: int | None = None,
     actor: str | None = None,
+    source: str | None = None,
     metadata: dict[str, Any] | None = None,
     created_at: float | None = None,
 ) -> MemoryRecord:
@@ -64,6 +65,7 @@ def remember_code(
         importance=def_importance if importance is None else importance,
         provenance=def_provenance if provenance is None else provenance,
         actor=actor,
+        source=source,
         metadata=meta,
         created_at=created_at,
     )
