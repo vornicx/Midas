@@ -22,6 +22,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .audit import audit_completeness, audit_record, audit_use, belief_history, forgetting_receipt
 from .coding import project_state
+from .projects import list_projects, project_of, project_overview
 from .state import memory_diff
 
 if TYPE_CHECKING:
@@ -53,6 +54,22 @@ def api_record(mem: "Memory", record_id: str) -> dict[str, Any] | None:
 def api_project_state(mem: "Memory", project: str) -> dict[str, list[dict[str, Any]]]:
     """The live code-state of a project, grouped by code_kind (decisions / bugs / forbidden / …)."""
     return {k: [audit_record(r) for r in recs] for k, recs in project_state(mem, project).items()}
+
+
+def api_projects(mem: "Memory") -> list[dict[str, Any]]:
+    """Every project with at-a-glance stats — the Projects home."""
+    return list_projects(mem)
+
+
+def api_project(mem: "Memory", name: str) -> dict[str, Any]:
+    """Per-project detail: overview stats + the code-state grouped by kind + recent records."""
+    recs = sorted((r for r in mem.store.all() if project_of(r) == name),
+                  key=lambda r: r.updated_at, reverse=True)
+    return {
+        "overview": project_overview(mem, name),
+        "state": {k: [audit_record(r) for r in v] for k, v in project_state(mem, name).items()},
+        "recent": [audit_record(r) for r in recs[:12]],
+    }
 
 
 def api_diff(mem: "Memory", *, hours: float = 24.0) -> dict[str, Any]:
@@ -224,6 +241,12 @@ h3.grp:first-child{margin-top:0}
 .rrow .rc{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
 .dot{width:7px;height:7px;border-radius:50%;background:var(--steel);flex-shrink:0}
 .dot.k-constraint{background:var(--gold)}.dot.k-fact{background:var(--blue)}.dot.k-preference{background:var(--green)}.dot.k-mission{background:var(--red)}
+.plist{display:grid;grid-template-columns:repeat(auto-fill,minmax(232px,1fr));gap:12px;animation:rise .42s cubic-bezier(.16,1,.3,1) both}
+.pcard{border:1px solid var(--line);border-radius:14px;padding:16px;background:var(--surf);cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,255,255,.05);transition:border-color .16s,transform .16s,box-shadow .16s}
+.pcard:hover{border-color:var(--line2);transform:translateY(-2px);box-shadow:var(--shadow)}
+.pcard .pn{font-size:15px;font-weight:600;color:var(--gold);margin-bottom:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pcard .pstat{font-size:12px;color:var(--steel);margin-top:3px}.pcard .pstat b{color:var(--text);font-variant-numeric:tabular-nums}
+.back{display:inline-block;font-size:12px;color:var(--steel);cursor:pointer;margin-bottom:10px}.back:hover{color:var(--gold)}
 @media(max-width:900px){.ogrid{grid-template-columns:1fr}}
 .bar{display:flex;align-items:center;gap:11px;margin:9px 0}
 .bar .bk{width:120px;font-size:12.5px;color:var(--steel);text-transform:capitalize;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -239,7 +262,7 @@ h3.grp:first-child{margin-top:0}
 <nav class="nav" id="nav">
 <a data-t="overview" class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Overview</a>
 <a data-t="browse"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h11"/></svg>Browse</a>
-<a data-t="project"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Project</a>
+<a data-t="project"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Projects</a>
 <a data-t="changed"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/></svg>Changed</a>
 <a data-t="gov"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 3v6c0 5-3.5 7.6-8 9-4.5-1.4-8-4-8-9V6z"/></svg>Governance</a>
 </nav>
@@ -287,14 +310,14 @@ const V={
     `<button class="btn ghost sm" onclick="hist('${r.id}')">history</button>
      <button class="btn ghost sm" onclick="forget('${r.id}')">forget</button>`)).join(''):'<div class="empty">No memories.</div>';};
   go.onclick=run;q.onkeydown=e=>{if(e.key==='Enter')run()};run();},
- async project(){main.innerHTML=head('Project state','The live, governed state of a project — by category.')
-  +`<div class="controls"><input id="p" class="search" placeholder="project (e.g. apollo)">
-   <button class="btn" id="go">Load</button></div><div id="out"></div>`;
-  go.onclick=async()=>{const g=await get('/api/project_state?project='+encodeURIComponent(p.value));
-   out.innerHTML=Object.keys(g).length?Object.entries(g).map(([k,rs])=>
-    `<h3 class="grp">${esc(k.replace(/_/g,' '))} · ${rs.length}</h3>`+rs.map(r=>card(r)).join('')).join('')
-    :'<div class="empty">Nothing tagged for that project.</div>';};
-  p.onkeydown=e=>{if(e.key==='Enter')go.click()};},
+ async project(){const ps=await get('/api/projects');
+  main.innerHTML=head('Projects','Every project Midas has memory for — derived from its tag, scope, and capture origin.')
+   +(ps.length?`<div class="plist">`+ps.map(p=>`<div class="pcard" data-p="${esc(p.name)}">
+     <div class="pn">${esc(p.name)}</div>
+     <div class="pstat"><b>${p.live}</b> live · ${p.total} total</div>
+     <div class="pstat">${Math.round(p.attributable*100)}% attributable · ${ago(p.last_active)}</div></div>`).join('')+`</div>`
+    :'<div class="empty">No projects yet — captures get grouped by project / namespace / cwd.</div>');
+  document.querySelectorAll('.pcard').forEach(c=>c.onclick=()=>openProj(c.dataset.p));},
  async changed(){main.innerHTML=head('What changed','Beliefs added or revised since a point in time.')
   +`<div class="controls">last <input id="h" type="number" value="24" style="width:84px"> hours
    <button class="btn" id="go">Show</button></div><div id="out"></div>`;
@@ -318,15 +341,24 @@ const V={
     <h3 class="grp">Evidence · ${a.evidence.length}</h3>`+(a.evidence.map(e=>card(e)).join('')||'<div class="empty">No supporting memory.</div>');};
   q.onkeydown=e=>{if(e.key==='Enter')go.click()};},
 };
+async function openProj(name){const d=await get('/api/project?name='+encodeURIComponent(name));const o=d.overview;
+ const stat=(l,v,s='')=>`<div class="stat"><div class="sv">${v}</div><div class="sl">${l}</div>${s?`<div class="ss">${s}</div>`:''}</div>`;
+ main.innerHTML=`<div class="vhead"><div class="back" id="backp">← Projects</div><h1>${esc(name)}</h1><p>Per-project state, attributability, and recent activity.</p></div>
+  <div class="stats">${stat('Total',o.total)}${stat('Live',o.live,'current')}${stat('Superseded',o.superseded,'revised')}${stat('Attributable',Math.round(o.attributable*100)+'%','source + actor')}</div>`
+  +Object.entries(d.state).map(([k,rs])=>`<h3 class="grp">${esc(k.replace(/_/g,' '))} · ${rs.length}</h3>`+rs.map(r=>card(r)).join('')).join('')
+  +`<h3 class="grp">Recent · ${d.recent.length}</h3>`+(d.recent.map(r=>card(r)).join('')||'<div class="muted">—</div>');
+ document.getElementById('backp').onclick=()=>V.project();}
 async function hist(id){const el=document.getElementById('d-'+id);if(el.innerHTML){el.innerHTML='';return}
  const d=await get('/api/record/'+id);const last=d.history.length-1;
  el.innerHTML=`<div class="tl">`+d.history.map((h,i)=>`<div class="ev${i===last?' cur':''}">
   <div class="t">${ago(h.created_at)}${i===last?' · current':''}</div><div>${esc(h.content)}</div></div>`).join('')+`</div>`;}
 async function forget(id){if(!confirm('Forget this memory? A tamper-evident erasure receipt is recorded.'))return;
  await post('/api/forget',{id});loadFoot();V[tab]();}
-document.querySelectorAll('#nav a').forEach(a=>a.onclick=()=>{tab=a.dataset.t;
+document.querySelectorAll('#nav a').forEach(a=>a.onclick=()=>{tab=a.dataset.t;location.hash=tab;
  document.querySelectorAll('#nav a').forEach(x=>x.classList.toggle('on',x===a));V[tab]();});
-loadFoot();V.overview();
+const _h=location.hash.slice(1),_start=V[_h]?_h:'overview';tab=_start;
+document.querySelectorAll('#nav a').forEach(x=>x.classList.toggle('on',x.dataset.t===_start));
+loadFoot();V[_start]();
 </script></body></html>"""
 
 
@@ -361,6 +393,10 @@ def _make_handler(mem: "Memory"):
                 return self._json(rec) if rec else self._json({"error": "not found"}, 404)
             if u.path == "/api/project_state":
                 return self._json(api_project_state(mem, qs.get("project", "")))
+            if u.path == "/api/projects":
+                return self._json(api_projects(mem))
+            if u.path == "/api/project":
+                return self._json(api_project(mem, qs.get("name", "")))
             if u.path == "/api/diff":
                 return self._json(api_diff(mem, hours=float(qs.get("hours", 24))))
             if u.path == "/api/audit":

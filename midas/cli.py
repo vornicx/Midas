@@ -381,6 +381,30 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     return 0
 
 
+# ---- projects ---------------------------------------------------------------------------------
+
+def cmd_projects(args: argparse.Namespace) -> int:
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from midas.projects import list_projects
+    from midas.sqlite_store import SQLiteStore
+
+    db = _store_path(args.db)
+    if not Path(db).exists():
+        print(f"no store at {db} — run `midas init`", file=sys.stderr)
+        return 1
+    projs = list_projects(SimpleNamespace(store=SQLiteStore(db)))
+    if not projs:
+        print("no projects yet — memory gets grouped by project / namespace / cwd.")
+        return 0
+    print(f"{'PROJECT':<26}{'LIVE':>6}{'TOTAL':>7}{'ATTRIB':>8}  LAST ACTIVE")
+    for p in projs:
+        la = datetime.fromtimestamp(p["last_active"]).strftime("%Y-%m-%d") if p["last_active"] else "—"
+        print(f"{p['name'][:26]:<26}{p['live']:>6}{p['total']:>7}{round(p['attributable'] * 100):>7}%  {la}")
+    return 0
+
+
 def main() -> None:
     p = argparse.ArgumentParser(prog="midas", description="Local-first, governed memory for AI agents.")
     sub = p.add_subparsers(dest="cmd")
@@ -437,6 +461,10 @@ def main() -> None:
     pun.add_argument("--db")
     pun.add_argument("--purge", action="store_true", help="also delete the memory store")
     pun.set_defaults(func=cmd_uninstall)
+
+    ppr = sub.add_parser("projects", help="list the projects Midas has memory for")
+    ppr.add_argument("--db")
+    ppr.set_defaults(func=cmd_projects)
 
     args = p.parse_args()
     if not getattr(args, "func", None):
