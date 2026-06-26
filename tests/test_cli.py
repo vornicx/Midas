@@ -98,3 +98,14 @@ def test_schema_version_and_newer_guard(tmp_path) -> None:
     con.close()
     with pytest.raises(RuntimeError):
         SQLiteStore(db)
+
+
+def test_resolve_namespace_modes(monkeypatch) -> None:
+    from midas import mcp_server
+
+    monkeypatch.delenv("MIDAS_MCP_NAMESPACE", raising=False)
+    assert mcp_server._resolve_namespace() == ""           # unscoped by default
+    monkeypatch.setenv("MIDAS_MCP_NAMESPACE", "team-a")
+    assert mcp_server._resolve_namespace() == "team-a"      # explicit scope
+    monkeypatch.setenv("MIDAS_MCP_NAMESPACE", "auto")
+    assert mcp_server._resolve_namespace()                 # auto derives a non-empty project scope

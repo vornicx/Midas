@@ -56,9 +56,28 @@ _MAX_RECORDS = int(os.getenv("MIDAS_MCP_MAX_RECORDS", "0")) or None
 # The relevance parameters Midas imposes on `capture` (the no-LLM "what's worth keeping" gate).
 _POLICY = MemoryPolicy(min_importance=int(os.getenv("MIDAS_MCP_MIN_IMPORTANCE", "2")))
 _ACTOR = os.getenv("MIDAS_MCP_ACTOR", "midas-mcp")
-# Default scope for this server instance. A per-call `namespace` argument overrides it; empty means
-# unscoped (reads see everything, writes carry no namespace) — fully backward compatible.
-_NAMESPACE = os.getenv("MIDAS_MCP_NAMESPACE", "")
+def _resolve_namespace() -> str:
+    """Default scope for this server instance. A per-call `namespace` arg overrides it; empty = unscoped
+    (reads see everything, writes carry no namespace) — fully backward compatible. MIDAS_MCP_NAMESPACE=
+    "auto" derives the scope from the PROJECT the server was launched in (the git repo name, else the cwd
+    basename), so each project gets its own partition in the one shared store — automatically."""
+    ns = os.getenv("MIDAS_MCP_NAMESPACE", "")
+    if ns != "auto":
+        return ns
+    try:
+        import subprocess
+
+        root = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                              capture_output=True, text=True, timeout=2)
+        if root.returncode == 0 and root.stdout.strip():
+            return os.path.basename(root.stdout.strip())
+    except Exception:
+        pass
+    return os.path.basename(os.getcwd()) or ""
+
+
+# Default scope for this server instance (see _resolve_namespace; "auto" = per-project).
+_NAMESPACE = _resolve_namespace()
 
 
 def _ns(namespace: str) -> str:
@@ -126,6 +145,8 @@ def build_memory() -> Memory:
         from midas import InMemoryStore
 
         store = InMemoryStore(ann_threshold=10_000)
+    if _NAMESPACE:
+        print(f"[midas-mcp] namespace (project scope): {_NAMESPACE}", file=sys.stderr)
     nli = None
     if _USE_NLI:
         from midas.nli import LocalNLI

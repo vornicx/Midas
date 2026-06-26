@@ -160,7 +160,11 @@ current).
 
 By default every client shares **one live memory** (`~/.midas/memory.sqlite3`) — each detects the others'
 writes (SQLite `data_version`) and refreshes, so a fact captured in your IDE is recallable from your chat
-app seconds later, no restarts. Scope it per project/agent/user with `MIDAS_MCP_NAMESPACE`.
+app seconds later, no restarts.
+
+Want **per-project** separation instead? **`midas init --project-scoped`** (or `MIDAS_MCP_NAMESPACE=auto`)
+gives each project its own partition in the same store — the scope is derived from the git repo / cwd the
+server runs in. Or scope it manually per project/agent/user with `MIDAS_MCP_NAMESPACE`.
 
 <p align="center">
   <img src="docs/demo-multi-client.gif" alt="Two live processes share one Midas SQLite file: a recall that finds nothing, a capture from a different process, then the same never-restarted session recalls it" width="820">
@@ -178,7 +182,7 @@ a deletion audit), `stats`, `forget` (chain-safe), `forget_matching` (topic-leve
 default), `forget_all`. Prompts: `memory_session`, `distill`.
 
 **Env:** `MIDAS_MCP_DB` · `MIDAS_MCP_EMBEDDER` (`local` / `hashing` / `multilingual` / any fastembed id) ·
-`MIDAS_MCP_MAX_RECORDS` · `MIDAS_MCP_MIN_IMPORTANCE` · `MIDAS_MCP_NAMESPACE` · `MIDAS_MCP_ANN=1` (sub-linear
+`MIDAS_MCP_MAX_RECORDS` · `MIDAS_MCP_MIN_IMPORTANCE` · `MIDAS_MCP_NAMESPACE` (`=auto` → per-project scope) · `MIDAS_MCP_ANN=1` (sub-linear
 IVF for huge stores) · `MIDAS_MCP_SUPERSEDE` · `MIDAS_MCP_NLI=1` (NLI-gated revision) ·
 `MIDAS_MCP_AUTO_MAINTAIN=<min>` (idle-time upkeep) · `MIDAS_MCP_PINNED` (pin standing directives).
 

@@ -108,20 +108,28 @@ def cmd_init(args: argparse.Namespace) -> int:
     if not args.dry_run:
         _ensure_store(db)
     print(f"✓ shared memory: {db}")
-    print("  all clients below point here → they share one memory, autonomously.\n")
+    scoped = getattr(args, "project_scoped", False)
+    print("  mode: per-project — memory auto-separates by project (git repo / cwd).\n" if scoped
+          else "  all clients below point here → they share one memory, autonomously.\n")
+
+    env = {"MIDAS_MCP_EMBEDDER": "local"}
+    if scoped:
+        env["MIDAS_MCP_NAMESPACE"] = "auto"
+    block = {"command": "midas-mcp", "env": env}
+    claude_env = ["-e", "MIDAS_MCP_EMBEDDER=local"] + (["-e", "MIDAS_MCP_NAMESPACE=auto"] if scoped else [])
 
     force = getattr(args, "force", False)
     results: list[tuple[str, str]] = []
     # Clients with their own CLI (cleanest, no file editing):
-    r = _cli_add(["claude", "mcp", "add", "midas", "-s", "user", "-e", "MIDAS_MCP_EMBEDDER=local",
-                  "--", "midas-mcp"], dry=args.dry_run, force=force,
-                 remove=["claude", "mcp", "remove", "midas", "-s", "user"])
+    r = _cli_add(["claude", "mcp", "add", "midas", "-s", "user", *claude_env, "--", "midas-mcp"],
+                 dry=args.dry_run, force=force, remove=["claude", "mcp", "remove", "midas", "-s", "user"])
     if r:
         results.append(("Claude Code", r))
     r = _cli_add(["codex", "mcp", "add", "midas", "--", "midas-mcp"], dry=args.dry_run, force=force,
                  remove=["codex", "mcp", "remove", "midas"])
     if r:
-        results.append(("Codex", r))
+        results.append(("Codex", r + (" — set MIDAS_MCP_NAMESPACE=auto in ~/.codex/config.toml for per-project"
+                                      if scoped else "")))
 
     # Clients configured by a JSON file (only the ones already present, unless --all):
     targets = [("Cursor", Path.home() / ".cursor/mcp.json"),
@@ -131,7 +139,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         targets.append(("Claude Desktop", cd))
     for name, path in targets:
         if path.exists() or args.all:
-            results.append((name, _merge_mcp_json(path, _STDIO_BLOCK, dry=args.dry_run)))
+            results.append((name, _merge_mcp_json(path, block, dry=args.dry_run)))
 
     for name, msg in results:
         print(f"  • {name}: {msg}")
@@ -373,6 +381,8 @@ def main() -> None:
     pi.add_argument("--dry-run", action="store_true", help="show what would change, write nothing")
     pi.add_argument("--all", action="store_true", help="also configure clients that aren't installed yet")
     pi.add_argument("--force", action="store_true", help="re-add even if a midas entry already exists")
+    pi.add_argument("--project-scoped", action="store_true",
+                    help="memory auto-separates per project (git repo / cwd) instead of one shared pool")
     pi.set_defaults(func=cmd_init)
 
     ps = sub.add_parser("serve", help="run the MCP server (stdio, or --http for an MCP URL)")
