@@ -5,7 +5,15 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-06-26
+
 ### Fixed
+- **A prohibition can no longer authorize an action.** A `forbidden_action` rule is stamped as a
+  user-confirmed constraint, so the mechanical guard counted it as *authorizing* the very action it
+  forbids ("never run destructive migrations" → approving a destructive migration). `decide_memory_use`
+  now excludes `code_kind=="forbidden_action"` records from authorizing an external/destructive action
+  (they still inform planning/answers, and are enforced separately by `is_forbidden`). `midas/guard.py`,
+  `tests/test_coding.py`.
 - **Guard no longer authorises actions on stale beliefs.** `decide_memory_use` checked provenance and
   actor but not *currency*, so a **superseded** memory — even one user-confirmed when it was current —
   could still justify an answer or an external/destructive action. It now blocks superseded evidence for
@@ -18,6 +26,19 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
   unchanged (0.92, BM25 hybrid). Affects any `--midas-hybrid` use at scale.
 
 ### Added
+- **The `midas` CLI — one-command setup.** `midas init` creates one shared store
+  (`~/.midas/memory.sqlite3`) and wires up the MCP clients it finds (Claude Code, Codex, Cursor, Claude
+  Desktop, Windsurf) so they all share one memory; plus `serve --http` (a shared **MCP URL**), `status`,
+  `doctor`, `export` / `import` (JSON backup / move machines), `uninstall`, and `update`. `midas/cli.py`.
+- **Memory Inspector (`midas inspect`)** — a local, glass-box web UI over your store: an Overview metrics
+  dashboard, Browse/search of verbatim records, belief-history time-travel, project state, a what-changed
+  diff, the governance/audit verdict, and forget-with-receipt. Stdlib-only, zero egress. `midas/inspector.py`.
+- **Per-project memory scoping** — `MIDAS_MCP_NAMESPACE=auto` (or `midas init --project-scoped`)
+  partitions the one shared store by project (git repo / cwd), automatically.
+- **Agent-memory governance suite** — Memory-Safety (ASR / benign-pass) and Coding benches join Continuity
+  (`eval/benches.py`); a coding-agent vocabulary (`remember_code` / `project_state` / forbidden-action
+  checks), an audit trail (`audit_use` / content-hashed `forgetting_receipt`), RBAC (`access.py`), and
+  live state views (`memory_state` / `memory_diff`).
 - **Agent Continuity Bench v0** (`eval/continuity.py`) — a deterministic ($0, no-LLM) seed for the axis
   retrieval benchmarks miss: across sessions, does memory keep a coding agent **safe** (Guard allows or
   blocks a proposed use by provenance + currency) and **current** (a revised decision surfaces its live
@@ -46,6 +67,12 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
   [`docs/overnight-experiments.md`](docs/overnight-experiments.md).
 
 ### Changed
+- **Shared, persistent memory by default.** The MCP store now defaults to `~/.midas/memory.sqlite3` (was
+  ephemeral in-memory), so a fresh install just works and every client shares one memory with zero config.
+  Set `MIDAS_MCP_DB=:memory:` to opt back into ephemeral. `midas/mcp_server.py`.
+- **Versioned store schema with safe migration.** The SQLite store carries a schema version, auto-migrates
+  on open, and refuses a store written by a *newer* Midas (with a clear `midas update` message) — so
+  updates can't silently misread an evolved store. `midas/sqlite_store.py`.
 - **License changed from MIT to Apache-2.0** to keep the core permissive while adding the explicit
   patent grant and enterprise-facing terms expected by commercial adopters.
 
