@@ -32,6 +32,7 @@ Homepage = "https://github.com/vornicx/Midas"
 Repository = "https://github.com/vornicx/Midas"
 
 [project.scripts]
+midas = "midas.cli:main"
 midas-mcp = "midas.mcp_server:main"
 midas-inspect = "midas.inspector:main"
 

@@ -17,9 +17,10 @@ ago — without piping every message through an LLM to "extract" facts. It costs
 **won't let an agent act on memory that's stale or never confirmed**.
 
 ```bash
-uv tool install "midas-memory[mcp,local]"     # the midas-mcp command, for any MCP client
-# or, no Python:  npx -y midas-memory-mcp       # TypeScript port
-# or, as a library:  pip install "midas-memory[local]"
+uv tool install "midas-memory[mcp,local]"   # install
+midas init                                  # create the shared memory + wire up your MCP clients
+# or, no Python:    npx -y midas-memory-mcp     # TypeScript port
+# or, as a library: pip install "midas-memory[local]"
 ```
 
 <p align="center">
@@ -101,48 +102,50 @@ reproduce commands, and the head-to-head vs Mem0/Zep/Mastra are in **[BENCHMARKS
 
 ## Connect it to your coding agent
 
-Midas is a standard **MCP server**: every client launches the same `midas-mcp` command with a few env
-vars — only *where* you put the config differs. The universal block:
-
-```json
-{
-  "mcpServers": {
-    "midas": {
-      "command": "midas-mcp",
-      "env": {
-        "MIDAS_MCP_EMBEDDER": "local",
-        "MIDAS_MCP_DB": "/home/you/.midas/memory.sqlite3",
-        "MIDAS_MCP_MAX_RECORDS": "50000",
-        "MIDAS_MCP_MIN_IMPORTANCE": "2"
-      }
-    }
-  }
-}
-```
-
-**Claude Code** (CLI, no file editing):
+**One command wires up everything:**
 
 ```bash
-claude mcp add midas -s user \
-  -e MIDAS_MCP_EMBEDDER=local -e MIDAS_MCP_DB="$HOME/.midas/memory.sqlite3" \
-  -e MIDAS_MCP_MAX_RECORDS=50000 -e MIDAS_MCP_MIN_IMPORTANCE=2 -- midas-mcp
+midas init        # creates the shared memory + configures every MCP client it finds
+midas status      # check what's wired   ·   run `midas init --dry-run` to preview first
 ```
 
+`midas init` creates **one shared memory** (`~/.midas/memory.sqlite3`) and points the MCP clients it
+detects — **Claude Code, Codex, Cursor, Claude Desktop, Windsurf** — at it. So all your agents read and
+write the **same** memory, autonomously, with no per-client paths to keep in sync.
+
+Prefer a single endpoint over per-client launches? Run one server and give your clients an **MCP URL**:
+
+```bash
+midas serve --http        # → http://127.0.0.1:7077/mcp   (one server, one memory, every client shares it)
+```
+
+Keep Midas current with **`midas update`**. See your memory anytime with **`midas inspect`**.
+
 <details>
-<summary><b>Cursor · Claude Desktop · Codex CLI · Windsurf · VS Code / Cline / Zed · npx</b> (click to expand)</summary>
+<summary><b>Manual setup</b> — any client, or to customize (click to expand)</summary>
+
+Midas is a standard MCP server: point any client at the **`midas-mcp`** command. It uses the shared store
+by default — no path needed. The universal block:
+
+```json
+{ "mcpServers": { "midas": { "command": "midas-mcp", "env": { "MIDAS_MCP_EMBEDDER": "local" } } } }
+```
 
 | Client | Where the config goes |
 |---|---|
-| **Cursor** | `~/.cursor/mcp.json` (all projects) or `.cursor/mcp.json` — paste the JSON block |
-| **Claude Desktop** | Settings → Developer → Edit Config (`claude_desktop_config.json`) — paste the block, restart |
-| **Codex CLI** | `codex mcp add midas -- midas-mcp`, or a `[mcp_servers.midas]` block in `~/.codex/config.toml` (TOML) |
-| **Windsurf** | `~/.codeium/windsurf/mcp_config.json` — paste the block, refresh |
-| **Anything else** | point it at command `midas-mcp` with those env vars |
-| **No Python** | `npx -y midas-memory-mcp` — the [TypeScript port](packages/midas-ts), same tools/schema (experimental: no semantic embeddings yet) |
+| **Claude Code** | `claude mcp add midas -s user -e MIDAS_MCP_EMBEDDER=local -- midas-mcp` |
+| **Cursor** | `~/.cursor/mcp.json` — paste the JSON block |
+| **Claude Desktop** | Settings → Developer → Edit Config (`claude_desktop_config.json`) — paste, restart |
+| **Codex CLI** | `codex mcp add midas -- midas-mcp` |
+| **Windsurf** | `~/.codeium/windsurf/mcp_config.json` — paste the block |
+| **Anything else** | point it at command `midas-mcp` |
+| **No Python** | `npx -y midas-memory-mcp` — the [TypeScript port](packages/midas-ts) (experimental: no semantic embeddings yet) |
 
-> ⚠️ **#1 gotcha:** GUI apps don't share your shell `PATH`. If a client says *"command not found"*, use
-> the absolute path from `which midas-mcp` (macOS/Linux) or `where midas-mcp` (Windows). On Windows use
-> forward slashes in JSON paths.
+Override per client with env: **`MIDAS_MCP_DB`** (default `~/.midas/memory.sqlite3`; `:memory:` = ephemeral)
+· `MIDAS_MCP_MAX_RECORDS` · `MIDAS_MCP_MIN_IMPORTANCE` · `MIDAS_MCP_NAMESPACE`.
+
+> ⚠️ **GUI apps don't share your shell `PATH`.** If a client says *"command not found"*, use the absolute
+> path from `which midas-mcp`. On Windows use forward slashes in JSON paths.
 
 </details>
 
@@ -155,10 +158,9 @@ current).
 
 ### One memory, many clients
 
-Point Claude Code, Claude Desktop, Cursor… at the **same** `MIDAS_MCP_DB` file and they share one *live*
-memory — each detects the others' writes (SQLite `data_version`) and refreshes, so a fact captured in your
-IDE is recallable from your chat app seconds later, no restarts. Scope it per project/agent/user with
-`MIDAS_MCP_NAMESPACE`.
+By default every client shares **one live memory** (`~/.midas/memory.sqlite3`) — each detects the others'
+writes (SQLite `data_version`) and refreshes, so a fact captured in your IDE is recallable from your chat
+app seconds later, no restarts. Scope it per project/agent/user with `MIDAS_MCP_NAMESPACE`.
 
 <p align="center">
   <img src="docs/demo-multi-client.gif" alt="Two live processes share one Midas SQLite file: a recall that finds nothing, a capture from a different process, then the same never-restarted session recalls it" width="820">

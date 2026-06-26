@@ -105,15 +105,23 @@ def build_memory() -> Memory:
             print(f"[midas-mcp] local embedder unavailable ({exc}); using hashing", file=sys.stderr)
 
     store = None
+    # One shared, persistent store BY DEFAULT: ~/.midas/memory.sqlite3 — so every MCP client (Claude
+    # Code, Codex, Cursor…) that launches `midas-mcp` reads and writes the SAME memory, with zero config.
+    # Override with MIDAS_MCP_DB=<path>, or MIDAS_MCP_DB=":memory:" for an ephemeral store.
     db = os.getenv("MIDAS_MCP_DB")
+    if db is None:
+        db = os.path.expanduser("~/.midas/memory.sqlite3")
+    elif db == ":memory:":
+        db = ""
     # Opt-in sub-linear (IVF) search for very large stores — approximate (recall ~0.95 at the
     # default nprobe; BENCHMARKS §4), so exact scan stays the default. Kicks in at >= 10k records.
     ann = os.getenv("MIDAS_MCP_ANN", "0") == "1"
     if db:
         from midas.sqlite_store import SQLiteStore
 
+        os.makedirs(os.path.dirname(db), exist_ok=True)
         store = SQLiteStore(db, ann_threshold=10_000 if ann else None)
-        print(f"[midas-mcp] persisting memory to {db}", file=sys.stderr)
+        print(f"[midas-mcp] memory: {db}", file=sys.stderr)
     elif ann:
         from midas import InMemoryStore
 
@@ -729,7 +737,9 @@ def _auto_maintain_loop(interval_seconds: float) -> None:
             print(f"[midas-mcp] auto-maintain error: {exc}", file=sys.stderr)
 
 
-def main() -> None:
+def run_server(transport: str = "stdio", host: str = "127.0.0.1", port: int = 7077) -> None:
+    """Run the MCP server. transport='stdio' (default — each client launches it) or 'http' (one shared
+    server at an MCP URL: http://host:port/mcp). The `midas` CLI calls this; `midas-mcp` uses stdio."""
     interval_min = int(os.getenv("MIDAS_MCP_AUTO_MAINTAIN", "0") or "0")
     if interval_min > 0:
         import threading
@@ -738,7 +748,17 @@ def main() -> None:
             target=_auto_maintain_loop, args=(interval_min * 60.0,), daemon=True
         ).start()
         print(f"[midas-mcp] auto-maintain every {interval_min} min (no LLM)", file=sys.stderr)
-    server.run()
+    if transport in ("http", "streamable-http"):
+        server.settings.host = host
+        server.settings.port = port
+        print(f"[midas-mcp] MCP URL -> http://{host}:{port}/mcp  (Ctrl-C to stop)", file=sys.stderr)
+        server.run(transport="streamable-http")
+    else:
+        server.run()
+
+
+def main() -> None:
+    run_server("stdio")
 
 
 if __name__ == "__main__":

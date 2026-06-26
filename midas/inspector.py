@@ -418,8 +418,8 @@ def serve(db: str, *, host: str = "127.0.0.1", port: int = 7777, embedder: str =
 
 def main() -> None:
     ap = argparse.ArgumentParser(prog="midas inspect", description="Local glass-box UI over your memory.")
-    ap.add_argument("--db", default=os.environ.get("MIDAS_MCP_DB") or "memory.sqlite3",
-                    help="path to the SQLite store (default: $MIDAS_MCP_DB or ./memory.sqlite3)")
+    ap.add_argument("--db", default=os.environ.get("MIDAS_MCP_DB") or os.path.expanduser("~/.midas/memory.sqlite3"),
+                    help="path to the SQLite store (default: $MIDAS_MCP_DB or ~/.midas/memory.sqlite3)")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=7777)
     ap.add_argument("--embedder", choices=("local", "hashing"), default="local")
