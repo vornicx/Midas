@@ -134,7 +134,7 @@ INDEX_HTML = r"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 --surf:rgba(255,255,255,.022);--surf2:rgba(255,255,255,.05);--green:#3ddc97;--red:#ff6b6b;--blue:#7aa2ff;
 --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 34px rgba(0,0,0,.28)}
 *{box-sizing:border-box}html,body{height:100%}
-body{margin:0;color:var(--text);-webkit-font-smoothing:antialiased;letter-spacing:-.006em;
+body{margin:0;color-scheme:dark;color:var(--text);-webkit-font-smoothing:antialiased;letter-spacing:-.006em;
 font:14px/1.55 "Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
 background:radial-gradient(900px 520px at 10% -8%,rgba(92,92,156,.18),transparent 60%),
 radial-gradient(760px 460px at 110% 2%,rgba(255,215,0,.07),transparent 55%),var(--bg)}
@@ -167,6 +167,9 @@ border-radius:8px;padding:5px 9px;font-size:11px;color:var(--steel)}.pill b{colo
 input,select{background:var(--surf);border:1px solid var(--line2);color:var(--text);border-radius:11px;
 padding:11px 13px;font:inherit;font-size:13.5px;outline:none;transition:border-color .15s,box-shadow .15s}
 input::placeholder{color:#6f7795}input:focus,select:focus{border-color:var(--gline);box-shadow:0 0 0 3px rgba(255,215,0,.10)}
+select{appearance:none;-webkit-appearance:none;cursor:pointer;padding-right:36px;
+background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23c7ad55' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 13px center}
+select option{background:#15151f;color:var(--text)}
 .search{flex:1;min-width:240px}
 .btn{background:linear-gradient(145deg,#ffe874,#e7b400);color:#15151f;border:none;border-radius:11px;
 padding:10px 17px;font-weight:600;font-size:13.5px;cursor:pointer;box-shadow:0 2px 10px rgba(255,190,0,.18);
