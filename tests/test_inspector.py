@@ -10,6 +10,7 @@ from midas.inspector import (
     api_audit,
     api_diff,
     api_forget,
+    api_overview,
     api_project_state,
     api_record,
     api_records,
@@ -76,3 +77,18 @@ def test_api_stats() -> None:
     mem.remember("b", kind="note")
     s = api_stats(mem)
     assert s["total"] == 2 and s["kinds"]["fact"] == 1
+
+
+def test_api_overview_health_metrics() -> None:
+    mem = _mem()
+    mem.remember("Apollo uses PostgreSQL.", kind="constraint", importance=5,
+                 actor="user", source="mcp:s1", created_at=time.time())
+    v1 = mem.remember("Cache: Redis.", kind="constraint", created_at=100)
+    v2 = mem.remember("Cache: in-process LRU.", kind="constraint", created_at=200)
+    v1.superseded_by = v2.id
+    o = api_overview(mem)
+    assert o["total"] == 3 and o["live"] == 2 and o["superseded"] == 1
+    assert o["high_importance"] >= 1
+    assert 0.0 <= o["attributable"] <= 1.0  # only the first record has source + actor
+    assert o["by_kind"]["constraint"] == 3
+    assert "by_provenance" in o and "projects" in o

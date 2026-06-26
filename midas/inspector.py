@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
 
-from .audit import audit_record, audit_use, belief_history, forgetting_receipt
+from .audit import audit_completeness, audit_record, audit_use, belief_history, forgetting_receipt
 from .coding import project_state
 from .state import memory_diff
 
@@ -87,6 +87,44 @@ def api_stats(mem: "Memory") -> dict[str, Any]:
     return {"total": len(recs), "live": sum(1 for r in recs if r.superseded_by is None), "kinds": kinds}
 
 
+def api_overview(mem: "Memory") -> dict[str, Any]:
+    """The memory-health dashboard a team/enterprise needs at a glance: counts, attributability (the
+    compliance metric: fraction with both a source and an actor), revision activity, recency, and the
+    distribution by kind / provenance / project. All computed — no fabricated governance counters."""
+    recs = list(mem.store.all())
+    total = len(recs)
+    now = time.time()
+    by_kind: dict[str, int] = {}
+    by_prov: dict[str, int] = {}
+    projects: dict[str, int] = {}
+    imp_sum = added_24h = added_7d = 0
+    for r in recs:
+        by_kind[r.kind] = by_kind.get(r.kind, 0) + 1
+        by_prov[r.provenance] = by_prov.get(r.provenance, 0) + 1
+        imp_sum += r.importance
+        proj = (r.metadata or {}).get("project")
+        if proj:
+            projects[proj] = projects.get(proj, 0) + 1
+        if now - r.created_at < 86400:
+            added_24h += 1
+        if now - r.created_at < 7 * 86400:
+            added_7d += 1
+    rank = lambda d: dict(sorted(d.items(), key=lambda kv: -kv[1]))  # noqa: E731
+    return {
+        "total": total,
+        "live": sum(1 for r in recs if r.superseded_by is None),
+        "superseded": sum(1 for r in recs if r.superseded_by is not None),
+        "high_importance": sum(1 for r in recs if r.importance >= 4),
+        "avg_importance": round(imp_sum / total, 2) if total else 0,
+        "attributable": round(audit_completeness(recs), 2),
+        "added_24h": added_24h,
+        "added_7d": added_7d,
+        "by_kind": rank(by_kind),
+        "by_provenance": rank(by_prov),
+        "projects": rank(projects),
+    }
+
+
 # --- The embedded UI ---------------------------------------------------------------------------
 
 INDEX_HTML = r"""<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -146,6 +184,17 @@ display:flex;align-items:center;gap:16px}
 .meter{height:6px;background:#ffffff14;border-radius:999px;overflow:hidden;margin-top:7px;width:150px}
 .meter i{display:block;height:100%;background:var(--gold)}
 h3.grp{margin:22px 0 11px;font-size:12px;text-transform:uppercase;letter-spacing:.09em;color:var(--gold)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:11px;margin-bottom:22px}
+.stat{border:1px solid var(--line);border-radius:13px;padding:15px 16px;background:linear-gradient(180deg,#ffffff08,#ffffff03)}
+.stat .sv{font-size:27px;font-weight:700;color:var(--gold);line-height:1;font-variant-numeric:tabular-nums}
+.stat .sl{font-size:12px;color:var(--text);margin-top:7px}.stat .ss{font-size:10.5px;color:var(--steel);margin-top:3px}
+.panels{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:14px}
+.panel{border:1px solid var(--line);border-radius:13px;padding:6px 16px 14px;background:#ffffff05}
+.bar{display:flex;align-items:center;gap:10px;margin:8px 0}
+.bar .bk{width:118px;font-size:12px;color:var(--steel);text-transform:capitalize;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar .bt{flex:1;height:7px;background:#ffffff12;border-radius:999px;overflow:hidden}
+.bar .bt i{display:block;height:100%;background:linear-gradient(90deg,#e6b800,#ffe96b)}
+.bar .bv{width:36px;text-align:right;font-size:12px;color:var(--text);font-variant-numeric:tabular-nums}
 @media(max-width:720px){.app{grid-template-columns:1fr}.side{position:static;height:auto;flex-direction:row;
 flex-wrap:wrap}.nav{display:flex;gap:2px}.foot{display:none}}
 </style></head><body>
@@ -153,7 +202,8 @@ flex-wrap:wrap}.nav{display:flex;gap:2px}.foot{display:none}}
 <aside class="side">
 <div class="brand"><span class="m">M</span> Midas <span class="muted" style="font-weight:500;font-size:12px">Inspector</span></div>
 <nav class="nav" id="nav">
-<a data-t="browse" class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h11"/></svg>Browse</a>
+<a data-t="overview" class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Overview</a>
+<a data-t="browse"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h11"/></svg>Browse</a>
 <a data-t="project"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Project</a>
 <a data-t="changed"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/></svg>Changed</a>
 <a data-t="gov"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 3v6c0 5-3.5 7.6-8 9-4.5-1.4-8-4-8-9V6z"/></svg>Governance</a>
@@ -182,6 +232,15 @@ async function loadFoot(){const s=await get('/api/stats');
  foot.innerHTML=`<span class="pill"><b>${s.total}</b> records</span><span class="pill"><b>${s.live}</b> live</span>`
  +Object.entries(s.kinds).map(([k,n])=>`<span class="pill">${esc(k)} <b>${n}</b></span>`).join('');}
 const V={
+ async overview(){const o=await get('/api/overview');
+  const card=(l,v,s='')=>`<div class="stat"><div class="sv">${v}</div><div class="sl">${l}</div>${s?`<div class="ss">${s}</div>`:''}</div>`;
+  const bars=ob=>{const e=Object.entries(ob);if(!e.length)return '<div class="muted">—</div>';const mx=Math.max(...e.map(x=>x[1]));
+   return e.map(([k,v])=>`<div class="bar"><div class="bk">${esc(k)}</div><div class="bt"><i style="width:${Math.round(v/mx*100)}%"></i></div><div class="bv">${v}</div></div>`).join('');};
+  main.innerHTML=head('Overview','The health of your memory at a glance — counts, attributability, and activity.')
+   +`<div class="stats">${card('Total memories',o.total)}${card('Live',o.live,'current beliefs')}${card('Superseded',o.superseded,'revised')}${card('Attributable',Math.round(o.attributable*100)+'%','has source + actor')}${card('High importance',o.high_importance,'imp ≥ 4')}${card('Added · 7d',o.added_7d,o.added_24h+' in 24h')}</div>
+    <div class="panels"><div class="panel"><h3 class="grp">By kind</h3>${bars(o.by_kind)}</div>
+    <div class="panel"><h3 class="grp">By provenance</h3>${bars(o.by_provenance)}</div>
+    <div class="panel"><h3 class="grp">Projects</h3>${bars(o.projects)}</div></div>`;},
  async browse(){main.innerHTML=head('Browse','Every memory, verbatim and source-traceable — search or scan.')
   +`<div class="controls"><input id="q" class="search" placeholder="Search your memory…">
    <select id="kind"><option value="">all kinds</option><option>fact</option><option>constraint</option>
@@ -231,7 +290,7 @@ async function forget(id){if(!confirm('Forget this memory? A tamper-evident eras
  await post('/api/forget',{id});loadFoot();V[tab]();}
 document.querySelectorAll('#nav a').forEach(a=>a.onclick=()=>{tab=a.dataset.t;
  document.querySelectorAll('#nav a').forEach(x=>x.classList.toggle('on',x===a));V[tab]();});
-loadFoot();V.browse();
+loadFoot();V.overview();
 </script></body></html>"""
 
 
@@ -256,6 +315,8 @@ def _make_handler(mem: "Memory"):
                 return self._send(INDEX_HTML.encode(), "text/html; charset=utf-8")
             if u.path == "/api/stats":
                 return self._json(api_stats(mem))
+            if u.path == "/api/overview":
+                return self._json(api_overview(mem))
             if u.path == "/api/records":
                 return self._json(api_records(mem, q=qs.get("q", ""), kind=qs.get("kind", ""),
                                               limit=int(qs.get("limit", 200))))
