@@ -130,8 +130,8 @@ def api_overview(mem: "Memory") -> dict[str, Any]:
 INDEX_HTML = r"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Midas Inspector</title><style>
 :root{--bg:#0d0d15;--gold:#FFD700;--gold2:#e9bd28;--gsoft:rgba(255,215,0,.10);--gline:rgba(255,215,0,.22);
---steel:#8b93ad;--text:#eceef5;--line:rgba(255,255,255,.07);--line2:rgba(255,255,255,.13);
---surf:rgba(255,255,255,.022);--surf2:rgba(255,255,255,.05);--green:#3ddc97;--red:#ff6b6b;--blue:#7aa2ff;
+--steel:#8b93ad;--text:#eceef5;--line:rgba(255,255,255,.10);--line2:rgba(255,255,255,.15);
+--surf:rgba(255,255,255,.034);--surf2:rgba(255,255,255,.065);--green:#3ddc97;--red:#ff6b6b;--blue:#7aa2ff;
 --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 34px rgba(0,0,0,.28)}
 *{box-sizing:border-box}html,body{height:100%}
 body{margin:0;color-scheme:dark;color:var(--text);-webkit-font-smoothing:antialiased;letter-spacing:-.006em;
@@ -209,14 +209,22 @@ margin-bottom:20px;display:flex;align-items:center;gap:18px;background:var(--sur
 h3.grp{margin:24px 0 12px;font-size:11px;text-transform:uppercase;letter-spacing:.13em;color:var(--steel);font-weight:600}
 h3.grp:first-child{margin-top:0}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:12px;margin-bottom:24px;animation:rise .42s cubic-bezier(.16,1,.3,1) both}
-.stat{position:relative;border:1px solid var(--line);border-radius:16px;padding:18px;background:var(--surf);overflow:hidden;transition:border-color .16s,transform .16s,box-shadow .16s}
-.stat:hover{border-color:var(--line2);transform:translateY(-2px);box-shadow:var(--shadow)}
+.stat{position:relative;border:1px solid var(--line);border-radius:16px;padding:18px;background:var(--surf);overflow:hidden;box-shadow:inset 0 1px 0 rgba(255,255,255,.05);transition:border-color .16s,transform .16s,box-shadow .16s}
+.stat:hover{border-color:var(--line2);transform:translateY(-2px);box-shadow:var(--shadow),inset 0 1px 0 rgba(255,255,255,.05)}
 .stat::after{content:"";position:absolute;inset:0 0 auto 0;height:1px;background:linear-gradient(90deg,transparent,var(--gline),transparent);opacity:0;transition:opacity .2s}
 .stat:hover::after{opacity:1}
-.stat .sv{font-size:30px;font-weight:700;color:var(--gold);line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.stat .sv{font-size:31px;font-weight:700;color:var(--text);line-height:1;letter-spacing:-.025em;font-variant-numeric:tabular-nums}
 .stat .sl{font-size:12.5px;color:var(--text);margin-top:9px;font-weight:500}.stat .ss{font-size:10.5px;color:var(--steel);margin-top:3px}
 .panels{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:14px;animation:rise .42s cubic-bezier(.16,1,.3,1) both}
-.panel{border:1px solid var(--line);border-radius:16px;padding:16px 18px 18px;background:var(--surf)}.panel h3.grp{margin:0 0 12px}
+.panel{border:1px solid var(--line);border-radius:16px;padding:16px 18px 18px;background:var(--surf);box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}.panel h3.grp{margin:0 0 13px}
+.ogrid{display:grid;grid-template-columns:1.55fr 1fr;gap:14px;align-items:start;animation:rise .42s cubic-bezier(.16,1,.3,1) both}
+.ocol{display:flex;flex-direction:column;gap:14px}
+.rrow{display:flex;align-items:center;gap:11px;padding:11px 0;border-bottom:1px solid var(--line)}
+.rrow:last-child{border-bottom:0;padding-bottom:2px}
+.rrow .rc{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--steel);flex-shrink:0}
+.dot.k-constraint{background:var(--gold)}.dot.k-fact{background:var(--blue)}.dot.k-preference{background:var(--green)}.dot.k-mission{background:var(--red)}
+@media(max-width:900px){.ogrid{grid-template-columns:1fr}}
 .bar{display:flex;align-items:center;gap:11px;margin:9px 0}
 .bar .bk{width:120px;font-size:12.5px;color:var(--steel);text-transform:capitalize;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bar .bt{flex:1;height:8px;background:rgba(255,255,255,.07);border-radius:999px;overflow:hidden}
@@ -256,18 +264,19 @@ function card(r,acts=''){const sup=r.superseded_by?'<span class="tag sup">supers
  ${acts?`<div class="acts">${acts}</div><div id="d-${r.id}"></div>`:''}</div>`}
 function head(t,d){return `<div class="vhead"><h1>${t}</h1><p>${d}</p></div>`}
 async function loadFoot(){const s=await get('/api/stats');
- foot.innerHTML=`<span class="pill"><b>${s.total}</b> records</span><span class="pill"><b>${s.live}</b> live</span>`
- +Object.entries(s.kinds).map(([k,n])=>`<span class="pill">${esc(k)} <b>${n}</b></span>`).join('');}
+ foot.innerHTML=`<span class="pill"><b>${s.total}</b> records</span><span class="pill"><b>${s.live}</b> live</span>`;}
 const V={
- async overview(){const o=await get('/api/overview');
+ async overview(){const [o,recent]=await Promise.all([get('/api/overview'),get('/api/records?limit=9')]);
   const card=(l,v,s='')=>`<div class="stat"><div class="sv">${v}</div><div class="sl">${l}</div>${s?`<div class="ss">${s}</div>`:''}</div>`;
   const bars=ob=>{const e=Object.entries(ob);if(!e.length)return '<div class="muted">—</div>';const mx=Math.max(...e.map(x=>x[1]));
    return e.map(([k,v])=>`<div class="bar"><div class="bk">${esc(k)}</div><div class="bt"><i style="width:${Math.round(v/mx*100)}%"></i></div><div class="bv">${v}</div></div>`).join('');};
-  main.innerHTML=head('Overview','The health of your memory at a glance — counts, attributability, and activity.')
+  const row=r=>`<div class="rrow"><span class="dot k-${esc(r.kind)}"></span><span class="rc">${esc(r.content)}</span>${r.superseded_by?'<span class="tag sup">superseded</span>':''}<span class="when">${ago(r.created_at)}</span></div>`;
+  main.innerHTML=head('Overview','The health of your memory at a glance — counts, attributability, and recent activity.')
    +`<div class="stats">${card('Total memories',o.total)}${card('Live',o.live,'current beliefs')}${card('Superseded',o.superseded,'revised')}${card('Attributable',Math.round(o.attributable*100)+'%','has source + actor')}${card('High importance',o.high_importance,'imp ≥ 4')}${card('Added · 7d',o.added_7d,o.added_24h+' in 24h')}</div>
-    <div class="panels"><div class="panel"><h3 class="grp">By kind</h3>${bars(o.by_kind)}</div>
+    <div class="ogrid"><div class="panel"><h3 class="grp">Recent activity</h3>${recent.length?recent.map(row).join(''):'<div class="muted">No memories yet.</div>'}</div>
+    <div class="ocol"><div class="panel"><h3 class="grp">By kind</h3>${bars(o.by_kind)}</div>
     <div class="panel"><h3 class="grp">By provenance</h3>${bars(o.by_provenance)}</div>
-    <div class="panel"><h3 class="grp">Projects</h3>${bars(o.projects)}</div></div>`;},
+    <div class="panel"><h3 class="grp">Projects</h3>${bars(o.projects)}</div></div></div>`;},
  async browse(){main.innerHTML=head('Browse','Every memory, verbatim and source-traceable — search or scan.')
   +`<div class="controls"><input id="q" class="search" placeholder="Search your memory…">
    <select id="kind"><option value="">all kinds</option><option>fact</option><option>constraint</option>
