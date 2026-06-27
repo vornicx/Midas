@@ -641,11 +641,15 @@ class Memory:
         # None falls back to the instance default (0.3, measured-safe); pass 0 to disable.
         ratio = self._min_relevance_ratio if min_relevance_ratio is None else min_relevance_ratio
         ratio_floor = ratio * max(relevances) if ratio and relevances else None
+        # Absolute noise floor: an explicit `min_relevance` wins; else the embedder's own. The hashing
+        # fallback declares one (cosine ~0 = no token overlap), so a query with no real match returns
+        # nothing instead of the lone irrelevant memory. Semantic embedders declare 0 — unchanged.
+        abs_floor = min_relevance if min_relevance is not None else getattr(self.embedder, "min_relevance", 0.0)
 
         hits: list[RecallHit] = []
         for (_, record), relevance in zip(candidates, relevances):
-            if min_relevance is not None and relevance < min_relevance:
-                continue  # parsimony: drop low-value memories rather than pad the budget
+            if abs_floor and relevance < abs_floor:
+                continue  # parsimony: drop no-overlap / low-value hits rather than pad the budget
             if ratio_floor is not None and relevance < ratio_floor:
                 continue
             importance_norm = (record.importance - 1) / 4

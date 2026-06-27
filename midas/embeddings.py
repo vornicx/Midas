@@ -38,6 +38,11 @@ class Embedder(Protocol):
 class HashingEmbedder:
     """Offline, deterministic bag-of-words hashed into a fixed-dim unit vector."""
 
+    # Recall noise floor: the hashed cosine is ~0 for non-overlapping text, so a hit below this had no
+    # token overlap and is junk. Kept low on purpose — real matches can land ~0.25 here, so this only
+    # drops the "nothing relevant, but return the lone memory anyway" case. Semantic embedders leave it 0.
+    min_relevance = 0.1
+
     def __init__(self, dim: int = 256) -> None:
         self.dim = dim
 

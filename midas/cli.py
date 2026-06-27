@@ -274,6 +274,13 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         check(False, "local embedder (fastembed)",
               'install `uv tool install "midas-memory[mcp,local]"` — Midas falls back to hashing meanwhile')
 
+    try:
+        import mcp  # noqa: F401
+        check(True, "MCP server available (the `mcp` extra)")
+    except Exception:
+        check(False, "MCP server (the `mcp` extra)",
+              'SDK is installed but the MCP server is not — `pip install "midas-memory[mcp]"` to expose it')
+
     wired = _wired_clients()
     check(bool(wired), f"clients wired: {', '.join(wired) if wired else 'none'}", "run `midas init`")
     print("\n" + ("Everything looks good." if ok else "Some checks need attention (see ⚠ above)."))
