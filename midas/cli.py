@@ -439,6 +439,22 @@ def cmd_project(args: argparse.Namespace) -> int:
     return 0
 
 
+# ---- bench ------------------------------------------------------------------------------------
+
+def cmd_bench(args: argparse.Namespace) -> int:
+    """Reproduce the governance benchmark suite — deterministic, $0, no datasets, no API key."""
+    try:
+        from eval import benches  # ships with the repo (dev tooling), not the installed wheel
+    except Exception:
+        print("The benchmark suite lives in the repo (it's kept out of the wheel). Clone and run it:\n"
+              "  git clone https://github.com/vornicx/Midas && cd Midas\n"
+              "  uv run python -m eval.benches", file=sys.stderr)
+        return 1
+    result = benches.run(verbose=True)
+    green = result["memory_safety"]["ASR"] == 0.0 and result["memory_safety"]["benign_pass"] == 1.0
+    return 0 if green else 1
+
+
 def main() -> None:
     p = argparse.ArgumentParser(prog="midas", description="Local-first, governed memory for AI agents.")
     sub = p.add_subparsers(dest="cmd")
@@ -504,6 +520,9 @@ def main() -> None:
     ppd.add_argument("name")
     ppd.add_argument("--db")
     ppd.set_defaults(func=cmd_project)
+
+    pb = sub.add_parser("bench", help="reproduce the governance benchmark suite ($0, deterministic)")
+    pb.set_defaults(func=cmd_bench)
 
     args = p.parse_args()
     if not getattr(args, "func", None):

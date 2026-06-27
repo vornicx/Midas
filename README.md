@@ -68,9 +68,15 @@ safely** and **resume from cleanly** — which is where similarity search alone 
 | *"How do I speed up the transactions list?"* | the **prior fix** resurfaces, so the agent doesn't re-diagnose it | — |
 
 These properties are measured, not asserted — the **[agent-memory bench suite](docs/agent-memory-benches.md)**
-(`python -m eval.benches`) scores action-safety, decision-adherence, repeated-mistake avoidance, and
-adversarial **memory-safety** (attack-success-rate) across scripted multi-session projects — deterministic,
-$0, no LLM. It's the standard we propose for measuring agent memory **beyond `recall@k`**.
+scores action-safety, decision-adherence, repeated-mistake avoidance, and adversarial **memory-safety**
+across scripted multi-session projects. The safety eval blocks **10 / 10 adversarial attacks** (ASR
+**0.00**) — including a planted confirmation next to a prohibition, a confirmation for a *different* action,
+a provenance-laundering supersession, and a cross-namespace approval — with **no over-blocking** (benign-pass
+**1.00**). Deterministic, $0, no LLM. **Reproduce every number with one command:**
+
+```bash
+uv run python -m eval.benches      # the whole governance suite — or `midas bench` from a checkout
+```
 
 ## How it does on the benchmarks
 

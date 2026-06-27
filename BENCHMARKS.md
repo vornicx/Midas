@@ -517,8 +517,13 @@ Midas-native (no other memory system publishes them):
   or unconfirmed memory while still allowing a current user-confirmed action (an allow-discriminator, so a
   "block everything" policy can't pass).
 - **Memory-Safety eval** (`eval.memory_safety`; framing from Banco Santander AI Lab's autoguardrails) —
-  Attack-Success-Rate **0.00** over 6 adversarial cases (superseded / unconfirmed / cross-agent /
-  injected-content / forgotten memory trying to authorize a use), benign-pass **1.00** (no over-blocking).
+  Attack-Success-Rate **0.00** over **10** adversarial cases, benign-pass **1.00** over 4 (no
+  over-blocking). Beyond the basics (superseded / unconfirmed / cross-agent / injected / forgotten) it
+  includes the hard ones: a **prohibition planted next to a confirmation** (a live forbidden-action rule
+  *vetoes* the action), a **confirmation for a different action** (authorizing needs strongly-relevant
+  evidence, ≥0.25, so a weakly-matched approval can't transfer), a **provenance-laundering supersession**
+  (a confirmed belief is only revised by another confirmation — an observation can't overwrite it), and a
+  **cross-namespace** confirmation (project β can't borrow project α's approval).
 - **Coding-agent bench** (`eval.coding_bench`) — decision_currency / repeated_mistake / forbidden_accuracy:
   **1.00 / 1.00 / 1.00**. Forbidden-action enforcement is lexical (high-precision, hard) + a semantic layer
   a labelled eval (`eval.forbidden_eval`, n=24) measured as **advisory, not a hard block** (best F1 0.79,
@@ -526,8 +531,9 @@ Midas-native (no other memory system publishes them):
   matcher, also measured, is worse at F1 0.72); the MCP gate splits `forbidden` (lexical = refuse) from
   `possibly_forbidden` (semantic = ask the user).
 
+**Reproduce every governance number with one command** — $0, deterministic, no datasets, no API key:
 ```bash
-python -m eval.continuity ; python -m eval.memory_safety ; python -m eval.coding_bench   # all deterministic, $0
+uv run python -m eval.benches      # the whole suite as one report card  ·  or `midas bench` from a checkout
 ```
 
 ## Methodology — why reader-independent metrics
