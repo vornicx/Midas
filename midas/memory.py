@@ -958,6 +958,11 @@ class Memory:
         if len(ranked) > 1 and ranked[0][0] - ranked[1][0] < self._supersede_margin:
             return
         head = ranked[0][1]
+        # Provenance integrity: a user-CONFIRMED belief is only revised by another user confirmation —
+        # never laundered away by lower-provenance memory. An attacker's observation must not overwrite
+        # what the user confirmed (which would also bypass the Guard's currency rule via supersession).
+        if head.provenance == "user_confirmation" and new_record.provenance != "user_confirmation":
+            return
         # Precision gate (the principled no-LLM fix): with a local NLI model, only revise a belief the
         # new record actually CONTRADICTS — not merely one it's similar to. This is what makes
         # conversational revision safe on diverse data, where "similar + cue" is often a distinct fact.

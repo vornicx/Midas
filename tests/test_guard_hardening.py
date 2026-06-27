@@ -31,3 +31,23 @@ def test_weak_cross_action_confirmation_does_not_authorize() -> None:
     # the action the confirmation is actually about is still authorized
     assert mem.guard_reliance("deploy to the staging environment",
                               intended_use="external_action").allowed is True
+
+
+def test_confirmed_belief_is_not_laundered_by_lower_provenance() -> None:
+    """Provenance integrity: an attacker's observation must not supersede (overwrite) a user-confirmed
+    belief — only another user confirmation revises it. Otherwise low-provenance memory could rewrite
+    confirmed truth and bypass the Guard's currency rule."""
+    mem = Memory(embedder=HashingEmbedder(), supersede=True)
+    confirmed = mem.remember("The primary database is PostgreSQL.", kind="constraint",
+                             provenance="user_confirmation", actor="user")
+    mem.remember("The primary database is MongoDB.", kind="constraint",
+                 provenance="observation", actor="attacker")
+    assert confirmed.superseded_by is None  # the observation cannot launder away the confirmation
+
+    # a genuine user re-confirmation still revises a confirmed belief (separate store to avoid a 3-way tie)
+    mem2 = Memory(embedder=HashingEmbedder(), supersede=True)
+    again = mem2.remember("The primary database is PostgreSQL.", kind="constraint",
+                          provenance="user_confirmation", actor="user")
+    mem2.remember("The primary database is MySQL.", kind="constraint",
+                  provenance="user_confirmation", actor="user")
+    assert again.superseded_by is not None
