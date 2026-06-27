@@ -38,6 +38,23 @@ DEFAULT_RECALL_LIMIT = 6
 # so this sits between them; a real semantic embedder separates the two far more cleanly.
 GUARD_ACTION_MIN_RELEVANCE = 0.25
 
+
+def _default_embedder() -> Embedder:
+    """The best available embedder for a bare `Memory()`: LocalEmbedder (real semantic quality) when
+    fastembed is installed, else the offline HashingEmbedder. So `pip install "midas-memory[local]"`
+    upgrades recall with zero code change. Override with MIDAS_EMBEDDER=hashing|local (default auto)."""
+    import os
+
+    if os.getenv("MIDAS_EMBEDDER", "auto").lower() != "hashing":
+        try:
+            from .embeddings import LocalEmbedder
+
+            return LocalEmbedder()
+        except Exception:
+            if os.getenv("MIDAS_EMBEDDER", "").lower() == "local":
+                raise  # explicitly asked for local but it's unavailable
+    return HashingEmbedder()
+
 # Temporal horizons for tiering (short -> medium -> long). Recency-based and orthogonal to
 # durability: a memory's *tier* is how recent it is; whether it survives forgetting also depends on
 # its kind/importance (the durable semantic tier is kept regardless of age). These thresholds name
@@ -223,7 +240,7 @@ class Memory:
         lexical_index_factory: Callable[[list[MemoryRecord]], Any] | None = None,  # hybrid lexical backend; None = BM25
     ) -> None:
         self.store = store if store is not None else InMemoryStore()
-        self.embedder = embedder if embedder is not None else HashingEmbedder()
+        self.embedder = embedder if embedder is not None else _default_embedder()
         self.reranker = reranker
         self._calibration_reranker = calibration_reranker
         self._now = now if now is not None else time.time

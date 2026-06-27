@@ -1,10 +1,8 @@
 """Midas quickstart — the public SDK surface, end to end.
 
-Runs offline out of the box (HashingEmbedder). For real semantic quality install the local extra
-(`uv pip install fastembed`) and swap in LocalEmbedder + LocalReranker:
-
-    from midas import LocalEmbedder, LocalReranker
-    mem = Memory(embedder=LocalEmbedder(), reranker=LocalReranker())
+Runs offline out of the box. Install the local extra (`pip install "midas-memory[local]"`) and a bare
+`Memory()` auto-upgrades to real semantic embeddings — no code change. Force either backend with
+MIDAS_EMBEDDER=local|hashing, or pass your own: `Memory(embedder=LocalEmbedder(), reranker=LocalReranker())`.
 
 Run: `uv run --no-sync python quickstart.py`
 """
