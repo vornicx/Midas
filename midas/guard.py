@@ -185,6 +185,24 @@ def decide_memory_use(
             continue
         supporting.append(record)
 
+    # Prohibition veto: a LIVE forbidden-action rule recalled for this action vetoes an external or
+    # destructive use — it overrides any confirmation in the same evidence set, so an attacker can't
+    # "approve around" a standing prohibition. Block & ask for an override. (A prohibition that surfaced
+    # as relevant evidence is treated as applicable; this is conservative — it errs toward block-and-ask.)
+    if intended_use in ("external_action", "destructive_action"):
+        veto = [r.id for r in records
+                if r.superseded_by is None and (r.metadata or {}).get("code_kind") == "forbidden_action"]
+        if veto:
+            return MemoryUseDecision(
+                allowed=False,
+                intended_use=intended_use,
+                reason=("a standing prohibition (forbidden-action rule) was recalled for this action; it "
+                        "vetoes the use — get explicit user confirmation that overrides the rule"),
+                required_provenance=required,
+                evidence=evidence,
+                blocked_ids=tuple(dict.fromkeys(veto + blocked)),
+            )
+
     if not supporting:
         return MemoryUseDecision(
             allowed=False,

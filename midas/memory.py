@@ -31,6 +31,12 @@ from .types import MEMORY_PROVENANCE, MemoryKind, MemoryProvenance, MemoryRecord
 
 RECENCY_HALF_LIFE_DAYS = 30.0
 DEFAULT_RECALL_LIMIT = 6
+# Acting in the world needs STRONG evidence, not just a retrieved one: a memory must be at least this
+# relevant to authorize an external/destructive action via the Guard, so a weakly-matched confirmation
+# for a *different* action can't lend its approval (the retrieval-mismatch attack). Planning/answers keep
+# the normal recall. Measured (hashing): a same-topic confirmation lands ≥0.32, cross-action noise ≈0.14,
+# so this sits between them; a real semantic embedder separates the two far more cleanly.
+GUARD_ACTION_MIN_RELEVANCE = 0.25
 
 # Temporal horizons for tiering (short -> medium -> long). Recency-based and orthogonal to
 # durability: a memory's *tier* is how recent it is; whether it survives forgetting also depends on
@@ -869,6 +875,10 @@ class Memory:
         """
         from .guard import decide_memory_use
 
+        # High-stakes uses require strongly-relevant evidence, so a weak (cross-action) match can't lend
+        # authorization. Caller-supplied min_relevance still wins.
+        if intended_use in ("external_action", "destructive_action"):
+            recall_kwargs.setdefault("min_relevance", GUARD_ACTION_MIN_RELEVANCE)
         hits = self.recall(query, limit=limit, **recall_kwargs)
         return decide_memory_use(
             [h.record for h in hits],
