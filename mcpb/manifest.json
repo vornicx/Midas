@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "midas-memory",
   "display_name": "Midas — Local Agent Memory",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local-first, source-traceable memory for Claude — no LLM at ingest, fully offline.",
   "long_description": "Midas gives Claude a persistent, **local** memory. Everything is stored on your own machine in a SQLite file, recall returns the **exact source text** (no LLM rewriting at ingest or query, so every memory is auditable), and capture/forget run with **no network calls** — your memories never leave your computer. Midas auto-scores what is worth keeping (facts, decisions, preferences, constraints, corrections) and drops chit-chat and duplicates, and it keeps the store bounded by forgetting low-value memories without an LLM. Install it and Claude starts remembering across sessions on its own via the recall → work → capture loop.",
   "author": {

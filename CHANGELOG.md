@@ -5,6 +5,20 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-06-27
+
+### Fixed
+- **Recall no longer returns a lone irrelevant memory with the hashing fallback.** The offline hashing
+  embedder now declares an absolute noise floor (a hashed cosine ~0 means no token overlap), so a query
+  that matches nothing returns empty instead of the only memory present — without dropping real matches
+  (which land well above the floor). Semantic embedders declare 0, so the benchmarked path is unchanged.
+  `midas/embeddings.py`, `midas/memory.py`. (Found via external testing of 0.1.0.)
+- **`quickstart.py` is a real end-to-end demo** (remember → assemble → recall → supersession → guard),
+  with `tests/test_quickstart.py` running it as a subprocess so CI catches any break.
+
+### Changed
+- **`midas doctor`** now flags clearly when the SDK is installed but the `[mcp]` server extra is not.
+
 ## [0.1.0] — 2026-06-26
 
 ### Fixed
