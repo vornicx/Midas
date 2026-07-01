@@ -55,7 +55,7 @@ audit → enterprise/regulated pay for compliance + VPC. Channels:
   they are.
 - **Show HN / dev & agent communities** — lead with the benchmark + the published negatives.
 - **The benchmark as a credibility artifact** — invite others (even competitors) to run it.
-- **X / social** — the consumer video (`prompt-video-storytelling.md`) as a *top-of-funnel awareness*
+- **X / social** — the consumer video (prompt in the private `midas-ee` repo, `docs/prompt-video-storytelling.md`) as a *top-of-funnel awareness*
   hook that funnels to the dev story (reframe its CTA toward developers; it is not the core GTM).
 
 ## Proof assets (lead with these, not hype)

@@ -40,5 +40,8 @@ data/longmemeval_m.json
 # Internal strategy / competitive / handoff docs — keep OUT of any public release
 _private/
 
+# Supabase CLI link artifacts (billing lives in the private midas-ee repo, not here)
+/supabase/
+
 # Datasets are fetched locally via eval/datasets.py, never committed
 /data/
