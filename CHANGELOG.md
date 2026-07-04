@@ -5,6 +5,16 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+- **`midas init --json` / `midas status --json` — a machine-readable client wiring receipt** (#15).
+  One command now yields a compact, pasteable proof of what was wired: per client its config path,
+  detected/wired/changed state, backup path, and skip reason; plus the memory DB, scope mode
+  (shared / project-scoped / manual-namespace), server command, embedder, and the enforced policy.
+  `status --json` parses each client config (JSON `mcpServers` and codex TOML) to report the actual
+  command + `MIDAS_*` env every client will launch with, and warns when clients disagree on namespaces.
+  The receipt is an audit boundary: config paths and scope/policy only — never memory contents.
+  The human output of both commands is unchanged. `midas/cli.py`, `tests/test_cli.py`.
+
 ## [0.1.1] — 2026-06-27
 
 ### Fixed

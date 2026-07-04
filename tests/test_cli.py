@@ -45,6 +45,84 @@ def test_init_creates_the_store(tmp_path) -> None:
     assert rc == 0 and db.exists()  # the shared store is created (parent dir too)
 
 
+def test_init_json_receipt_dry_run(tmp_path, capsys) -> None:
+    db = tmp_path / "memory.sqlite3"
+    rc = cli.cmd_init(argparse.Namespace(db=str(db), dry_run=True, all=False, json=True))
+    assert rc == 0 and not db.exists()  # dry-run still writes nothing
+    receipt = json.loads(capsys.readouterr().out)  # --json prints ONLY the receipt (pipeable)
+    assert receipt["receipt_kind"] == "client_wiring" and receipt["dry_run"] is True
+    assert receipt["memory_db"] == str(db) and receipt["server_command"] == "midas-mcp"
+    assert receipt["scope_mode"] == "shared" and receipt["namespace"] is None
+    assert receipt["policy"]["external_or_destructive_actions_require_check_memory_use"] is True
+    names = {c["client"] for c in receipt["clients"]}
+    assert {"Claude Code", "Codex", "Cursor", "Windsurf"} <= names  # skipped clients are explicit
+    for c in receipt["clients"]:
+        assert {"client", "config_path", "detected", "wired", "changed", "backup_path",
+                "reason"} <= set(c)
+        assert c["changed"] is False  # a dry run never changes a config
+
+
+def test_init_json_receipt_real_run(tmp_path, capsys, monkeypatch) -> None:
+    monkeypatch.setattr(cli.shutil, "which", lambda exe: None)  # no client CLIs → no subprocesses
+    monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)     # sandboxed client configs
+    cursor = tmp_path / ".cursor/mcp.json"
+    cursor.parent.mkdir(parents=True)
+    cursor.write_text("{}")
+    db = tmp_path / "m.sqlite3"
+    rc = cli.cmd_init(argparse.Namespace(db=str(db), dry_run=False, all=False, json=True,
+                                         project_scoped=True))
+    assert rc == 0 and db.exists()
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["scope_mode"] == "project-scoped" and receipt["namespace"] == "auto"
+    by = {c["client"]: c for c in receipt["clients"]}
+    assert by["Cursor"]["wired"] and by["Cursor"]["changed"]
+    assert by["Cursor"]["backup_path"].endswith(".midas-bak")
+    assert by["Claude Code"]["detected"] is False and "not found" in by["Claude Code"]["reason"]
+    assert by["Windsurf"]["wired"] is False and "skipped" in by["Windsurf"]["reason"]
+    assert json.loads(cursor.read_text())["mcpServers"]["midas"]["env"]["MIDAS_MCP_NAMESPACE"] == "auto"
+
+    # the status receipt then proves the same wiring back (the issue's one-command invariant)
+    assert cli.cmd_status(argparse.Namespace(db=str(db), json=True)) == 0
+    status = json.loads(capsys.readouterr().out)
+    assert status["store"]["exists"] and status["store"]["records"] == 0
+    assert status["scope_mode"] == "project-scoped"
+    sby = {c["client"]: c for c in status["clients"]}
+    assert sby["Cursor"]["wired"] and sby["Cursor"]["client_id"] == "cursor"
+    assert sby["Cursor"]["namespace"] == "auto" and sby["Cursor"]["server_command"] == "midas-mcp"
+
+
+def test_status_json_receipt_nothing_wired(tmp_path, capsys, monkeypatch) -> None:
+    monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
+    rc = cli.cmd_status(argparse.Namespace(db=str(tmp_path / "m.sqlite3"), json=True))
+    assert rc == 0
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["store"]["exists"] is False
+    assert any("midas init" in w for w in receipt["warnings"])  # missing store is called out
+    assert all(c["wired"] is False and c["reason"] == "config not found" for c in receipt["clients"])
+    assert receipt["scope_mode"] == "shared"
+
+
+def test_status_json_parses_codex_toml(tmp_path, capsys, monkeypatch) -> None:
+    monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
+    codex = tmp_path / ".codex/config.toml"
+    codex.parent.mkdir(parents=True)
+    codex.write_text('[mcp_servers.midas]\ncommand = "midas-mcp"\n')
+    cli.cmd_status(argparse.Namespace(db=str(tmp_path / "m.sqlite3"), json=True))
+    receipt = json.loads(capsys.readouterr().out)
+    by = {c["client"]: c for c in receipt["clients"]}
+    assert by["Codex"]["wired"] and by["Codex"]["server_command"] == "midas-mcp"
+    assert receipt["scope_mode"] == "shared"  # no namespace anywhere → one shared pool
+
+
+def test_derive_scope_modes() -> None:
+    assert cli._derive_scope(set()) == ("shared", None, [])
+    assert cli._derive_scope({None}) == ("shared", None, [])
+    assert cli._derive_scope({"auto"}) == ("project-scoped", "auto", [])
+    assert cli._derive_scope({"team-a"}) == ("manual-namespace", "team-a", [])
+    mode, ns, warns = cli._derive_scope({"auto", None})
+    assert mode == "mixed" and ns is None and warns  # disagreeing clients are surfaced, not hidden
+
+
 def test_status_runs(capsys) -> None:
     rc = cli.cmd_status(argparse.Namespace(db=":memory:"))
     assert rc == 0

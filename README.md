@@ -115,6 +115,10 @@ midas init        # creates the shared memory + configures every MCP client it f
 midas status      # check what's wired   ·   run `midas init --dry-run` to preview first
 ```
 
+Both take **`--json`** to emit a machine-readable *client wiring receipt* — which memory each client got
+wired to, under which scope/policy, and which clients were skipped (config paths only, never memory
+contents). Paste it into a bug report, or let another agent verify the setup without scraping prose.
+
 `midas init` creates **one shared memory** (`~/.midas/memory.sqlite3`) and points the MCP clients it
 detects — **Claude Code, Codex, Cursor, Claude Desktop, Windsurf** — at it. So all your agents read and
 write the **same** memory, autonomously, with no per-client paths to keep in sync.

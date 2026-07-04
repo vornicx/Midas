@@ -77,22 +77,23 @@ def _merge_mcp_json(path: Path, block: dict, *, dry: bool) -> str:
     return f"{verb}ed → {path}"
 
 
-def _cli_add(cmd: list[str], *, dry: bool, force: bool = False, remove: list[str] | None = None) -> str | None:
-    """Configure a client via its own CLI (claude/codex). None if that CLI isn't installed. With force,
-    remove any existing `midas` entry first so re-running init can't collide."""
+def _cli_add(cmd: list[str], *, dry: bool, force: bool = False,
+             remove: list[str] | None = None) -> tuple[str, bool] | None:
+    """Configure a client via its own CLI (claude/codex). None if that CLI isn't installed; otherwise
+    (message, ok). With force, remove any existing `midas` entry first so re-running init can't collide."""
     if not shutil.which(cmd[0]):
         return None
     if dry:
-        return ("would re-add via " if force else "would run: ") + " ".join(cmd)
+        return ("would re-add via " if force else "would run: ") + " ".join(cmd), True
     if force and remove:
         subprocess.run(remove, capture_output=True, text=True)  # best-effort; ignore if not present
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True)
-        return f"{'re-' if force else ''}configured via `{cmd[0]} mcp add`"
+        return f"{'re-' if force else ''}configured via `{cmd[0]} mcp add`", True
     except subprocess.CalledProcessError as e:
         tail = (e.stderr or e.stdout or "").strip().splitlines()
         hint = "" if force else " (already added — re-run `midas init --force`)"
-        return f"`{cmd[0]}` failed: {tail[-1][:78] if tail else 'error'}{hint}"
+        return f"`{cmd[0]}` failed: {tail[-1][:78] if tail else 'error'}{hint}", False
 
 
 def _cli_remove(exe: str, remove: list[str]) -> str | None:
@@ -103,14 +104,46 @@ def _cli_remove(exe: str, remove: list[str]) -> str | None:
     return "removed" if r.returncode == 0 else "not configured"
 
 
+def _receipt(db: str, *, scope_mode: str, namespace: str | None, clients: list[dict],
+             warnings: list[str] | None = None) -> dict:
+    """The machine-readable client-wiring receipt: a compact, pasteable proof of what is wired where —
+    config paths, server command, scope, and policy — with NO memory contents (a stable audit boundary
+    that agents/support can consume without scraping terminal prose)."""
+    from datetime import datetime, timezone
+
+    from midas import __version__
+    from midas.policy import MemoryPolicy
+
+    pol = MemoryPolicy(min_importance=int(os.getenv("MIDAS_MCP_MIN_IMPORTANCE", "2")))
+    return {
+        "midas_version": __version__,
+        "receipt_kind": "client_wiring",
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "memory_db": db,
+        "scope_mode": scope_mode,
+        "namespace": namespace,
+        "server_command": "midas-mcp",
+        "embedder": os.getenv("MIDAS_MCP_EMBEDDER", "local"),
+        "policy": {
+            "recall_first": True,
+            "capture_enabled": True,
+            "min_importance": pol.min_importance,
+            "dedup_threshold": pol.dedup_threshold,
+            "external_or_destructive_actions_require_check_memory_use": True,
+        },
+        "clients": clients,
+        "warnings": warnings or [],
+    }
+
+
 def cmd_init(args: argparse.Namespace) -> int:
     db = _store_path(args.db)
-    if not args.dry_run:
+    as_json = getattr(args, "json", False)
+    dry = args.dry_run
+    if not dry:
         _ensure_store(db)
-    print(f"✓ shared memory: {db}")
     scoped = getattr(args, "project_scoped", False)
-    print("  mode: per-project — memory auto-separates by project (git repo / cwd).\n" if scoped
-          else "  all clients below point here → they share one memory, autonomously.\n")
+    force = getattr(args, "force", False)
 
     def env_for(client_id: str) -> dict:
         e = {"MIDAS_MCP_EMBEDDER": "local", "MIDAS_MCP_CLIENT": client_id}
@@ -124,20 +157,39 @@ def cmd_init(args: argparse.Namespace) -> int:
             out += ["-e", f"{k}={v}"]
         return out
 
-    force = getattr(args, "force", False)
     results: list[tuple[str, str]] = []
+    receipt_clients: list[dict] = []
+
+    def record(name: str, path: Path, *, detected: bool, wired: bool, changed: bool,
+               backup: str | None = None, reason: str | None = None) -> None:
+        receipt_clients.append({"client": name, "config_path": str(path), "detected": detected,
+                                "wired": wired, "changed": changed, "backup_path": backup,
+                                "reason": reason})
+
+    def already_wired(path: Path) -> bool:
+        return path.exists() and "midas" in _safe_read(path)
+
     # Clients with their own CLI (cleanest, no file editing) — each stamped with its client id:
-    r = _cli_add(["claude", "mcp", "add", "midas", "-s", "user", *eflags(env_for("claude-code")),
-                  "--", "midas-mcp"], dry=args.dry_run, force=force,
-                 remove=["claude", "mcp", "remove", "midas", "-s", "user"])
-    if r:
-        results.append(("Claude Code", r))
     codex_note = "  — set MIDAS_MCP_CLIENT=codex" + (" + MIDAS_MCP_NAMESPACE=auto" if scoped else "") + \
                  " in ~/.codex/config.toml"
-    r = _cli_add(["codex", "mcp", "add", "midas", "--", "midas-mcp"], dry=args.dry_run, force=force,
-                 remove=["codex", "mcp", "remove", "midas"])
-    if r:
-        results.append(("Codex", r + codex_note))
+    for name, cfg_path, note, add_cmd, rm_cmd in (
+        ("Claude Code", Path.home() / ".claude.json", "",
+         ["claude", "mcp", "add", "midas", "-s", "user", *eflags(env_for("claude-code")),
+          "--", "midas-mcp"],
+         ["claude", "mcp", "remove", "midas", "-s", "user"]),
+        ("Codex", Path.home() / ".codex/config.toml", codex_note,
+         ["codex", "mcp", "add", "midas", "--", "midas-mcp"],
+         ["codex", "mcp", "remove", "midas"]),
+    ):
+        res = _cli_add(add_cmd, dry=dry, force=force, remove=rm_cmd)
+        if res is None:
+            record(name, cfg_path, detected=False, wired=already_wired(cfg_path), changed=False,
+                   reason=f"`{add_cmd[0]}` CLI not found")
+            continue
+        msg, ok = res
+        results.append((name, msg + note))
+        record(name, cfg_path, detected=True, wired=already_wired(cfg_path) if dry else ok,
+               changed=ok and not dry, reason=msg if (dry or not ok) else None)
 
     # Clients configured by a JSON file (only the ones already present, unless --all):
     targets = [("Cursor", "cursor", Path.home() / ".cursor/mcp.json"),
@@ -146,16 +198,35 @@ def cmd_init(args: argparse.Namespace) -> int:
     if cd:
         targets.append(("Claude Desktop", "claude-desktop", cd))
     for name, client_id, path in targets:
-        if path.exists() or args.all:
-            block = {"command": "midas-mcp", "env": env_for(client_id)}
-            results.append((name, _merge_mcp_json(path, block, dry=args.dry_run)))
+        if not (path.exists() or args.all):
+            record(name, path, detected=False, wired=False, changed=False,
+                   reason="config not found (skipped — use --all to configure anyway)")
+            continue
+        existed, was = path.exists(), already_wired(path)
+        block = {"command": "midas-mcp", "env": env_for(client_id)}
+        msg = _merge_mcp_json(path, block, dry=dry)
+        results.append((name, msg))
+        ok = not msg.startswith("⚠")
+        record(name, path, detected=existed, wired=was if dry else ok, changed=ok and not dry,
+               backup=str(path) + ".midas-bak" if (ok and existed and not dry) else None,
+               reason=msg if (dry or not ok) else None)
 
+    if as_json:  # machine-readable receipt only — pipeable, and the human UX stays clean without it
+        receipt = _receipt(db, scope_mode="project-scoped" if scoped else "shared",
+                           namespace="auto" if scoped else None, clients=receipt_clients)
+        receipt["dry_run"] = dry
+        print(json.dumps(receipt, indent=2))
+        return 0
+
+    print(f"✓ shared memory: {db}")
+    print("  mode: per-project — memory auto-separates by project (git repo / cwd).\n" if scoped
+          else "  all clients below point here → they share one memory, autonomously.\n")
     for name, msg in results:
         print(f"  • {name}: {msg}")
     if not results:
         print("  (no known MCP clients detected — see the manual line below)")
     print("\nAny other client → point it at command `midas-mcp` (no env required).")
-    if not args.dry_run:
+    if not dry:
         print("Restart your clients to apply. Verify with `midas status`.")
     return 0
 
@@ -173,27 +244,91 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
 # ---- status -----------------------------------------------------------------------------------
 
+def _midas_server_entry(path: Path) -> dict | None:
+    """Parse the `midas` server entry out of a client config (JSON mcpServers / codex TOML), so the
+    receipt can state which command + MIDAS_* env — i.e. which memory and scope — that client actually
+    got. Only MIDAS_* env keys are surfaced (the audit boundary excludes anything else a user added)."""
+    text = _safe_read(path)
+    if not text:
+        return None
+    try:
+        if path.suffix == ".toml":
+            import tomllib
+
+            servers = tomllib.loads(text).get("mcp_servers") or {}
+        else:
+            servers = json.loads(text).get("mcpServers") or {}
+    except Exception:
+        return None
+    entry = servers.get("midas")
+    if not isinstance(entry, dict):
+        return None
+    env = {k: v for k, v in (entry.get("env") or {}).items() if str(k).startswith("MIDAS_")}
+    return {"command": entry.get("command"), "env": env}
+
+
+def _derive_scope(ns_values: set) -> tuple[str, str | None, list[str]]:
+    """Map the namespaces found across wired clients onto the receipt's scope_mode."""
+    if not ns_values or ns_values == {None}:
+        return "shared", None, []
+    if ns_values == {"auto"}:
+        return "project-scoped", "auto", []
+    if len(ns_values) == 1:
+        return "manual-namespace", next(iter(ns_values)), []
+    return "mixed", None, ["clients are wired with different namespaces: "
+                           + ", ".join(sorted(str(v) for v in ns_values))]
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     from midas import __version__
 
     db = _store_path(args.db)
-    print(f"Midas {__version__}")
-    print(f"memory: {db}")
-    if Path(db).exists():
+    store_info: dict = {"exists": Path(db).exists()}
+    if store_info["exists"]:
         from midas.sqlite_store import SQLiteStore
 
         recs = list(SQLiteStore(db).all())
-        live = sum(1 for r in recs if r.superseded_by is None)
-        print(f"  {len(recs)} records ({live} live) · {Path(db).stat().st_size // 1024} KB")
+        store_info.update(records=len(recs),
+                          live=sum(1 for r in recs if r.superseded_by is None),
+                          size_kb=Path(db).stat().st_size // 1024)
+
+    clients: list[dict] = []
+    ns_values: set = set()
+    for name, p in _client_paths():
+        wired = p.exists() and "midas" in _safe_read(p)
+        entry = _midas_server_entry(p) if wired else None
+        env = entry["env"] if entry else {}
+        if entry:
+            ns_values.add(env.get("MIDAS_MCP_NAMESPACE"))
+        clients.append({"client": name, "config_path": str(p), "detected": p.exists(),
+                        "wired": wired, "server_command": entry["command"] if entry else None,
+                        "client_id": env.get("MIDAS_MCP_CLIENT"),
+                        "namespace": env.get("MIDAS_MCP_NAMESPACE"),
+                        "reason": None if p.exists() else "config not found"})
+
+    if getattr(args, "json", False):  # machine-readable receipt only (see issue #15)
+        scope_mode, namespace, warnings = _derive_scope(ns_values)
+        if not store_info["exists"]:
+            warnings.append("memory store not created yet — run `midas init`")
+        receipt = _receipt(db, scope_mode=scope_mode, namespace=namespace,
+                           clients=clients, warnings=warnings)
+        receipt["store"] = store_info
+        print(json.dumps(receipt, indent=2))
+        return 0
+
+    print(f"Midas {__version__}")
+    print(f"memory: {db}")
+    if store_info["exists"]:
+        print(f"  {store_info['records']} records ({store_info['live']} live)"
+              f" · {store_info['size_kb']} KB")
     else:
         print("  (not created yet — run `midas init`)")
 
     print("clients:")
-    for name, p in _client_paths():
-        wired = p.exists() and "midas" in _safe_read(p)
-        flag = "✓" if wired else "·"
-        note = "" if p.exists() else "  (not found)"
-        print(f"  {flag} {name}{note}")
+    for c in clients:
+        flag = "✓" if c["wired"] else "·"
+        note = "" if c["detected"] else "  (not found)"
+        print(f"  {flag} {c['client']}{note}")
     return 0
 
 
@@ -466,6 +601,8 @@ def main() -> None:
     pi.add_argument("--force", action="store_true", help="re-add even if a midas entry already exists")
     pi.add_argument("--project-scoped", action="store_true",
                     help="memory auto-separates per project (git repo / cwd) instead of one shared pool")
+    pi.add_argument("--json", action="store_true",
+                    help="print a machine-readable client wiring receipt instead of text")
     pi.set_defaults(func=cmd_init)
 
     ps = sub.add_parser("serve", help="run the MCP server (stdio, or --http for an MCP URL)")
@@ -477,6 +614,8 @@ def main() -> None:
 
     pst = sub.add_parser("status", help="show the store, version, and configured clients")
     pst.add_argument("--db")
+    pst.add_argument("--json", action="store_true",
+                     help="print a machine-readable client wiring receipt instead of text")
     pst.set_defaults(func=cmd_status)
 
     pu = sub.add_parser("update", help="upgrade Midas to the latest version")
