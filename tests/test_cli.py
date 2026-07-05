@@ -45,6 +45,16 @@ def test_init_creates_the_store(tmp_path) -> None:
     assert rc == 0 and db.exists()  # the shared store is created (parent dir too)
 
 
+def _sandbox_client_paths(monkeypatch, tmp_path) -> None:
+    """Point every client-config lookup into tmp_path. VS Code, Zed, and Claude Desktop resolve
+    OS-specific roots (macOS Library/, Windows %APPDATA%) that ignore a patched `Path.home()` —
+    without this, the suite behaves differently per OS and could touch a CI runner's real configs."""
+    monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(cli, "_vscode_user_dir", lambda: tmp_path / "Code/User")
+    monkeypatch.setattr(cli, "_zed_settings_path", lambda: tmp_path / "zed/settings.json")
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+
+
 def test_init_json_receipt_dry_run(tmp_path, capsys) -> None:
     db = tmp_path / "memory.sqlite3"
     rc = cli.cmd_init(argparse.Namespace(db=str(db), dry_run=True, all=False, json=True))
@@ -64,7 +74,7 @@ def test_init_json_receipt_dry_run(tmp_path, capsys) -> None:
 
 def test_init_json_receipt_real_run(tmp_path, capsys, monkeypatch) -> None:
     monkeypatch.setattr(cli.shutil, "which", lambda exe: None)  # no client CLIs → no subprocesses
-    monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)     # sandboxed client configs
+    _sandbox_client_paths(monkeypatch, tmp_path)
     cursor = tmp_path / ".cursor/mcp.json"
     cursor.parent.mkdir(parents=True)
     cursor.write_text("{}")
@@ -92,7 +102,7 @@ def test_init_json_receipt_real_run(tmp_path, capsys, monkeypatch) -> None:
 
 
 def test_status_json_receipt_nothing_wired(tmp_path, capsys, monkeypatch) -> None:
-    monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
+    _sandbox_client_paths(monkeypatch, tmp_path)
     rc = cli.cmd_status(argparse.Namespace(db=str(tmp_path / "m.sqlite3"), json=True))
     assert rc == 0
     receipt = json.loads(capsys.readouterr().out)
@@ -103,7 +113,7 @@ def test_status_json_receipt_nothing_wired(tmp_path, capsys, monkeypatch) -> Non
 
 
 def test_status_json_parses_codex_toml(tmp_path, capsys, monkeypatch) -> None:
-    monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
+    _sandbox_client_paths(monkeypatch, tmp_path)
     codex = tmp_path / ".codex/config.toml"
     codex.parent.mkdir(parents=True)
     codex.write_text('[mcp_servers.midas]\ncommand = "midas-mcp"\n')
@@ -133,8 +143,8 @@ def test_merge_mcp_json_custom_key(tmp_path) -> None:
 
 def test_init_wires_new_clients(tmp_path, capsys, monkeypatch) -> None:
     monkeypatch.setattr(cli.shutil, "which", lambda exe: None)
-    monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
-    vscode = tmp_path / ".config/Code/User/mcp.json"
+    _sandbox_client_paths(monkeypatch, tmp_path)
+    vscode = tmp_path / "Code/User/mcp.json"
     vscode.parent.mkdir(parents=True)
     vscode.write_text("{}")
     gemini = tmp_path / ".gemini/settings.json"
@@ -160,8 +170,8 @@ def test_init_wires_new_clients(tmp_path, capsys, monkeypatch) -> None:
 
 def test_uninstall_removes_from_custom_key(tmp_path, capsys, monkeypatch) -> None:
     monkeypatch.setattr(cli.shutil, "which", lambda exe: None)
-    monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
-    vscode = tmp_path / ".config/Code/User/mcp.json"
+    _sandbox_client_paths(monkeypatch, tmp_path)
+    vscode = tmp_path / "Code/User/mcp.json"
     vscode.parent.mkdir(parents=True)
     vscode.write_text(json.dumps({"servers": {"midas": {"command": "midas-mcp"},
                                               "other": {"command": "x"}}}))
@@ -171,7 +181,7 @@ def test_uninstall_removes_from_custom_key(tmp_path, capsys, monkeypatch) -> Non
 
 
 def test_doctor_json(tmp_path, capsys, monkeypatch) -> None:
-    monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
+    _sandbox_client_paths(monkeypatch, tmp_path)
     rc = cli.cmd_doctor(argparse.Namespace(db=str(tmp_path / "m.sqlite3"), json=True))
     out = json.loads(capsys.readouterr().out)
     assert out["receipt_kind"] == "doctor" and out["ok"] is (rc == 0)

@@ -51,7 +51,7 @@ def test_tampering_breaks_the_chain(tmp_path) -> None:
     mem.store.close()
 
     con = sqlite3.connect(db)  # an attacker rewrites history directly
-    con.execute("UPDATE audit_log SET content_sha = 'f' || substr(content_sha, 2) WHERE seq = 2")
+    con.execute("UPDATE audit_log SET op = 'delete' WHERE seq = 2")  # was 'put' — always a real change
     con.commit()
     con.close()
 
