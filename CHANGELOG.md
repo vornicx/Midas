@@ -1,9 +1,17 @@
 # Changelog
 
-Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
+Notable changes to Midas. From 1.0.0 the public surface — the `midas.Memory` SDK (remember / recall /
+consolidate / supersession / forget), the guard (`guard_reliance`, `decide_memory_use`, the coding
+`is_forbidden` gate), the MCP tools, and the `midas` CLI — follows [semver](https://semver.org):
+breaking changes only land in a major. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+
+## [1.0.0] — 2026-07-05
+
+The 1.0 contract: the API that exists today is the API, locked under semver. No new features gate
+this release — it consolidates what shipped and hardened since 0.1.1 and freezes the surface.
 
 ### Added
 - **`midas init --json` / `midas status --json` — a machine-readable client wiring receipt** (#15).
@@ -14,6 +22,34 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
   command + `MIDAS_*` env every client will launch with, and warns when clients disagree on namespaces.
   The receipt is an audit boundary: config paths and scope/policy only — never memory contents.
   The human output of both commands is unchanged. `midas/cli.py`, `tests/test_cli.py`.
+- **`midas bench`** — the full governance / safety / continuity bench suite as one CLI command
+  (equivalent to `uv run python -m eval.benches` from a checkout; guides to clone otherwise).
+  Deterministic, $0, no datasets, no API key — a skeptic can verify every governance number.
+- **Stress tests proving the multi-client promise**: 4 threads writing concurrently to one SQLite
+  store with no lost or corrupt writes; two `Memory` instances on one file seeing each other's
+  writes without a restart; unicode/emoji/20k-char inputs handled and empty/whitespace rejected;
+  recall finding the signal among 1,500 noise records.
+
+### Changed
+- **A bare `Memory()` now auto-selects real semantic recall.** With the `[local]` extra installed,
+  `Memory()` upgrades from the offline hashing embedder to `LocalEmbedder` automatically (override
+  with `MIDAS_EMBEDDER=hashing|local`; default `auto`). Fixes the out-of-the-box recall weakness an
+  external test hit: the SDK silently used the noisy hashing fallback even when semantic embeddings
+  were available.
+
+### Security — the governance moat (memory-safety bench: 10 attacks / 4 benign, ASR 0.00, benign-pass 1.00)
+- **Prohibition veto.** A live `forbidden_action` rule recalled for an external/destructive action
+  vetoes it — overriding any confirmation in the same evidence, so an attacker can't approve around
+  a standing "never do X". `midas/guard.py`.
+- **Relevance bar for actions.** Authorizing an external/destructive action requires strongly
+  relevant evidence (`GUARD_ACTION_MIN_RELEVANCE=0.25`), so a weakly-matched confirmation for a
+  *different* action can't lend its approval. Planning/answers unchanged.
+- **Provenance integrity.** A user-confirmed belief can no longer be superseded ("laundered") by
+  lower-provenance memory — an attacker's *observation* can't overwrite confirmed truth and ride the
+  supersession chain past the guard's currency rule. Genuine user re-confirmations still revise.
+- **Cross-namespace isolation.** A confirmation scoped to namespace `alpha` does not authorize the
+  same action in `beta`, even on an exact text match — proven by adversarial bench cases wired
+  through the guard's recall scope filter.
 
 ## [0.1.1] — 2026-06-27
 
