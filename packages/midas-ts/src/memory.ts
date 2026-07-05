@@ -40,7 +40,7 @@ const PROVENANCE_RANK: Record<MemoryProvenance, number> = {
   user_confirmation: 3,
 };
 
-function contentWords(text: string): Set<string> {
+export function contentWords(text: string): Set<string> {
   const out = new Set<string>();
   for (const w of text.split(/\s+/)) {
     const lw = w.toLowerCase();
@@ -49,7 +49,7 @@ function contentWords(text: string): Set<string> {
   return out;
 }
 
-function properEntities(text: string): Set<string> {
+export function properEntities(text: string): Set<string> {
   const out = new Set<string>();
   for (const m of text.matchAll(PROPER_ENTITY)) {
     const lw = m[0].toLowerCase();
@@ -508,6 +508,26 @@ export class Memory {
       }
     }
     return toDrop.filter((rid) => this.store.delete(rid));
+  }
+
+  /** Age-based retention: delete records whose kind outlived its TTL (kind -> days). Mirrors the
+   * Python rules: user-confirmed, standing, and supersession-chain records never expire silently. */
+  forgetExpired(ttlByKind: Record<string, number>, opts: { now?: number } = {}): string[] {
+    const now = opts.now ?? this.now();
+    const records = this.store.all();
+    const pointedTo = new Set(records.map((r) => r.supersededBy).filter((x): x is string => x !== null));
+    const expired = records
+      .filter(
+        (r) =>
+          ttlByKind[r.kind] !== undefined &&
+          now - r.createdAt > ttlByKind[r.kind] * 86_400 &&
+          r.provenance !== "user_confirmation" &&
+          !r.metadata?.standing &&
+          r.supersededBy === null &&
+          !pointedTo.has(r.id),
+      )
+      .sort((a, b) => a.createdAt - b.createdAt);
+    return expired.filter((r) => this.store.delete(r.id)).map((r) => r.id);
   }
 }
 

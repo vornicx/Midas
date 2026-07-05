@@ -3,6 +3,7 @@
  * SQLiteStore uses the SAME table schema and float32-blob encoding as the Python
  * `midas/sqlite_store.py`, and the same `PRAGMA data_version` staleness probe — so a TypeScript
  * MCP server and a Python one can share a single memory file, live, in both directions. */
+import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
 import type { MemoryRecord } from "./types.js";
@@ -69,12 +70,40 @@ interface Row {
   embedding: Uint8Array | null;
 }
 
+const AUDIT_GENESIS = "0".repeat(64);
+
+function auditHash(seq: number, at: number, op: string, recordId: string, contentSha: string, prevHash: string): string {
+  // `at` is canonicalised to integer microseconds (floor) — identical to the Python formula, so
+  // either runtime verifies chains written by the other.
+  return createHash("sha256")
+    .update(`${seq}|${Math.floor(at * 1_000_000)}|${op}|${recordId}|${contentSha}|${prevHash}`, "utf8")
+    .digest("hex");
+}
+
+function contentSha(record: MemoryRecord): string {
+  return createHash("sha256")
+    .update(`${record.id}\x00${record.content}\x00${record.supersededBy ?? ""}`, "utf8")
+    .digest("hex");
+}
+
+export interface AuditEntry {
+  seq: number;
+  at: number;
+  op: string;
+  record_id: string;
+  content_sha: string;
+  prev_hash: string;
+  hash: string;
+}
+
 export class SQLiteStore extends InMemoryStore {
   private db: DatabaseSync;
   private dataVersion: number;
+  private auditEnabled: boolean;
 
-  constructor(path: string) {
+  constructor(path: string, opts: { audit?: boolean } = {}) {
     super();
+    this.auditEnabled = opts.audit ?? true;
     this.db = new DatabaseSync(path);
     this.db.exec("PRAGMA journal_mode=WAL");
     this.db.exec(`
@@ -93,8 +122,60 @@ export class SQLiteStore extends InMemoryStore {
         embedding BLOB
       )
     `);
+    // Tamper-evident mutation log — same additive table and hash chain as the Python store.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS audit_log (
+        seq INTEGER PRIMARY KEY,
+        at REAL NOT NULL,
+        op TEXT NOT NULL,
+        record_id TEXT NOT NULL,
+        content_sha TEXT NOT NULL,
+        prev_hash TEXT NOT NULL,
+        hash TEXT NOT NULL
+      )
+    `);
     this.load();
     this.dataVersion = this.currentDataVersion();
+  }
+
+  private audit(op: string, recordId: string, sha: string): void {
+    const row = this.db.prepare("SELECT seq, hash FROM audit_log ORDER BY seq DESC LIMIT 1").get() as
+      | { seq: number; hash: string }
+      | undefined;
+    const [prevSeq, prevHash] = row ? [Number(row.seq), String(row.hash)] : [0, AUDIT_GENESIS];
+    const seq = prevSeq + 1;
+    const at = Date.now() / 1000;
+    this.db
+      .prepare(
+        "INSERT INTO audit_log (seq, at, op, record_id, content_sha, prev_hash, hash) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(seq, at, op, recordId, sha, prevHash, auditHash(seq, at, op, recordId, sha, prevHash));
+  }
+
+  /** The mutation history (append-only): hashes only, never memory content. */
+  auditLog(opts: { limit?: number } = {}): AuditEntry[] {
+    const rows = this.db
+      .prepare("SELECT seq, at, op, record_id, content_sha, prev_hash, hash FROM audit_log ORDER BY seq")
+      .all() as unknown as AuditEntry[];
+    const entries = rows.map((r) => ({ ...r, seq: Number(r.seq), at: Number(r.at) }));
+    return opts.limit ? entries.slice(-opts.limit) : entries;
+  }
+
+  /** Walk the whole chain recomputing every hash — any edit/removal/reorder breaks it. */
+  verifyAuditLog(): { ok: boolean; entries: number; first_invalid_seq: number | null } {
+    const entries = this.auditLog();
+    let prevHash = AUDIT_GENESIS;
+    let expected = 1;
+    for (const e of entries) {
+      const good =
+        e.seq === expected &&
+        e.prev_hash === prevHash &&
+        e.hash === auditHash(e.seq, e.at, e.op, e.record_id, e.content_sha, e.prev_hash);
+      if (!good) return { ok: false, entries: entries.length, first_invalid_seq: e.seq };
+      prevHash = e.hash;
+      expected += 1;
+    }
+    return { ok: true, entries: entries.length, first_invalid_seq: null };
   }
 
   private currentDataVersion(): number {
@@ -156,6 +237,7 @@ export class SQLiteStore extends InMemoryStore {
         record.supersededBy,
         blob,
       );
+    if (this.auditEnabled) this.audit("put", record.id, contentSha(record));
   }
 
   override get(recordId: string): MemoryRecord | null {
@@ -178,14 +260,19 @@ export class SQLiteStore extends InMemoryStore {
 
   override delete(recordId: string): boolean {
     this.refreshIfStale();
+    const target = super.get(recordId);
     const existed = super.delete(recordId);
-    if (existed) this.db.prepare("DELETE FROM memories WHERE id = ?").run(recordId);
+    if (existed) {
+      this.db.prepare("DELETE FROM memories WHERE id = ?").run(recordId);
+      if (this.auditEnabled) this.audit("delete", recordId, target ? contentSha(target) : AUDIT_GENESIS);
+    }
     return existed;
   }
 
   override clear(): void {
     super.clear();
     this.db.exec("DELETE FROM memories");
+    if (this.auditEnabled) this.audit("clear", "*", AUDIT_GENESIS);
   }
 
   close(): void {

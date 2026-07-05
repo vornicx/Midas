@@ -27,3 +27,15 @@ export function policySummary(policy: MemoryPolicy): string {
     "guard external/destructive actions to user_confirmation provenance"
   );
 }
+
+/** Parse a retention spec like "chat=30,note=90" (kind -> days) — the MIDAS_MCP_TTL format.
+ * Malformed entries are skipped rather than crashing the server. */
+export function parseTtlSpec(spec: string): Record<string, number> {
+  const ttl: Record<string, number> = {};
+  for (const part of (spec ?? "").split(",")) {
+    const [kind, days] = part.split("=");
+    const d = Number(days);
+    if (kind?.trim() && Number.isFinite(d) && d > 0) ttl[kind.trim()] = d;
+  }
+  return ttl;
+}

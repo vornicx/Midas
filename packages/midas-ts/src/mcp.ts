@@ -11,7 +11,14 @@ import { HashingEmbedder, LocalEmbedder, type Embedder } from "./embeddings.js";
 import { decideMemoryUse, MEMORY_USES, type MemoryUse } from "./guard.js";
 import { Memory, DEFAULT_POLICY } from "./memory.js";
 import { structuralImportance } from "./importance.js";
-import { AGENT_MEMORY_INSTRUCTIONS, policySummary } from "./policy.js";
+import { AGENT_MEMORY_INSTRUCTIONS, parseTtlSpec, policySummary } from "./policy.js";
+import {
+  closeLoop as closeLoopImpl,
+  memoryConflicts,
+  openLoops as openLoopsView,
+  rememberCommitment as rememberCommitmentImpl,
+  resume as resumeView,
+} from "./continuity.js";
 import { InMemoryStore, SQLiteStore } from "./store.js";
 import { MEMORY_PROVENANCE, type MemoryKind, type MemoryProvenance, type MemoryRecord } from "./types.js";
 
@@ -20,6 +27,7 @@ const MIN_IMPORTANCE = Number(process.env.MIDAS_MCP_MIN_IMPORTANCE ?? "2");
 const ACTOR = process.env.MIDAS_MCP_ACTOR ?? "midas-mcp-ts";
 const NAMESPACE = process.env.MIDAS_MCP_NAMESPACE ?? "";
 const SUPERSEDE = process.env.MIDAS_MCP_SUPERSEDE !== "0";
+const TTL = parseTtlSpec(process.env.MIDAS_MCP_TTL ?? "");
 
 async function buildEmbedder(): Promise<Embedder> {
   const choice = (process.env.MIDAS_MCP_EMBEDDER ?? "hashing").toLowerCase();
@@ -348,6 +356,138 @@ export function createServer(): McpServer {
   );
 
   server.registerTool(
+    "resume",
+    {
+      title: "Resume session",
+      description:
+        "START OF SESSION: everything needed to pick up where the last session left off, in ONE call — " +
+        "pinned directives, forbidden rules, what changed in the last `hours` (default: a week), current " +
+        "state, open commitments, and unresolved conflicts. `context` is prompt-ready and token-budgeted.",
+      inputSchema: {
+        project: z.string().default(""),
+        namespace: z.string().default(""),
+        hours: z.number().min(0).default(168),
+        token_budget: z.number().int().min(64).default(900),
+      },
+    },
+    async (args) => {
+      const pack = resumeView(mem, {
+        scope: nsFilter(args.namespace),
+        project: args.project || undefined,
+        since: Date.now() / 1000 - args.hours * 3600,
+        tokenBudget: args.token_budget,
+      });
+      return json({
+        context: pack.context,
+        truncated: pack.truncated,
+        counts: {
+          pinned: pack.pinned.length, forbidden: pack.forbidden.length, state: pack.state.length,
+          added: pack.added.length, revised: pack.revised.length,
+          open_loops: pack.openLoops.length, conflicts: pack.conflicts.length,
+        },
+        open_loops: pack.openLoops.map(serializeRecord),
+        conflicts: pack.conflicts.map((c) => ({
+          signal: c.signal, similarity: round3(c.similarity),
+          a: serializeRecord(c.a), b: serializeRecord(c.b),
+        })),
+      });
+    },
+  );
+
+  server.registerTool(
+    "memory_conflicts",
+    {
+      title: "Memory conflicts",
+      description:
+        "Live beliefs that CONTRADICT each other with neither superseding the other — the multi-agent " +
+        "failure mode. Ranked candidate pairs (same-slot heuristic: value swap / numbers disagree / one " +
+        "side negates). Verify with the user, then forget the wrong one or capture the corrected value.",
+      inputSchema: { namespace: z.string().default(""), limit: z.number().int().min(1).default(10) },
+    },
+    async (args) => {
+      const found = memoryConflicts(mem, { scope: nsFilter(args.namespace), limit: args.limit });
+      return json({
+        count: found.length,
+        conflicts: found.map((c) => ({
+          signal: c.signal, similarity: round3(c.similarity), strength: round3(c.strength),
+          a: serializeRecord(c.a), b: serializeRecord(c.b),
+        })),
+      });
+    },
+  );
+
+  server.registerTool(
+    "open_loops",
+    {
+      title: "Open loops",
+      description:
+        "Unresolved commitments — work someone said WOULD be done and never closed — oldest (most " +
+        "overdue) first. Record one with remember_commitment; close it with close_loop.",
+      inputSchema: {
+        project: z.string().default(""),
+        namespace: z.string().default(""),
+        limit: z.number().int().min(1).default(20),
+      },
+    },
+    async (args) => {
+      const scope: Record<string, unknown> = { ...(nsFilter(args.namespace) ?? {}) };
+      if (args.project) scope.project = args.project;
+      const records = openLoopsView(mem, {
+        scope: Object.keys(scope).length ? scope : null,
+        limit: args.limit,
+      });
+      return json({ count: records.length, open_loops: records.map(serializeRecord) });
+    },
+  );
+
+  server.registerTool(
+    "remember_commitment",
+    {
+      title: "Remember commitment",
+      description:
+        "Record a commitment (an OPEN LOOP): promised work that stays visible in open_loops/resume " +
+        "until closed with close_loop, so promises survive across sessions.",
+      inputSchema: {
+        content: z.string(),
+        project: z.string().default(""),
+        due: z.string().default(""),
+        session: z.string().default("default"),
+        namespace: z.string().default(""),
+      },
+    },
+    async (args) => {
+      const rec = await rememberCommitmentImpl(mem, args.content, {
+        project: args.project || undefined,
+        due: args.due || undefined,
+        actor: ACTOR,
+        source: `mcp:${args.session}`,
+      });
+      rec.metadata = { ...rec.metadata, ...nsMetadata(args.namespace, args.session) };
+      mem.store.put(rec);
+      return text(`commitment recorded (${rec.id}) — close it with close_loop when done`);
+    },
+  );
+
+  server.registerTool(
+    "close_loop",
+    {
+      title: "Close loop",
+      description:
+        "Close an open commitment: records the resolution and supersedes the open loop, keeping the " +
+        "promise -> resolution history auditable. Get loop_id from open_loops.",
+      inputSchema: { loop_id: z.string(), resolution: z.string() },
+    },
+    async (args) => {
+      try {
+        const rec = await closeLoopImpl(mem, args.loop_id, args.resolution, { actor: ACTOR });
+        return text(`loop closed (${args.loop_id} -> ${rec.id})`);
+      } catch (err) {
+        return text((err as Error).message);
+      }
+    },
+  );
+
+  server.registerTool(
     "maintain",
     {
       title: "Maintain memory",
@@ -357,10 +497,13 @@ export function createServer(): McpServer {
       inputSchema: {
         max_records: z.number().int().min(0).default(0),
         min_value: z.number().min(0).default(0),
+        ttl: z.string().default(""),
       },
     },
     async (args) => {
       const before = mem.store.all().length;
+      const ttlMap = args.ttl ? parseTtlSpec(args.ttl) : TTL;
+      const expired = Object.keys(ttlMap).length ? mem.forgetExpired(ttlMap) : [];
       const forgotten =
         args.max_records || args.min_value
           ? mem.forgetDecayed({
@@ -371,8 +514,9 @@ export function createServer(): McpServer {
       return json({
         before,
         remaining: mem.store.all().length,
+        expired: expired.length,
         forgotten: forgotten.length,
-        removed_ids: forgotten,
+        removed_ids: [...expired, ...forgotten],
       });
     },
   );

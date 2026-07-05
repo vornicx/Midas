@@ -1,7 +1,7 @@
 /** Midas memory types — mirrors `midas/types.py` so records stay portable across the
  * Python/TypeScript split (including sharing one SQLite file between both servers). */
 
-export type MemoryKind = "note" | "chat" | "mission" | "fact" | "preference" | "constraint";
+export type MemoryKind = "note" | "chat" | "mission" | "fact" | "preference" | "constraint" | "commitment";
 export const MEMORY_KINDS: readonly MemoryKind[] = [
   "note",
   "chat",
@@ -9,6 +9,7 @@ export const MEMORY_KINDS: readonly MemoryKind[] = [
   "fact",
   "preference",
   "constraint",
+  "commitment", // an open loop: work someone said WILL be done (close via continuity.closeLoop)
 ];
 
 export type MemoryProvenance = "planning" | "action" | "observation" | "user_confirmation";

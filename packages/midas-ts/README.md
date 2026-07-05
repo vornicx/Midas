@@ -60,11 +60,18 @@ embedder and announces the fallback on stderr — recall still works, lexically.
 per store file**: vectors are model-specific, so don't point a bge-small process at a store written
 with the hashing embedder (or with Python's bge-base).
 
+## Continuity control-plane & audit chain (ported)
+
+- **`resume`** (the one-call session-onboarding pack), **`memory_conflicts`** (live contradictions,
+  heuristic tier — the NLI gate stays Python-side), and **open loops** (`remember_commitment` /
+  `open_loops` / `close_loop`) are available as MCP tools and SDK functions.
+- The SQLite store writes the same **hash-chained audit log** as Python — the hash formula is
+  canonicalised (integer microseconds), so **either runtime verifies chains written by the other**.
+- Per-kind TTL retention: `Memory.forgetExpired`, `MIDAS_MCP_TTL`, `maintain(ttl=…)`.
+
 ## Not ported (yet)
 
 - Local NLI contradiction gating, the cross-encoder reranker, and the eval harness.
-- The continuity control-plane (`resume`, `memory_conflicts`, open loops) and the hash-chained
-  audit log — Python-only for now.
 
 ## Requirements
 

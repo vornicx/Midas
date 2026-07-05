@@ -43,8 +43,11 @@ _AUDIT_GENESIS = "0" * 64
 
 def _audit_hash(seq: int, at: float, op: str, record_id: str, content_sha: str,
                 prev_hash: str) -> str:
+    # `at` is canonicalised to integer microseconds (floor) — float FORMATTING differs across
+    # runtimes, but IEEE multiply+floor of the same stored double doesn't, so the TypeScript port
+    # verifies chains written by Python and vice versa.
     return hashlib.sha256(
-        f"{seq}|{at:.6f}|{op}|{record_id}|{content_sha}|{prev_hash}".encode()
+        f"{seq}|{int(at * 1_000_000)}|{op}|{record_id}|{content_sha}|{prev_hash}".encode()
     ).hexdigest()
 
 
