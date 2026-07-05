@@ -275,6 +275,10 @@ midas inspect --db ~/.midas/memory.sqlite3      # opens http://localhost:7777 �
 - **Project state** (decisions / bugs / forbidden) and **what changed** since a date.
 - **Governance** — would memory authorize an action, and why (the audit trail); **forget** with a receipt.
 
+And every mutation (write / revise / forget) appends to a **tamper-evident, hash-chained audit log**
+inside the store — hashes only, never content. `midas audit` shows it; `midas audit --json` verifies
+the whole chain and reports the first broken entry if anyone rewrote history.
+
 No LLM, no account, runs on your file. The thing a black-box memory can't show.
 
 ## Commercial path

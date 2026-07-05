@@ -23,10 +23,12 @@ today.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import struct
 import threading
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -35,14 +37,33 @@ from .types import MemoryRecord
 
 SCHEMA_VERSION = 1  # bump when the `memories` schema changes; add a guarded migration step in _migrate()
 
+# The audit chain's genesis value — the prev_hash of the first entry.
+_AUDIT_GENESIS = "0" * 64
+
+
+def _audit_hash(seq: int, at: float, op: str, record_id: str, content_sha: str,
+                prev_hash: str) -> str:
+    return hashlib.sha256(
+        f"{seq}|{at:.6f}|{op}|{record_id}|{content_sha}|{prev_hash}".encode()
+    ).hexdigest()
+
+
+def _content_sha(record: MemoryRecord) -> str:
+    """Fingerprint of the record's audited state: id + content + revision link. Enough to later prove
+    what a mutation touched; NOT enough to reconstruct the content (the audit log stores no text)."""
+    payload = f"{record.id}\x00{record.content}\x00{record.superseded_by or ''}"
+    return hashlib.sha256(payload.encode()).hexdigest()
+
 
 class SQLiteStore(InMemoryStore):
     """In-memory store (fast vectorised search) mirrored to a SQLite file for persistence."""
 
     def __init__(
-        self, path: str | Path, *, ann_threshold: int | None = None, ann_nprobe: int = 16
+        self, path: str | Path, *, ann_threshold: int | None = None, ann_nprobe: int = 16,
+        audit: bool = True,
     ) -> None:
         super().__init__(ann_threshold=ann_threshold, ann_nprobe=ann_nprobe)
+        self._audit_enabled = audit
         self._path = Path(path)
         if self._path.parent and str(self._path.parent):
             self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -66,6 +87,21 @@ class SQLiteStore(InMemoryStore):
                 updated_at REAL NOT NULL,
                 superseded_by TEXT,
                 embedding BLOB
+            )
+            """
+        )
+        # Tamper-evident mutation log (append-only, hash-chained; additive table so older Midas
+        # versions can still open the file). Rows carry hashes, never memory content.
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS audit_log (
+                seq INTEGER PRIMARY KEY,
+                at REAL NOT NULL,
+                op TEXT NOT NULL,
+                record_id TEXT NOT NULL,
+                content_sha TEXT NOT NULL,
+                prev_hash TEXT NOT NULL,
+                hash TEXT NOT NULL
             )
             """
         )
@@ -146,6 +182,55 @@ class SQLiteStore(InMemoryStore):
             superseded_by=superseded_by, embedding=embedding,
         )
 
+    # ---- tamper-evident audit chain -------------------------------------------------------------
+
+    def _audit(self, op: str, record_id: str, content_sha: str) -> None:
+        """Append one hash-chained entry (caller holds the lock; committed with the mutation). Each
+        hash covers the previous entry's hash, so editing or deleting ANY past row breaks every hash
+        after it — `verify_audit_log` catches it. Multi-process safe: seq/prev are read and written
+        inside the same transaction as the mutation."""
+        row = self._conn.execute(
+            "SELECT seq, hash FROM audit_log ORDER BY seq DESC LIMIT 1"
+        ).fetchone()
+        prev_seq, prev_hash = (int(row[0]), str(row[1])) if row else (0, _AUDIT_GENESIS)
+        seq, at = prev_seq + 1, time.time()
+        self._conn.execute(
+            "INSERT INTO audit_log (seq, at, op, record_id, content_sha, prev_hash, hash) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (seq, at, op, record_id, content_sha,
+             prev_hash, _audit_hash(seq, at, op, record_id, content_sha, prev_hash)),
+        )
+
+    def audit_log(self, *, limit: int | None = None) -> list[dict]:
+        """The mutation history (append-only): every put/delete/clear with its chain hashes — the
+        compliance artifact behind "prove what happened to memory". No memory content, only hashes."""
+        with self._lock:
+            sql = "SELECT seq, at, op, record_id, content_sha, prev_hash, hash FROM audit_log " \
+                  "ORDER BY seq"
+            rows = self._conn.execute(sql).fetchall()
+        entries = [dict(zip(("seq", "at", "op", "record_id", "content_sha", "prev_hash", "hash"), r))
+                   for r in rows]
+        return entries[-limit:] if limit else entries
+
+    def verify_audit_log(self) -> dict:
+        """Walk the whole chain recomputing every hash. Returns {ok, entries, first_invalid_seq}:
+        any edited, removed, or reordered entry breaks the chain at the first affected seq."""
+        entries = self.audit_log()
+        prev_hash, expected_seq = _AUDIT_GENESIS, 1
+        for e in entries:
+            good = (
+                e["seq"] == expected_seq
+                and e["prev_hash"] == prev_hash
+                and e["hash"] == _audit_hash(e["seq"], e["at"], e["op"], e["record_id"],
+                                             e["content_sha"], e["prev_hash"])
+            )
+            if not good:
+                return {"ok": False, "entries": len(entries), "first_invalid_seq": e["seq"]}
+            prev_hash, expected_seq = e["hash"], expected_seq + 1
+        return {"ok": True, "entries": len(entries), "first_invalid_seq": None}
+
+    # ---- mutations (each writes its audit entry in the same transaction) -------------------------
+
     def put(self, record: MemoryRecord) -> None:
         with self._lock:
             self._refresh_if_stale()
@@ -172,6 +257,8 @@ class SQLiteStore(InMemoryStore):
                  record.provenance, record.actor, json.dumps(record.metadata or {}),
                  record.created_at, record.updated_at, record.superseded_by, emb_blob),
             )
+            if self._audit_enabled:
+                self._audit("put", record.id, _content_sha(record))
             self._conn.commit()
 
     def get(self, record_id: str) -> MemoryRecord | None:
@@ -198,9 +285,13 @@ class SQLiteStore(InMemoryStore):
     def delete(self, record_id: str) -> bool:
         with self._lock:
             self._refresh_if_stale()
+            target = super().get(record_id)
             existed = super().delete(record_id)
             if existed:
                 self._conn.execute("DELETE FROM memories WHERE id = ?", (record_id,))
+                if self._audit_enabled:
+                    self._audit("delete", record_id,
+                                _content_sha(target) if target else _AUDIT_GENESIS)
                 self._conn.commit()
             return existed
 
@@ -208,6 +299,8 @@ class SQLiteStore(InMemoryStore):
         with self._lock:
             super().clear()
             self._conn.execute("DELETE FROM memories")
+            if self._audit_enabled:
+                self._audit("clear", "*", _AUDIT_GENESIS)
             self._conn.commit()
 
     def close(self) -> None:

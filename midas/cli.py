@@ -431,6 +431,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         try:
             store = SQLiteStore(db)
             check(True, f"store: {db}  ({len(store.all())} records, schema v{store.schema_version()})")
+            chain = store.verify_audit_log()
+            check(chain["ok"], f"audit chain intact ({chain['entries']} entries)",
+                  f"broken at seq {chain['first_invalid_seq']} — see `midas audit`")
         except Exception as exc:
             check(False, f"store: {db}", f"cannot open: {exc}")
     else:
@@ -475,6 +478,55 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         print(f"  {'✓' if c['ok'] else '⚠'}  {c['check']}" + (f"  — {c['hint']}" if c["hint"] else ""))
     print("\n" + ("Everything looks good." if ok else "Some checks need attention (see ⚠ above)."))
     return 0 if ok else 1
+
+
+# ---- audit ------------------------------------------------------------------------------------
+
+def cmd_audit(args: argparse.Namespace) -> int:
+    """Show / verify the tamper-evident mutation log: every put/delete/clear, hash-chained. Editing,
+    removing, or reordering any past entry breaks every hash after it — `--verify` (the default check)
+    walks the whole chain. Entries carry hashes only, never memory content."""
+    from midas.sqlite_store import SQLiteStore
+
+    db = _store_path(args.db)
+    if not Path(db).exists():
+        print(f"no store at {db} — run `midas init`", file=sys.stderr)
+        return 1
+    store = SQLiteStore(db)
+    result = store.verify_audit_log()
+    entries = store.audit_log(limit=int(args.limit) if args.limit else 10)
+
+    if getattr(args, "json", False):
+        from datetime import datetime, timezone
+
+        from midas import __version__
+
+        print(json.dumps({
+            "midas_version": __version__,
+            "receipt_kind": "audit_chain",
+            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds")
+            .replace("+00:00", "Z"),
+            "memory_db": db,
+            "ok": result["ok"],
+            "entries": result["entries"],
+            "first_invalid_seq": result["first_invalid_seq"],
+            "tail": entries,
+        }, indent=2))
+        return 0 if result["ok"] else 1
+
+    state = "intact" if result["ok"] else f"BROKEN at seq {result['first_invalid_seq']}"
+    print(f"audit chain: {state} · {result['entries']} entries · {db}")
+    if entries:
+        from datetime import datetime
+
+        print(f"\nlast {len(entries)}:")
+        for e in entries:
+            when = datetime.fromtimestamp(e["at"]).strftime("%Y-%m-%d %H:%M:%S")
+            print(f"  #{e['seq']:<6} {when}  {e['op']:<7} {e['record_id'][:8]:<9} "
+                  f"sha:{e['content_sha'][:12]}…")
+    if not result["ok"]:
+        print("\n⚠  the log was modified after the fact — treat this store's history as untrusted.")
+    return 0 if result["ok"] else 1
 
 
 # ---- export / import --------------------------------------------------------------------------
@@ -688,6 +740,13 @@ def main() -> None:
     pd.add_argument("--json", action="store_true",
                     help="print a machine-readable diagnosis instead of text")
     pd.set_defaults(func=cmd_doctor)
+
+    pa = sub.add_parser("audit", help="show/verify the tamper-evident mutation log (hash chain)")
+    pa.add_argument("--db")
+    pa.add_argument("--limit", type=int, default=10, help="how many recent entries to show")
+    pa.add_argument("--json", action="store_true",
+                    help="print a machine-readable audit receipt instead of text")
+    pa.set_defaults(func=cmd_audit)
 
     pe = sub.add_parser("export", help="export all memory to JSON (backup / move machines)")
     pe.add_argument("--db")
