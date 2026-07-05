@@ -37,6 +37,8 @@ Config (env):
                              supersession chains never expire (default: none)
     MIDAS_MCP_TOKEN        = require `Authorization: Bearer <token>` on the HTTP transport — without
                              it any local process can read/write the shared store (default: off)
+    MIDAS_MCP_KEY          = encrypt the store at rest with SQLCipher (`pip install
+                             "midas-memory[encrypted]"`); fails closed if the extra is missing
 """
 from __future__ import annotations
 

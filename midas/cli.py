@@ -234,6 +234,12 @@ def cmd_init(args: argparse.Namespace) -> int:
         record(name, cfg_path, detected=True, wired=already_wired(cfg_path) if dry else ok,
                changed=ok and not dry, reason=msg if (dry or not ok) else None)
 
+    if getattr(args, "claude_hook", False):
+        from midas.hooks import install_claude_hook
+
+        msg = install_claude_hook(Path.home() / ".claude" / "settings.json", dry=dry)
+        results.append(("Claude Code hook", msg))
+
     # Clients configured by a JSON file (only the ones already present, unless --all):
     for name, client_id, path, key, shape in _json_clients():
         if not (path.exists() or args.all):
@@ -480,6 +486,26 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+# ---- hook (Claude Code SessionEnd auto-capture) -------------------------------------------------
+
+def cmd_hook(args: argparse.Namespace) -> int:
+    """Entry point Claude Code's SessionEnd hook runs: read the hook payload from stdin, offer the
+    session's user turns to memory (the capture policy decides what's kept). ALWAYS exits 0 — a
+    memory hook must never break the user's session."""
+    from midas.hooks import capture_session
+
+    if args.action != "capture-session":
+        print(f"unknown hook action '{args.action}'", file=sys.stderr)
+        return 0
+    try:
+        payload = json.loads(sys.stdin.read() or "{}")
+    except Exception:
+        payload = {}
+    result = capture_session(payload, db=args.db)
+    print(json.dumps(result), file=sys.stderr)  # visible in hook logs, invisible to the agent
+    return 0
+
+
 # ---- audit ------------------------------------------------------------------------------------
 
 def cmd_audit(args: argparse.Namespace) -> int:
@@ -586,6 +612,16 @@ def _import_rules(args: argparse.Namespace, source: str) -> int:
                 "source": f"import:{path.name}",
                 "metadata": {**(d.get("metadata") or {}), "imported_from": path.name},
             })
+    elif source in ("mem0", "zep"):
+        from midas.importers import parse_mem0_export, parse_zep_export
+
+        try:
+            data = json.loads(text)
+        except Exception:
+            print(f"{path} is not valid JSON (expected a {source} export)", file=sys.stderr)
+            return 1
+        parse = parse_mem0_export if source == "mem0" else parse_zep_export
+        dicts = parse(data, source_file=path.name)
     else:
         items = parse_markdown_rules(text)
         dicts = to_record_dicts(items, source_file=path.name,
@@ -607,7 +643,7 @@ def _import_rules(args: argparse.Namespace, source: str) -> int:
         added += 1
     note = f"  ({skipped} already present, skipped)" if skipped else ""
     print(f"imported {added} rules from {path} into {db}{note}")
-    if source != "jsonl" and not getattr(args, "confirmed", False):
+    if source in ("claude-md", "cursorrules") and not getattr(args, "confirmed", False):
         print("  provenance=observation — imported rules inform recall/planning but cannot authorize "
               "guarded actions (re-run with --confirmed to vouch for them).")
     return 0
@@ -652,6 +688,11 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     r = _cli_remove("codex", ["codex", "mcp", "remove", "midas"])
     if r:
         results.append(("Codex", r))
+    from midas.hooks import uninstall_claude_hook
+
+    r = uninstall_claude_hook(Path.home() / ".claude" / "settings.json")
+    if r != "not installed":
+        results.append(("Claude Code hook", r))
     for name, _cid, path, key, _shape in _json_clients():
         if not path.exists():
             continue
@@ -762,6 +803,9 @@ def main() -> None:
                     help="memory auto-separates per project (git repo / cwd) instead of one shared pool")
     pi.add_argument("--json", action="store_true",
                     help="print a machine-readable client wiring receipt instead of text")
+    pi.add_argument("--claude-hook", action="store_true",
+                    help="also install a Claude Code SessionEnd hook that auto-captures each "
+                         "session's user turns (the capture policy decides what's kept)")
     pi.set_defaults(func=cmd_init)
 
     ps = sub.add_parser("serve", help="run the MCP server (stdio, or --http for an MCP URL)")
@@ -798,6 +842,12 @@ def main() -> None:
                     help="print a machine-readable diagnosis instead of text")
     pd.set_defaults(func=cmd_doctor)
 
+    ph = sub.add_parser("hook", help="hook entry points (used by `midas init --claude-hook`)")
+    ph.add_argument("action", help="capture-session: read a SessionEnd payload from stdin and "
+                    "offer the session's user turns to memory")
+    ph.add_argument("--db")
+    ph.set_defaults(func=cmd_hook)
+
     pa = sub.add_parser("audit", help="show/verify the tamper-evident mutation log (hash chain)")
     pa.add_argument("--db")
     pa.add_argument("--limit", type=int, default=10, help="how many recent entries to show")
@@ -813,9 +863,10 @@ def main() -> None:
     pm = sub.add_parser("import", help="import memory (midas export JSON, CLAUDE.md, .cursorrules…)")
     pm.add_argument("file", help="the file to import")
     pm.add_argument("--from", dest="source", default="midas",
-                    choices=("midas", "claude-md", "cursorrules", "jsonl"),
+                    choices=("midas", "claude-md", "cursorrules", "jsonl", "mem0", "zep"),
                     help="what the file is: a midas export (default), a rules markdown "
-                         "(CLAUDE.md/AGENTS.md), a .cursorrules, or generic JSONL records")
+                         "(CLAUDE.md/AGENTS.md), a .cursorrules, generic JSONL records, or a "
+                         "Mem0/Zep JSON export")
     pm.add_argument("--project", help="tag imported rules with this project scope")
     pm.add_argument("--confirmed", action="store_true",
                     help="stamp imported rules as user-confirmed (they may then authorize "

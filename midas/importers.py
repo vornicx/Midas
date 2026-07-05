@@ -100,3 +100,64 @@ def to_record_dicts(
             "metadata": meta,
         })
     return out
+
+
+def _mem0_items(data: object) -> list[dict]:
+    """Mem0 exports arrive as a list of memory objects, or wrapped in {"results": […]} /
+    {"memories": […]}. The distilled text lives in "memory" (older exports: "text")."""
+    if isinstance(data, dict):
+        data = data.get("results") or data.get("memories") or []
+    return [d for d in data if isinstance(d, dict)] if isinstance(data, list) else []
+
+
+def parse_mem0_export(data: object, *, source_file: str) -> list[dict]:
+    """Mem0 → Midas: each distilled memory becomes a fact (importance 3), keeping the original id,
+    user/agent attribution, and timestamps in metadata so nothing silently loses its origin."""
+    out: list[dict] = []
+    for d in _mem0_items(data):
+        content = (d.get("memory") or d.get("text") or "").strip()
+        if not content:
+            continue
+        meta = {"imported_from": source_file, "mem0_id": d.get("id")}
+        for k in ("user_id", "agent_id", "run_id"):
+            if d.get(k):
+                meta[k] = d[k]
+        if isinstance(d.get("metadata"), dict):
+            meta.update({k: v for k, v in d["metadata"].items() if k not in meta})
+        out.append({"content": content, "kind": "fact", "importance": 3,
+                    "provenance": "observation", "source": f"import:{source_file}",
+                    "actor": d.get("agent_id") or None, "metadata": meta})
+    return out
+
+
+def parse_zep_export(data: object, *, source_file: str) -> list[dict]:
+    """Zep → Midas: facts (graph edges / session facts) become facts; raw messages become chat turns.
+    Accepts {"facts": […]}, {"edges": […]}, {"messages": […]}, or a bare list of either shape."""
+    facts: list[dict] = []
+    messages: list[dict] = []
+    if isinstance(data, dict):
+        facts = [d for d in (data.get("facts") or data.get("edges") or []) if isinstance(d, dict)]
+        messages = [d for d in (data.get("messages") or []) if isinstance(d, dict)]
+    elif isinstance(data, list):
+        for d in data:
+            if not isinstance(d, dict):
+                continue
+            (facts if ("fact" in d) else messages).append(d)
+
+    out: list[dict] = []
+    for d in facts:
+        content = (d.get("fact") or "").strip()
+        if not content:
+            continue
+        out.append({"content": content, "kind": "fact", "importance": 3,
+                    "provenance": "observation", "source": f"import:{source_file}",
+                    "metadata": {"imported_from": source_file, "zep_uuid": d.get("uuid")}})
+    for d in messages:
+        content = (d.get("content") or "").strip()
+        if not content:
+            continue
+        out.append({"content": content, "kind": "chat", "importance": 2,
+                    "provenance": "observation", "source": f"import:{source_file}",
+                    "actor": d.get("role") or None,
+                    "metadata": {"imported_from": source_file, "zep_uuid": d.get("uuid")}})
+    return out

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 import struct
 import threading
@@ -63,7 +64,7 @@ class SQLiteStore(InMemoryStore):
 
     def __init__(
         self, path: str | Path, *, ann_threshold: int | None = None, ann_nprobe: int = 16,
-        audit: bool = True,
+        audit: bool = True, key: str | None = None,
     ) -> None:
         super().__init__(ann_threshold=ann_threshold, ann_nprobe=ann_nprobe)
         self._audit_enabled = audit
@@ -73,7 +74,22 @@ class SQLiteStore(InMemoryStore):
         # One connection shared across threads, guarded by the lock below: MCP servers execute
         # sync tools in worker threads, so the default same-thread check would crash mid-session.
         self._lock = threading.RLock()
-        self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
+        # Encryption at rest (opt-in): with `key` (or MIDAS_MCP_KEY), the file is a SQLCipher
+        # database — unreadable without the key. FAILS CLOSED: if the user asked for encryption and
+        # SQLCipher isn't installed, refuse rather than silently writing plaintext.
+        key = key if key is not None else (os.getenv("MIDAS_MCP_KEY") or None)
+        if key:
+            try:
+                from sqlcipher3 import dbapi2 as _sqlcipher
+            except ImportError as exc:  # pragma: no cover - exercised only without the extra
+                raise RuntimeError(
+                    'MIDAS_MCP_KEY is set but SQLCipher is not installed — '
+                    'pip install "midas-memory[encrypted]"'
+                ) from exc
+            self._conn = _sqlcipher.connect(str(self._path), check_same_thread=False)
+            self._conn.execute("PRAGMA key = '{}'".format(key.replace("'", "''")))
+        else:
+            self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute(
             """

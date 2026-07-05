@@ -3,7 +3,7 @@
 Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.2.0] — 2026-07-05
 
 ### Added
 - **The continuity control-plane** (`midas/continuity.py` + MCP tools): **`resume`** — everything an
@@ -36,6 +36,30 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
   (`remember`/`capture`/`recall`/`buildContext`/`forgetMatching` return promises).
 - **CI on Windows and macOS** (core + MCP): the client-wiring code is full of per-OS paths that only
   Linux exercised.
+- **The Agent Continuity Bench measures the new control-plane**: `resume_fidelity` (the one-call pack
+  contains live state / forbidden rules / open loops and never presents superseded values or closed
+  loops as live), `conflict_detection`, and `conflict_precision` — all → 1.00, wired into
+  `midas bench` with the same all-green verdict rule.
+- **Inspector views** for the control-plane: Conflicts (ranked contradiction pairs with per-side
+  forget), Open loops (close with a recorded resolution), and Audit log (chain verification + a
+  hash-only tail).
+- **TypeScript parity for the control-plane and audit chain**: `resume`, `memoryConflicts`
+  (heuristic tier), open loops, `forgetExpired`/TTL, and the same hash-chained `audit_log` — the hash
+  is canonicalised to integer microseconds so **either runtime verifies chains written by the other**
+  (validated bidirectionally).
+- **`midas init --claude-hook`**: a Claude Code SessionEnd hook (`midas hook capture-session`) that
+  offers each finished session's user turns to `capture` — memory even when the agent never calls the
+  tool, with the same no-LLM keep/skip policy, fail-open by construction, removed by
+  `midas uninstall`.
+- **`midas import --from mem0 | zep`**: migrate Mem0 exports (distilled memories → facts with
+  original ids/attribution preserved) and Zep exports (facts/edges → facts, messages → chat turns).
+- **Encryption at rest (opt-in)**: `SQLiteStore(key=…)` / `MIDAS_MCP_KEY` with the new `[encrypted]`
+  extra (SQLCipher). The file on disk is ciphertext; opening without the key fails; if the key is set
+  but the extra is missing Midas **fails closed** instead of silently writing plaintext.
+
+### Changed
+- The TypeScript `Memory` API is async (`remember`/`capture`/`recall`/`buildContext`/
+  `forgetMatching` return promises) to support the optional ONNX embedder.
 
 ### Added
 - **`midas init --json` / `midas status --json` — a machine-readable client wiring receipt** (#15).

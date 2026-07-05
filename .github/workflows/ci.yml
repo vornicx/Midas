@@ -16,8 +16,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - name: Install (all extras + dev)
-        run: pip install ".[all,dev]"
+      - name: Install (all extras + dev + encrypted)
+        run: pip install ".[all,dev,encrypted]"
       - name: Run the suite
         run: python -m pytest -q
 

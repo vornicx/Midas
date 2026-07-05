@@ -135,8 +135,12 @@ midas serve --http --token <secret>   # require `Authorization: Bearer <secret>`
 Keep Midas current with **`midas update`**. See your memory anytime with **`midas inspect`**.
 
 Already carrying agent memory in files? **`midas import --from claude-md CLAUDE.md`** (or
-`--from cursorrules .cursorrules`, `--from jsonl`) turns those rules into first-class, recallable,
-governable memories — tagged with where they came from, idempotent on re-run.
+`--from cursorrules`, `--from jsonl`, `--from mem0`, `--from zep`) turns those rules and exports into
+first-class, recallable, governable memories — tagged with where they came from, idempotent on re-run.
+
+Want memory even when the agent never calls `capture`? **`midas init --claude-hook`** installs a
+Claude Code SessionEnd hook that offers each session's user turns to memory — Midas's no-LLM policy
+still decides what is actually kept.
 
 <details>
 <summary><b>Manual setup</b> — any client, or to customize (click to expand)</summary>
@@ -209,7 +213,8 @@ audit), `stats`, `forget` (chain-safe), `forget_matching` (topic-level erasure, 
 `MIDAS_MCP_MAX_RECORDS` · `MIDAS_MCP_MIN_IMPORTANCE` · `MIDAS_MCP_NAMESPACE` (`=auto` → per-project scope) · `MIDAS_MCP_ANN=1` (sub-linear
 IVF for huge stores) · `MIDAS_MCP_SUPERSEDE` · `MIDAS_MCP_NLI=1` (NLI-gated revision) ·
 `MIDAS_MCP_AUTO_MAINTAIN=<min>` (idle-time upkeep) · `MIDAS_MCP_PINNED` (pin standing directives) ·
-`MIDAS_MCP_TTL` (per-kind retention, e.g. `chat=30,note=90`) · `MIDAS_MCP_TOKEN` (HTTP bearer auth).
+`MIDAS_MCP_TTL` (per-kind retention, e.g. `chat=30,note=90`) · `MIDAS_MCP_TOKEN` (HTTP bearer auth) ·
+`MIDAS_MCP_KEY` (SQLCipher encryption at rest — `pip install "midas-memory[encrypted]"`).
 
 </details>
 
@@ -338,5 +343,7 @@ python -m eval.continuity                                                      #
 
 Local-first: every memory lives in a SQLite file on your machine, recall returns the exact stored text,
 and capture/recall/forget make **no network calls**. No account, API key, or telemetry. The only outbound
-traffic is a one-time embedding-model download (for the `local` backend) and the package install. Full
-details in [`PRIVACY.md`](PRIVACY.md) · [Apache-2.0](LICENSE).
+traffic is a one-time embedding-model download (for the `local` backend) and the package install.
+Optional **encryption at rest**: set `MIDAS_MCP_KEY` with the `[encrypted]` extra and the store is a
+SQLCipher database — unreadable without the key (and Midas fails closed rather than silently writing
+plaintext). Full details in [`PRIVACY.md`](PRIVACY.md) · [Apache-2.0](LICENSE).

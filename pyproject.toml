@@ -1,6 +1,6 @@
 [project]
 name = "midas-memory"
-version = "0.1.1"
+version = "0.2.0"
 description = "Local-first, eval-first memory for long-horizon AI agents — no LLM at ingest"
 readme = "README.md"
 license = "Apache-2.0"
@@ -23,6 +23,7 @@ local = ["fastembed>=0.7"]
 turbovec = ["turbovec>=0.8"]
 model2vec = ["model2vec>=0.8"]
 mcp = ["mcp>=1.0"]
+encrypted = ["sqlcipher3-binary>=0.5"]
 langgraph = ["langgraph>=0.2"]
 openai = ["openai>=1.0"]
 dev = ["pytest>=8", "tiktoken"]

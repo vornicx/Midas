@@ -100,3 +100,55 @@ def test_cli_import_empty_file_fails_cleanly(tmp_path, capsys) -> None:
                             project=None, confirmed=False, overwrite=False)
     assert cli.cmd_import(ns) == 1
     assert "nothing importable" in capsys.readouterr().err
+
+
+def test_parse_mem0_export() -> None:
+    from midas.importers import parse_mem0_export
+
+    data = {"results": [
+        {"id": "m1", "memory": "User prefers dark mode.", "user_id": "u1",
+         "metadata": {"topic": "ui"}},
+        {"id": "m2", "text": "Launch is September 14.", "agent_id": "coder"},
+        {"id": "m3", "memory": ""},  # empty → skipped
+    ]}
+    out = parse_mem0_export(data, source_file="mem0.json")
+    assert [d["content"] for d in out] == ["User prefers dark mode.", "Launch is September 14."]
+    assert out[0]["metadata"]["mem0_id"] == "m1" and out[0]["metadata"]["user_id"] == "u1"
+    assert out[0]["metadata"]["topic"] == "ui"
+    assert out[1]["actor"] == "coder"
+    assert all(d["kind"] == "fact" and d["provenance"] == "observation" for d in out)
+    # bare-list shape works too
+    assert len(parse_mem0_export(data["results"], source_file="x")) == 2
+
+
+def test_parse_zep_export() -> None:
+    from midas.importers import parse_zep_export
+
+    data = {"facts": [{"uuid": "f1", "fact": "The primary database is PostgreSQL."}],
+            "messages": [{"uuid": "z1", "role": "user", "content": "hola equipo"}]}
+    out = parse_zep_export(data, source_file="zep.json")
+    assert out[0]["kind"] == "fact" and out[0]["metadata"]["zep_uuid"] == "f1"
+    assert out[1]["kind"] == "chat" and out[1]["actor"] == "user"
+    # bare list: rows with a "fact" key are facts, the rest messages
+    mixed = parse_zep_export([{"fact": "a stable fact here"}, {"content": "a chat line"}],
+                             source_file="x")
+    assert [d["kind"] for d in mixed] == ["fact", "chat"]
+
+
+def test_cli_import_mem0(tmp_path, capsys) -> None:
+    from midas.sqlite_store import SQLiteStore
+
+    f = tmp_path / "mem0.json"
+    f.write_text(json.dumps([{"id": "m1", "memory": "User prefers dark mode."}]))
+    ns = argparse.Namespace(file=str(f), source="mem0", db=str(tmp_path / "m.sqlite3"),
+                            project=None, confirmed=False, overwrite=False)
+    assert cli.cmd_import(ns) == 0
+    recs = SQLiteStore(str(tmp_path / "m.sqlite3")).all()
+    assert len(recs) == 1 and recs[0].metadata["mem0_id"] == "m1"
+
+    bad = tmp_path / "bad.json"
+    bad.write_text("not json")
+    ns2 = argparse.Namespace(file=str(bad), source="zep", db=str(tmp_path / "m.sqlite3"),
+                             project=None, confirmed=False, overwrite=False)
+    assert cli.cmd_import(ns2) == 1
+    assert "not valid JSON" in capsys.readouterr().err
