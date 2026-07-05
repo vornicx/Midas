@@ -154,8 +154,9 @@ def memory_conflicts(
             hit = _contradiction(mem, record, other, score, nli, nli_threshold)
             if hit:
                 signal, strength = hit
-                conflicts.append(Conflict(a=record, b=other, similarity=score,
-                                          signal=signal, strength=strength))
+                # float() strips numpy scalars from store.search so every consumer can json-serialize
+                conflicts.append(Conflict(a=record, b=other, similarity=float(score),
+                                          signal=signal, strength=float(strength)))
     conflicts.sort(key=lambda c: c.strength, reverse=True)
     return conflicts[:limit]
 

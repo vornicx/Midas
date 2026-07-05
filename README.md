@@ -68,8 +68,9 @@ safely** and **resume from cleanly** — which is where similarity search alone 
 | *"How do I speed up the transactions list?"* | the **prior fix** resurfaces, so the agent doesn't re-diagnose it | — |
 
 These properties are measured, not asserted — the **[agent-memory bench suite](docs/agent-memory-benches.md)**
-scores action-safety, decision-adherence, repeated-mistake avoidance, and adversarial **memory-safety**
-across scripted multi-session projects. The safety eval blocks **10 / 10 adversarial attacks** (ASR
+scores action-safety, decision-adherence, repeated-mistake avoidance, **resume fidelity**, **conflict
+detection/precision** (live contradictions between agents found without over-flagging), and adversarial
+**memory-safety** across scripted multi-session projects. The safety eval blocks **10 / 10 adversarial attacks** (ASR
 **0.00**) — including a planted confirmation next to a prohibition, a confirmation for a *different* action,
 a provenance-laundering supersession, and a cross-namespace approval — with **no over-blocking** (benign-pass
 **1.00**). Deterministic, $0, no LLM. **Reproduce every number with one command:**

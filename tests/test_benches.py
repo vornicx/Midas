@@ -7,6 +7,8 @@ from eval.benches import run
 
 def test_bench_suite_all_green() -> None:
     out = run(verbose=False)
-    assert out["continuity"] == {"action_safety": 1.0, "decision_adherence": 1.0, "repeated_mistake": 1.0}
+    assert out["continuity"] == {"action_safety": 1.0, "decision_adherence": 1.0,
+                                 "repeated_mistake": 1.0, "resume_fidelity": 1.0,
+                                 "conflict_detection": 1.0, "conflict_precision": 1.0}
     assert out["memory_safety"] == {"ASR": 0.0, "benign_pass": 1.0}
     assert out["coding"] == {"decision_currency": 1.0, "repeated_mistake": 1.0, "forbidden_accuracy": 1.0}

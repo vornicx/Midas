@@ -113,6 +113,45 @@ def api_stats(mem: "Memory") -> dict[str, Any]:
     return {"total": len(recs), "live": sum(1 for r in recs if r.superseded_by is None), "kinds": kinds}
 
 
+def api_conflicts(mem: "Memory", *, limit: int = 20) -> list[dict[str, Any]]:
+    """Live beliefs that contradict each other with neither superseding the other — the multi-agent
+    view. Ranked candidates for a HUMAN to resolve (forget one, or capture the corrected value)."""
+    from .continuity import memory_conflicts
+
+    return [
+        {"signal": c.signal, "similarity": round(c.similarity, 3),
+         "a": audit_record(c.a), "b": audit_record(c.b)}
+        for c in memory_conflicts(mem, limit=limit)
+    ]
+
+
+def api_loops(mem: "Memory") -> list[dict[str, Any]]:
+    """Open commitments (promised work never closed), oldest — most overdue — first."""
+    from .continuity import open_loops
+
+    return [audit_record(r) for r in open_loops(mem)]
+
+
+def api_close_loop(mem: "Memory", loop_id: str, resolution: str) -> dict[str, Any]:
+    """Close a commitment from the UI: records the resolution and supersedes the open loop."""
+    from .continuity import close_loop
+
+    try:
+        rec = close_loop(mem, loop_id, resolution or "closed via inspector", actor="inspector")
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "closed_by": audit_record(rec)}
+
+
+def api_audit_chain(mem: "Memory", *, limit: int = 50) -> dict[str, Any]:
+    """The tamper-evident mutation log: chain verification + the most recent entries (hashes only)."""
+    store = mem.store
+    if not hasattr(store, "verify_audit_log"):
+        return {"supported": False}
+    result = store.verify_audit_log()
+    return {"supported": True, **result, "tail": store.audit_log(limit=limit)}
+
+
 def api_overview(mem: "Memory") -> dict[str, Any]:
     """The memory-health dashboard a team/enterprise needs at a glance: counts, attributability (the
     compliance metric: fraction with both a source and an actor), revision activity, recency, and the
@@ -262,7 +301,8 @@ h3.grp:first-child{margin-top:0}
 .bar .bt{flex:1;height:8px;background:rgba(255,255,255,.07);border-radius:999px;overflow:hidden}
 .bar .bt i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--gold2),var(--gold));box-shadow:0 0 10px rgba(255,200,0,.3)}
 .bar .bv{width:38px;text-align:right;font-size:12.5px;color:var(--text);font-variant-numeric:tabular-nums;font-weight:500}
-@media(max-width:760px){.app{grid-template-columns:1fr}.side{position:static;height:auto;flex-direction:row;flex-wrap:wrap;align-items:center}.navlbl{display:none}.nav{display:flex;gap:2px;flex-wrap:wrap}.nav a.on::before{display:none}.foot{display:none}.main{padding:24px 20px}}
+.cpair{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px}
+@media(max-width:760px){.cpair{grid-template-columns:1fr}.app{grid-template-columns:1fr}.side{position:static;height:auto;flex-direction:row;flex-wrap:wrap;align-items:center}.navlbl{display:none}.nav{display:flex;gap:2px;flex-wrap:wrap}.nav a.on::before{display:none}.foot{display:none}.main{padding:24px 20px}}
 </style></head><body>
 <div class="app">
 <aside class="side">
@@ -274,6 +314,9 @@ h3.grp:first-child{margin-top:0}
 <a data-t="project"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Projects</a>
 <a data-t="changed"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/></svg>Changed</a>
 <a data-t="gov"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 3v6c0 5-3.5 7.6-8 9-4.5-1.4-8-4-8-9V6z"/></svg>Governance</a>
+<a data-t="conflicts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4m0 4h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>Conflicts</a>
+<a data-t="loops"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Open loops</a>
+<a data-t="auditlog"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h10M4 18h6"/><circle cx="18" cy="16" r="3"/><path d="M20.5 18.5L23 21"/></svg>Audit log</a>
 </nav>
 <div class="foot" id="foot"></div>
 </aside>
@@ -349,7 +392,32 @@ const V={
     <div class="meter"><i style="width:${pct}%"></i></div></div></div></div>
     <h3 class="grp">Evidence · ${a.evidence.length}</h3>`+(a.evidence.map(e=>card(e)).join('')||'<div class="empty">No supporting memory.</div>');};
   q.onkeydown=e=>{if(e.key==='Enter')go.click()};},
+ async conflicts(){main.innerHTML=head('Conflicts','Live beliefs that contradict each other — neither superseded the other. Resolve by forgetting the wrong one, or capture the corrected value.');
+  const cs=await get('/api/conflicts');
+  main.innerHTML+=cs.length?cs.map(c=>`<div class="card"><div class="meta">
+    <span class="tag sup">${esc(c.signal)}</span><span class="tag">similarity ${c.similarity}</span></div>
+    <div class="cpair">${[c.a,c.b].map(r=>card(r,
+     `<button class="btn ghost sm" onclick="forget('${r.id}')">forget this one</button>`)).join('')}</div></div>`).join('')
+   :'<div class="empty">No unresolved conflicts — every live belief agrees. ✓</div>';},
+ async loops(){main.innerHTML=head('Open loops','Promised work that was never closed — oldest (most overdue) first.');
+  const ls=await get('/api/loops');
+  main.innerHTML+=ls.length?ls.map(r=>card(r,
+    `<button class="btn ghost sm" onclick="closeLoop('${r.id}')">close loop</button>`)).join('')
+   :'<div class="empty">No open loops — every commitment is closed. ✓</div>';},
+ async auditlog(){main.innerHTML=head('Audit log','The tamper-evident mutation chain — every write, revision, and deletion, hash-linked. No memory content, only hashes.');
+  const a=await get('/api/audit_chain');
+  if(!a.supported){main.innerHTML+='<div class="empty">This store has no audit chain (in-memory or audit=off).</div>';return;}
+  main.innerHTML+=`<div class="verdict ${a.ok?'ok':'no'}"><div class="big">${a.ok?'✓':'✕'}</div>
+   <div><h2 class="${a.ok?'green':'red'}">${a.ok?'CHAIN INTACT':'CHAIN BROKEN'}</h2>
+   <div class="r">${a.entries} entries${a.ok?'':' · first invalid seq: '+a.first_invalid_seq+' — history after this point is untrusted'}</div></div></div>
+   <h3 class="grp">Most recent · ${a.tail.length}</h3>`
+   +a.tail.slice().reverse().map(e=>`<div class="rrow"><span class="tag">#${e.seq}</span>
+    <span class="tag ${e.op==='delete'?'sup':''}">${esc(e.op)}</span>
+    <span class="rc" style="font-family:monospace;font-size:12px">${esc(e.record_id.slice(0,8))} · sha ${esc(e.content_sha.slice(0,14))}…</span>
+    <span class="when">${ago(e.at)}</span></div>`).join('');},
 };
+async function closeLoop(id){const res=prompt('How was this loop closed? (recorded as the resolution)');
+ if(res===null)return;await post('/api/close_loop',{id,resolution:res});V[tab]();}
 async function openProj(name){const d=await get('/api/project?name='+encodeURIComponent(name));const o=d.overview,g=d.governance;
  const stat=(l,v,s='')=>`<div class="stat"><div class="sv">${v}</div><div class="sl">${l}</div>${s?`<div class="ss">${s}</div>`:''}</div>`;
  const bars=ob=>{const e=Object.entries(ob);if(!e.length)return '<div class="muted">—</div>';const mx=Math.max(...e.map(x=>x[1]));
@@ -416,6 +484,12 @@ def _make_handler(mem: "Memory"):
                 return self._json(api_diff(mem, hours=float(qs.get("hours", 24))))
             if u.path == "/api/audit":
                 return self._json(api_audit(mem, qs.get("query", ""), qs.get("use", "external_action")))
+            if u.path == "/api/conflicts":
+                return self._json(api_conflicts(mem, limit=int(qs.get("limit", 20))))
+            if u.path == "/api/loops":
+                return self._json(api_loops(mem))
+            if u.path == "/api/audit_chain":
+                return self._json(api_audit_chain(mem, limit=int(qs.get("limit", 50))))
             self._json({"error": "not found"}, 404)
 
         def do_POST(self) -> None:  # noqa: N802
@@ -423,6 +497,8 @@ def _make_handler(mem: "Memory"):
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
             if u.path == "/api/forget":
                 return self._json(api_forget(mem, body.get("id", "")))
+            if u.path == "/api/close_loop":
+                return self._json(api_close_loop(mem, body.get("id", ""), body.get("resolution", "")))
             self._json({"error": "not found"}, 404)
 
         def log_message(self, *args: Any) -> None:  # keep the console quiet

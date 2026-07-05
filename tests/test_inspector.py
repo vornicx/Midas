@@ -92,3 +92,36 @@ def test_api_overview_health_metrics() -> None:
     assert 0.0 <= o["attributable"] <= 1.0  # only the first record has source + actor
     assert o["by_kind"]["constraint"] == 3
     assert "by_provenance" in o and "projects" in o
+
+
+def test_api_conflicts_and_loops() -> None:
+    from midas.continuity import remember_commitment
+    from midas.inspector import api_close_loop, api_conflicts, api_loops
+
+    mem = _mem()
+    mem.remember("The primary database is PostgreSQL.", kind="constraint", actor="claude-code")
+    mem.remember("The primary database is MySQL.", kind="constraint", actor="cursor")
+    conflicts = api_conflicts(mem)
+    assert len(conflicts) == 1 and conflicts[0]["signal"] == "value"
+    assert {"a", "b", "similarity"} <= set(conflicts[0])
+
+    loop = remember_commitment(mem, "Migrate the sessions table to UUID keys.")
+    assert [r["id"] for r in api_loops(mem)] == [loop.id]
+    out = api_close_loop(mem, loop.id, "migrated in PR #42")
+    assert out["ok"] and api_loops(mem) == []
+    assert api_close_loop(mem, "nope", "x")["ok"] is False
+
+
+def test_api_audit_chain(tmp_path) -> None:
+    from midas.inspector import api_audit_chain
+    from midas.sqlite_store import SQLiteStore
+
+    assert api_audit_chain(_mem()) == {"supported": False}  # in-memory store has no chain
+
+    mem = Memory(store=SQLiteStore(str(tmp_path / "m.sqlite3")), embedder=HashingEmbedder())
+    mem.remember("The primary database is PostgreSQL.", kind="constraint")
+    out = api_audit_chain(mem)
+    assert out["supported"] and out["ok"] and out["entries"] == 1
+    assert out["tail"][0]["op"] == "put"
+    import json as _json
+    assert "PostgreSQL" not in _json.dumps(out)  # hashes only, never content
