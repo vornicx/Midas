@@ -161,10 +161,10 @@ export class Memory {
     this.now = opts.now ?? (() => Date.now() / 1000);
   }
 
-  remember(content: string, opts: RememberOptions = {}): MemoryRecord {
+  async remember(content: string, opts: RememberOptions = {}): Promise<MemoryRecord> {
     content = (content ?? "").trim();
     if (!content) throw new Error("Memory.remember: `content` is required");
-    const embedding = this.embedder.embed(content);
+    const embedding = await this.embedder.embed(content);
     const ts = opts.createdAt ?? this.now();
     const importance = this.deriveImportance(opts.importance ?? null, content);
     const provenance = opts.provenance ?? "observation";
@@ -190,7 +190,7 @@ export class Memory {
     return record;
   }
 
-  capture(content: string, opts: RememberOptions = {}): CaptureResult {
+  async capture(content: string, opts: RememberOptions = {}): Promise<CaptureResult> {
     content = (content ?? "").trim();
     if (!content) return { stored: false, reason: "empty content", record: null, importance: 0 };
     const scorer = this.importanceScorer ?? contentImportance;
@@ -208,7 +208,7 @@ export class Memory {
       };
     }
     if (this.policy.dedupThreshold > 0) {
-      const near = this.store.search(this.embedder.embed(content), { limit: 1 });
+      const near = this.store.search(await this.embedder.embed(content), { limit: 1 });
       if (near.length && near[0][0] >= this.policy.dedupThreshold) {
         const existing = near[0][1];
         const upgraded = this.upgradeProvenance(existing, opts);
@@ -220,7 +220,7 @@ export class Memory {
         };
       }
     }
-    const record = this.remember(content, { ...opts, kind, importance });
+    const record = await this.remember(content, { ...opts, kind, importance });
     return { stored: true, reason: "stored", record, importance };
   }
 
@@ -243,9 +243,9 @@ export class Memory {
     return clampImportance(this.importanceScorer ? this.importanceScorer(content) : 1);
   }
 
-  recall(query: string, opts: RecallOptions = {}): RecallHit[] {
+  async recall(query: string, opts: RecallOptions = {}): Promise<RecallHit[]> {
     const limit = opts.limit ?? DEFAULT_RECALL_LIMIT;
-    const qEmb = this.embedder.embed(query);
+    const qEmb = await this.embedder.embed(query);
     const now = opts.now ?? this.now();
     const predicate = (r: MemoryRecord): boolean => {
       if (opts.kind && r.kind !== opts.kind) return false;
@@ -398,13 +398,13 @@ export class Memory {
     return [...best.values()];
   }
 
-  buildContext(
+  async buildContext(
     query: string,
     opts: RecallOptions & { tokenBudget?: number; header?: boolean; maxRecordChars?: number } = {},
-  ): ContextBlock {
+  ): Promise<ContextBlock> {
     const budget = opts.tokenBudget ?? 512;
     const now = opts.now ?? this.now();
-    const hits = this.recall(query, { ...opts, now });
+    const hits = await this.recall(query, { ...opts, now });
     let records = hits.map((h) => h.record);
     if (this.supersede) records = records.filter((r) => this.resolveHead(r).id === r.id);
 
@@ -440,12 +440,12 @@ export class Memory {
     return this.store.delete(recordId);
   }
 
-  forgetMatching(
+  async forgetMatching(
     query: string,
     opts: { minRelevance?: number; limit?: number; metadataFilter?: Record<string, unknown> | null; dryRun?: boolean } = {},
-  ): MemoryRecord[] {
+  ): Promise<MemoryRecord[]> {
     const minRelevance = opts.minRelevance ?? 0.5;
-    const hits = this.recall(query, {
+    const hits = await this.recall(query, {
       limit: opts.limit ?? 20,
       minRelevance,
       metadataFilter: opts.metadataFilter ?? null,

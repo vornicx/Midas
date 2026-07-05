@@ -6,6 +6,38 @@ Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- **The continuity control-plane** (`midas/continuity.py` + MCP tools): **`resume`** — everything an
+  agent needs to pick up a session in ONE call (pinned directives, forbidden rules, current state,
+  what changed, open loops, unresolved conflicts; token-budgeted, prompt-ready); **`memory_conflicts`**
+  — live beliefs that contradict each other with neither superseding the other (the multi-agent
+  shared-memory failure mode), NLI-scored when available with a same-slot heuristic fallback, ranked
+  candidates only; **open loops** — `remember_commitment` / `open_loops` / `close_loop` make promised
+  work survive across sessions with an auditable promise→resolution chain. The injected agent policy
+  now starts sessions with `resume` and keeps promises via open loops.
+- **Per-kind TTL retention**: `Memory.forget_expired({"chat": 30})`, `MIDAS_MCP_TTL="chat=30,note=90"`,
+  and `maintain(ttl=…)` — age-based retention next to value-based forgetting; user-confirmed,
+  standing, and supersession-chain records never expire silently.
+- **Tamper-evident audit chain** in `SQLiteStore`: every put/delete/clear appends a hash-chained
+  entry (hashes only — never memory content); `midas audit [--json]` shows and verifies the chain and
+  `midas doctor` checks its integrity. `audit=False` opts out for perf-sensitive paths.
+- **`midas import --from claude-md | cursorrules | jsonl`**: file-based agent memory (CLAUDE.md,
+  .cursorrules, exported JSONL) becomes first-class Midas records — sectioned, deduped, idempotent,
+  and governance-safe by default (imported rules are `observation` provenance and cannot authorize
+  guarded actions unless you pass `--confirmed`).
+- **4 more clients in `midas init`**: VS Code (user `mcp.json`, `servers` key), Gemini CLI, Cline,
+  and Zed (`context_servers`) — each written in its own config schema; status/uninstall understand
+  them too.
+- **HTTP bearer-token auth**: `midas serve --http --token <secret>` / `MIDAS_MCP_TOKEN` gates every
+  request on the shared-URL transport (constant-time compare, 401 + `WWW-Authenticate` otherwise).
+- **`midas doctor --json`** — the machine-readable diagnosis, same envelope as the wiring receipt.
+- **TypeScript port: optional local semantic embeddings.** `LocalEmbedder` (ONNX via the optional
+  `@huggingface/transformers`, bge-small by default) behind `MIDAS_MCP_EMBEDDER=local`, with a clean
+  announced fallback to the byte-parity hashing embedder; the TS `Memory` API is now async
+  (`remember`/`capture`/`recall`/`buildContext`/`forgetMatching` return promises).
+- **CI on Windows and macOS** (core + MCP): the client-wiring code is full of per-OS paths that only
+  Linux exercised.
+
+### Added
 - **`midas init --json` / `midas status --json` — a machine-readable client wiring receipt** (#15).
   One command now yields a compact, pasteable proof of what was wired: per client its config path,
   detected/wired/changed state, backup path, and skip reason; plus the memory DB, scope mode

@@ -133,6 +133,10 @@ midas serve --http --token <secret>   # require `Authorization: Bearer <secret>`
 
 Keep Midas current with **`midas update`**. See your memory anytime with **`midas inspect`**.
 
+Already carrying agent memory in files? **`midas import --from claude-md CLAUDE.md`** (or
+`--from cursorrules .cursorrules`, `--from jsonl`) turns those rules into first-class, recallable,
+governable memories — tagged with where they came from, idempotent on re-run.
+
 <details>
 <summary><b>Manual setup</b> — any client, or to customize (click to expand)</summary>
 
@@ -155,7 +159,7 @@ by default — no path needed. The universal block:
 | **Cline** | `cline_mcp_settings.json` in VS Code global storage — `midas init` writes it |
 | **Zed** | `settings.json` → `context_servers` — `midas init` writes it |
 | **Anything else** | point it at command `midas-mcp` |
-| **No Python** | `npx -y midas-memory-mcp` — the [TypeScript port](packages/midas-ts) (experimental: no semantic embeddings yet) |
+| **No Python** | `npx -y midas-memory-mcp` — the [TypeScript port](packages/midas-ts) (experimental; semantic embeddings via optional `@huggingface/transformers`) |
 
 Override per client with env: **`MIDAS_MCP_DB`** (default `~/.midas/memory.sqlite3`; `:memory:` = ephemeral)
 · `MIDAS_MCP_MAX_RECORDS` · `MIDAS_MCP_MIN_IMPORTANCE` · `MIDAS_MCP_NAMESPACE`.

@@ -559,7 +559,64 @@ def cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def _import_rules(args: argparse.Namespace, source: str) -> int:
+    """Import rules-style files (CLAUDE.md / .cursorrules / generic JSONL) as first-class memories —
+    the migration on-ramp from file-based agent memory. Idempotent: re-running skips records whose
+    content is already present."""
+    from midas import Memory
+    from midas.importers import parse_markdown_rules, to_record_dicts
+    from midas.sqlite_store import SQLiteStore
+
+    db = _store_path(args.db)
+    _ensure_store(db)
+    mem = Memory(store=SQLiteStore(db))
+    path = Path(args.file).expanduser()
+    text = path.read_text()
+
+    if source == "jsonl":
+        dicts = []
+        for line in text.splitlines():
+            if not line.strip():
+                continue
+            d = json.loads(line)
+            dicts.append({
+                "content": d["content"], "kind": d.get("kind", "note"),
+                "importance": int(d.get("importance", 3)),
+                "provenance": d.get("provenance", "observation"),
+                "source": f"import:{path.name}",
+                "metadata": {**(d.get("metadata") or {}), "imported_from": path.name},
+            })
+    else:
+        items = parse_markdown_rules(text)
+        dicts = to_record_dicts(items, source_file=path.name,
+                                project=getattr(args, "project", None) or None,
+                                confirmed=getattr(args, "confirmed", False))
+    if not dicts:
+        print(f"nothing importable found in {path}", file=sys.stderr)
+        return 1
+
+    existing = {" ".join(r.content.split()).lower() for r in mem.store.all()}
+    added = skipped = 0
+    for d in dicts:
+        key = " ".join(d["content"].split()).lower()
+        if key in existing:
+            skipped += 1
+            continue
+        mem.remember(**d)
+        existing.add(key)
+        added += 1
+    note = f"  ({skipped} already present, skipped)" if skipped else ""
+    print(f"imported {added} rules from {path} into {db}{note}")
+    if source != "jsonl" and not getattr(args, "confirmed", False):
+        print("  provenance=observation — imported rules inform recall/planning but cannot authorize "
+              "guarded actions (re-run with --confirmed to vouch for them).")
+    return 0
+
+
 def cmd_import(args: argparse.Namespace) -> int:
+    source = getattr(args, "source", "midas")
+    if source != "midas":
+        return _import_rules(args, source)
     from midas.sqlite_store import SQLiteStore
     from midas.types import MemoryRecord
 
@@ -753,8 +810,16 @@ def main() -> None:
     pe.add_argument("-o", "--out", help="output file (default: stdout)")
     pe.set_defaults(func=cmd_export)
 
-    pm = sub.add_parser("import", help="import memory from a JSON file")
-    pm.add_argument("file", help="the .json produced by `midas export`")
+    pm = sub.add_parser("import", help="import memory (midas export JSON, CLAUDE.md, .cursorrules…)")
+    pm.add_argument("file", help="the file to import")
+    pm.add_argument("--from", dest="source", default="midas",
+                    choices=("midas", "claude-md", "cursorrules", "jsonl"),
+                    help="what the file is: a midas export (default), a rules markdown "
+                         "(CLAUDE.md/AGENTS.md), a .cursorrules, or generic JSONL records")
+    pm.add_argument("--project", help="tag imported rules with this project scope")
+    pm.add_argument("--confirmed", action="store_true",
+                    help="stamp imported rules as user-confirmed (they may then authorize "
+                         "guarded actions — only if you vouch for the file)")
     pm.add_argument("--db")
     pm.add_argument("--overwrite", action="store_true", help="overwrite records with the same id")
     pm.set_defaults(func=cmd_import)

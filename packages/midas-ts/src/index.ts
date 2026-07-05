@@ -1,5 +1,5 @@
 export * from "./types.js";
-export { HashingEmbedder, cosine, l2Normalize, tokenize, type Embedder } from "./embeddings.js";
+export { HashingEmbedder, LocalEmbedder, cosine, l2Normalize, tokenize, type Embedder } from "./embeddings.js";
 export { contentImportance, structuralImportance, type ImportanceScorer } from "./importance.js";
 export { BM25 } from "./bm25.js";
 export { InMemoryStore, SQLiteStore, type Predicate } from "./store.js";

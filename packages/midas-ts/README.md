@@ -46,12 +46,25 @@ npx midas-memory-mcp        # or: npm i -g midas-memory-mcp && midas-mcp
   belief revision with supersession chains, no-LLM importance scoring, selective forgetting with
   durable-tier protection.
 
+## Semantic embeddings (optional, local ONNX)
+
+Install the optional model runtime and set the same env `midas init` writes for every other client:
+
+```bash
+npm i @huggingface/transformers        # one-time; models cache locally after first download
+MIDAS_MCP_EMBEDDER=local midas-mcp     # bge-small (384d) via LocalEmbedder; any model id works too
+```
+
+Without the package (or with `MIDAS_MCP_EMBEDDER=hashing`), the server uses the offline hashing
+embedder and announces the fallback on stderr — recall still works, lexically. **Keep one embedder
+per store file**: vectors are model-specific, so don't point a bge-small process at a store written
+with the hashing embedder (or with Python's bge-base).
+
 ## Not ported (yet)
 
-- **Semantic ONNX embeddings** (bge / multilingual) — the default embedder here is the offline
-  hashing one (lexical-ish). For real semantic recall today, run the Python server; both can share
-  the same DB.
 - Local NLI contradiction gating, the cross-encoder reranker, and the eval harness.
+- The continuity control-plane (`resume`, `memory_conflicts`, open loops) and the hash-chained
+  audit log — Python-only for now.
 
 ## Requirements
 

@@ -1,11 +1,13 @@
 /** Midas as an MCP server (TypeScript) — same tool surface, env knobs, injected policy, and
  * SQLite schema as the Python `midas.mcp_server`, so the two are interchangeable and can even
- * share one DB file live. No LLM and no network at ingest/query (hashing embedder; a local ONNX
- * semantic embedder is the planned next step — use the Python server when you need bge today). */
+ * share one DB file live. No LLM and no network at ingest/query. MIDAS_MCP_EMBEDDER=local enables
+ * local ONNX semantic embeddings when the optional `@huggingface/transformers` package is
+ * installed; otherwise the byte-parity hashing embedder is used (and the fallback is announced). */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
+import { HashingEmbedder, LocalEmbedder, type Embedder } from "./embeddings.js";
 import { decideMemoryUse, MEMORY_USES, type MemoryUse } from "./guard.js";
 import { Memory, DEFAULT_POLICY } from "./memory.js";
 import { structuralImportance } from "./importance.js";
@@ -19,7 +21,26 @@ const ACTOR = process.env.MIDAS_MCP_ACTOR ?? "midas-mcp-ts";
 const NAMESPACE = process.env.MIDAS_MCP_NAMESPACE ?? "";
 const SUPERSEDE = process.env.MIDAS_MCP_SUPERSEDE !== "0";
 
-function buildMemory(): Memory {
+async function buildEmbedder(): Promise<Embedder> {
+  const choice = (process.env.MIDAS_MCP_EMBEDDER ?? "hashing").toLowerCase();
+  if (choice && choice !== "hashing") {
+    try {
+      // "local" -> the default bge-small; any other value is treated as a model id (Python parity).
+      const embedder = await (choice === "local"
+        ? LocalEmbedder.create()
+        : LocalEmbedder.create(process.env.MIDAS_MCP_EMBEDDER));
+      console.error(`[midas-mcp-ts] semantic embeddings: ${embedder.model} (${embedder.dim}d, local ONNX)`);
+      return embedder;
+    } catch (err) {
+      console.error(
+        `[midas-mcp-ts] local embedder unavailable (${(err as Error).message}) — using the offline hashing embedder`,
+      );
+    }
+  }
+  return new HashingEmbedder();
+}
+
+async function buildMemory(): Promise<Memory> {
   let store: InMemoryStore | undefined;
   const db = process.env.MIDAS_MCP_DB;
   if (db) {
@@ -28,13 +49,14 @@ function buildMemory(): Memory {
   }
   return new Memory({
     store,
+    embedder: await buildEmbedder(),
     importanceScorer: structuralImportance,
     policy: { ...DEFAULT_POLICY, minImportance: MIN_IMPORTANCE },
     supersede: SUPERSEDE,
   });
 }
 
-const mem = buildMemory();
+const mem = await buildMemory();
 
 function ns(namespace: string): string {
   return namespace || NAMESPACE;
@@ -105,7 +127,7 @@ export function createServer(): McpServer {
       },
     },
     async (args) => {
-      const rec = mem.remember(args.content, {
+      const rec = await mem.remember(args.content, {
         kind: args.kind as MemoryKind,
         importance: args.importance || null,
         source: `mcp:${args.session}`,
@@ -136,7 +158,7 @@ export function createServer(): McpServer {
       },
     },
     async (args) => {
-      const result = mem.capture(args.content, {
+      const result = await mem.capture(args.content, {
         kind: args.kind as MemoryKind,
         source: `mcp:${args.session}`,
         provenance: args.provenance,
@@ -170,7 +192,7 @@ export function createServer(): McpServer {
       },
     },
     async (args) => {
-      const hits = mem.recall(args.query, {
+      const hits = await mem.recall(args.query, {
         limit: args.limit,
         kind: (args.kind || null) as MemoryKind | null,
         minImportance: args.min_importance || null,
@@ -219,12 +241,12 @@ export function createServer(): McpServer {
     },
     async (args) =>
       text(
-        mem.buildContext(args.query, {
+        (await mem.buildContext(args.query, {
           tokenBudget: args.token_budget,
           limit: args.limit,
           hybrid: args.hybrid,
           metadataFilter: nsFilter(args.namespace),
-        }).text,
+        })).text,
       ),
   );
 
@@ -260,7 +282,7 @@ export function createServer(): McpServer {
       },
     },
     async (args) => {
-      const hits = mem.recall(args.query, { limit: args.limit, metadataFilter: nsFilter(args.namespace) });
+      const hits = await mem.recall(args.query, { limit: args.limit, metadataFilter: nsFilter(args.namespace) });
       return json(
         decideMemoryUse(hits.map((h) => h.record), {
           intendedUse: args.intended_use,
@@ -296,7 +318,7 @@ export function createServer(): McpServer {
       },
     },
     async (args) => {
-      const matched = mem.forgetMatching(args.query, {
+      const matched = await mem.forgetMatching(args.query, {
         minRelevance: args.min_relevance,
         limit: args.limit,
         metadataFilter: nsFilter(args.namespace),
