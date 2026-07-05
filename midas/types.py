@@ -10,7 +10,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-MemoryKind = Literal["note", "chat", "mission", "fact", "preference", "constraint"]
+MemoryKind = Literal["note", "chat", "mission", "fact", "preference", "constraint", "commitment"]
 MEMORY_KINDS: tuple[MemoryKind, ...] = (
     "note",
     "chat",
@@ -18,6 +18,7 @@ MEMORY_KINDS: tuple[MemoryKind, ...] = (
     "fact",
     "preference",
     "constraint",
+    "commitment",  # an open loop: work someone said WILL be done (close it via continuity.close_loop)
 )
 
 MemoryProvenance = Literal["planning", "action", "observation", "user_confirmation"]

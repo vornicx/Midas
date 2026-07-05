@@ -1337,6 +1337,35 @@ class Memory:
 
         return [rid for rid in to_drop if self.store.delete(rid)]
 
+    def forget_expired(
+        self,
+        ttl_by_kind: dict[str, float],
+        *,
+        now: float | None = None,
+        keep_chains: bool = True,
+    ) -> list[str]:
+        """Retention policy: delete records whose kind has outlived its TTL (`ttl_by_kind` maps kind ->
+        max age in DAYS, e.g. {"chat": 30, "note": 90}). This is age-based retention — the compliance
+        dial ("we keep chat for 30 days") — distinct from `forget_decayed`, which is value-based bounding.
+
+        Protections mirror the forgetting rules: supersession-chain members are kept (`keep_chains` —
+        belief history is audit material), and user-confirmed or standing/pinned records never expire
+        silently (an explicit `forget` outranks retention; a TTL should not). Returns the deleted ids,
+        oldest first — the retention audit trail. No LLM."""
+        now = now if now is not None else self._now()
+        records = self.store.all()
+        pointed_to = {r.superseded_by for r in records if r.superseded_by is not None}
+        expired = [
+            r for r in records
+            if r.kind in ttl_by_kind
+            and (now - r.created_at) > ttl_by_kind[r.kind] * 86_400.0
+            and r.provenance != "user_confirmation"
+            and not r.metadata.get("standing")
+            and not (keep_chains and (r.superseded_by is not None or r.id in pointed_to))
+        ]
+        expired.sort(key=lambda r: r.created_at)
+        return [r.id for r in expired if self.store.delete(r.id)]
+
     def forget(self, record_id: str) -> bool:
         """Delete one memory by id, repairing any supersession chain that runs through it.
 

@@ -369,3 +369,60 @@ def test_bearer_auth_middleware_gates_http() -> None:
     assert call("http", "Bearer wrong")[0]["status"] == 401
     assert call("http", None)[0]["status"] == 401
     assert call("lifespan", None)[0]["status"] == 200  # non-http scopes pass straight through
+
+
+def test_resume_and_loops_tools():
+    from midas.mcp_server import close_loop, open_loops, remember_commitment, resume
+
+    forget_all()
+    remember("The primary database is PostgreSQL.", kind="constraint", importance=5)
+    out = remember_commitment("Migrate the sessions table to UUID keys.", project="apollo")
+    assert "commitment recorded" in out
+    loop_id = out.split("(")[1].split(")")[0]
+
+    loops = open_loops(project="apollo")
+    assert loops["count"] == 1 and loops["open_loops"][0]["id"] == loop_id
+
+    pack = resume()
+    assert pack["counts"]["open_loops"] == 1
+    assert "OPEN LOOPS:" in pack["context"] and "PostgreSQL" in pack["context"]
+
+    assert "loop closed" in close_loop(loop_id, "migrated in PR #42")
+    assert open_loops()["count"] == 0
+    assert close_loop("nope-id", "x").startswith("no open commitment")
+    forget_all()  # the module-level store is shared across test files — leave it clean
+
+
+def test_memory_conflicts_tool():
+    from midas.mcp_server import memory_conflicts
+
+    forget_all()
+    # The provenance-integrity case: the user CONFIRMED PostgreSQL, then another agent wrote MySQL as
+    # an observation. Belief revision correctly refuses to launder the confirmed belief away — so both
+    # stay live and disagree. That unresolved disagreement is exactly what this tool surfaces.
+    remember("The primary database is PostgreSQL.", kind="constraint",
+             provenance="user_confirmation", actor="claude-code")
+    remember("The primary database is MySQL.", kind="constraint", actor="cursor")
+    out = memory_conflicts()
+    assert out["count"] == 1 and out["conflicts"][0]["signal"] == "value"
+    actors = {out["conflicts"][0]["a"]["actor"], out["conflicts"][0]["b"]["actor"]}
+    assert actors == {"claude-code", "cursor"}
+    forget_all()  # the module-level store is shared across test files — leave it clean
+
+
+def test_maintain_ttl():
+    import time as _t
+
+    from midas.mcp_server import _mem
+
+    forget_all()
+    remember("old chatter about the weather", kind="chat")
+    rec = _mem.store.all()[0]
+    rec.created_at = _t.time() - 40 * 86_400
+    _mem.store.put(rec)
+    remember("The primary database is PostgreSQL.", kind="constraint", importance=5)
+
+    out = maintain(ttl="chat=30")
+    assert out["expired"] == 1 and out["remaining"] == 1
+    assert stats()["by_kind"] == {"constraint": 1}
+    forget_all()  # the module-level store is shared across test files — leave it clean

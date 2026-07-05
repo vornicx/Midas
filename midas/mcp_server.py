@@ -32,6 +32,11 @@ Config (env):
                              and kept in context regardless of query relevance. Measured on BEAM
                              instruction-following recall@k: 0.26 off -> 0.44 at 2 (default) ->
                              0.51 at 4, overall unchanged-to-better (0 = off)
+    MIDAS_MCP_TTL          = age-based retention, "kind=days" comma list (e.g. "chat=30,note=90"),
+                             applied on maintenance passes; user-confirmed/standing records and
+                             supersession chains never expire (default: none)
+    MIDAS_MCP_TOKEN        = require `Authorization: Bearer <token>` on the HTTP transport — without
+                             it any local process can read/write the shared store (default: off)
 """
 from __future__ import annotations
 
@@ -51,6 +56,16 @@ from midas.coding import (
     project_state as _project_state_view,
     remember_code as _remember_code_impl,
 )
+from midas.continuity import (
+    close_loop as _close_loop_impl,
+    memory_conflicts as _conflicts_view,
+    open_loops as _open_loops_view,
+    remember_commitment as _remember_commitment_impl,
+    resume as _resume_view,
+)
+from midas.policy import parse_ttl_spec
+# Age-based retention (MIDAS_MCP_TTL="chat=30,note=90": kind -> days) applied on maintenance passes.
+_TTL = parse_ttl_spec(os.getenv("MIDAS_MCP_TTL", ""))
 
 # Auto-retention cap: when set, the store is kept at or below this many records by no-LLM selective
 # forgetting after each write — bounded memory for long-running/enterprise deployments.
@@ -508,6 +523,109 @@ def memory_diff(hours: float = 24.0, namespace: str = "") -> dict:
 
 
 @server.tool(
+    title="Resume session",
+    annotations=ToolAnnotations(title="Resume session", readOnlyHint=True, openWorldHint=False),
+)
+def resume(project: str = "", namespace: str = "", hours: float = 168.0,
+           token_budget: int = 900) -> dict:
+    """START OF SESSION: everything needed to pick up where the last session left off, in ONE call —
+    pinned standing directives, live forbidden rules, what changed in the last `hours` (default: a
+    week), the current durable state, open commitments, and unresolved memory conflicts. `context` is
+    prompt-ready and token-budgeted; use it silently, then work. Complements `build_context` (which
+    needs a query): resume is the query-less session start. Deterministic, no LLM.
+    """
+    pack = _resume_view(
+        _mem, scope=_ns_filter(namespace), project=project or None,
+        since=time.time() - float(hours) * 3600.0, token_budget=int(token_budget),
+    )
+    return {
+        "context": pack["context"],
+        "truncated": pack["truncated"],
+        "counts": {k: len(pack[k]) for k in
+                   ("pinned", "forbidden", "state", "added", "revised", "open_loops", "conflicts")},
+        "open_loops": [_serialize_record(r) for r in pack["open_loops"]],
+        "conflicts": [
+            {"signal": c.signal, "similarity": _round_score(c.similarity),
+             "a": _serialize_record(c.a), "b": _serialize_record(c.b)}
+            for c in pack["conflicts"]
+        ],
+    }
+
+
+@server.tool(
+    title="Memory conflicts",
+    annotations=ToolAnnotations(title="Memory conflicts", readOnlyHint=True, openWorldHint=False),
+)
+def memory_conflicts(namespace: str = "", limit: int = 10) -> dict:
+    """Live beliefs that CONTRADICT each other with neither superseding the other — the multi-agent
+    failure mode where two clients wrote opposite facts into the shared memory and both stayed live.
+    Returns ranked candidate pairs (NLI-scored when the local NLI model is enabled, else a same-slot
+    heuristic: numbers disagree / one side negates). Midas never resolves these silently: verify with
+    the user, then `forget` the wrong one or capture the corrected value (which supersedes). No LLM.
+    """
+    found = _conflicts_view(_mem, scope=_ns_filter(namespace), limit=int(limit))
+    return {
+        "count": len(found),
+        "conflicts": [
+            {"signal": c.signal, "similarity": _round_score(c.similarity),
+             "strength": _round_score(c.strength),
+             "a": _serialize_record(c.a), "b": _serialize_record(c.b)}
+            for c in found
+        ],
+    }
+
+
+@server.tool(
+    title="Open loops",
+    annotations=ToolAnnotations(title="Open loops", readOnlyHint=True, openWorldHint=False),
+)
+def open_loops(project: str = "", namespace: str = "", limit: int = 20) -> dict:
+    """Unresolved commitments — work someone said WOULD be done and never closed — oldest (most
+    overdue) first. Continuity is not only facts: check this when resuming so promised work isn't
+    silently dropped. Record one with `remember_commitment`; close it with `close_loop`.
+    """
+    scope = _ns_filter(namespace) or {}
+    if project:
+        scope["project"] = project
+    records = _open_loops_view(_mem, scope=scope or None, limit=int(limit))
+    return {"count": len(records), "open_loops": [_serialize_record(r) for r in records]}
+
+
+@server.tool(
+    title="Remember commitment",
+    annotations=ToolAnnotations(title="Remember commitment", readOnlyHint=False,
+                                destructiveHint=False),
+)
+def remember_commitment(content: str, project: str = "", due: str = "", session: str = "default",
+                        namespace: str = "") -> str:
+    """Record a commitment (an OPEN LOOP): work you or the user said WILL be done — a promised fix,
+    a follow-up, a migration to finish. It stays visible in `open_loops`/`resume` until closed with
+    `close_loop`, so promises survive across sessions. due: optional free-text deadline.
+    """
+    rec = _remember_commitment_impl(
+        _mem, content, project=project or None, due=due or None, actor=_ACTOR,
+        source=_source(session), metadata=_ns_metadata(namespace, session),
+    )
+    return f"commitment recorded ({rec.id}) — close it with close_loop when done"
+
+
+@server.tool(
+    title="Close loop",
+    annotations=ToolAnnotations(title="Close loop", readOnlyHint=False, destructiveHint=False),
+)
+def close_loop(loop_id: str, resolution: str) -> str:
+    """Close an open commitment: records the resolution and supersedes the open loop with it, so
+    `open_loops` stops returning it while the promise -> resolution history stays auditable. Get
+    `loop_id` from `open_loops` (the record id).
+    """
+    try:
+        rec = _close_loop_impl(_mem, loop_id, resolution, actor=_ACTOR)
+    except ValueError as exc:
+        return str(exc)
+    return f"loop closed ({loop_id} -> {rec.id})"
+
+
+@server.tool(
     title="Project state",
     annotations=ToolAnnotations(title="Project state", readOnlyHint=True, openWorldHint=False),
 )
@@ -665,7 +783,8 @@ def forget_all() -> str:
     title="Maintain memory",
     annotations=ToolAnnotations(title="Maintain memory", readOnlyHint=False, destructiveHint=True),
 )
-def maintain(consolidate_threshold: float = 0.0, max_records: int = 0, min_value: float = 0.0) -> dict:
+def maintain(consolidate_threshold: float = 0.0, max_records: int = 0, min_value: float = 0.0,
+             ttl: str = "") -> dict:
     """Run a no-LLM memory-maintenance pass and return the deletion audit.
 
     Bounds storage and keeps recall clean without sending anything to an LLM — the enterprise
@@ -673,10 +792,14 @@ def maintain(consolidate_threshold: float = 0.0, max_records: int = 0, min_value
       - consolidate_threshold: if > 0, dedup near-duplicate restatements at this cosine (e.g. 0.95).
       - max_records: if > 0, forget the lowest-value tail until at most this many remain.
       - min_value: if > 0, forget every (non-durable, unprotected) memory scoring below this value.
+      - ttl: age-based retention, "kind=days" comma list (e.g. "chat=30,note=90"); empty uses the
+        server's MIDAS_MCP_TTL. User-confirmed/standing records and supersession chains never expire.
     Durable memories (facts/preferences/constraints, high importance) and supersession chains are
     never dropped. Returns counts and the ids removed (auditable).
     """
     before = len(_mem.store.all())
+    ttl_map = parse_ttl_spec(ttl) if ttl else _TTL
+    expired = _mem.forget_expired(ttl_map) if ttl_map else []
     consolidated = (
         _mem.consolidate(similarity_threshold=float(consolidate_threshold))
         if consolidate_threshold and consolidate_threshold > 0
@@ -693,9 +816,10 @@ def maintain(consolidate_threshold: float = 0.0, max_records: int = 0, min_value
     return {
         "before": before,
         "remaining": len(_mem.store.all()),
+        "expired": len(expired),
         "consolidated": len(consolidated),
         "forgotten": len(forgotten),
-        "removed_ids": consolidated + forgotten,  # the deletion audit trail
+        "removed_ids": expired + consolidated + forgotten,  # the deletion audit trail
     }
 
 
@@ -773,14 +897,16 @@ def distill(session: str = "default") -> str:
 
 
 def _run_maintenance_pass() -> dict:
-    """One no-LLM upkeep pass: collapse near-duplicate restatements and re-bound the store.
+    """One no-LLM upkeep pass: expire per-kind TTLs, collapse near-duplicate restatements, and
+    re-bound the store.
 
     This is the sleep-time idea (reorganise memory while the agent is idle) at Midas prices:
     extractive consolidation + value-ranked forgetting, $0, nothing leaves the box — versus
     LLM-agent rewrites of memory in systems like Letta's sleep-time agents."""
+    expired = _mem.forget_expired(_TTL) if _TTL else []
     consolidated = _mem.consolidate(similarity_threshold=0.95)
     forgotten = _mem.forget_decayed(max_records=_MAX_RECORDS) if _MAX_RECORDS else []
-    return {"consolidated": len(consolidated), "forgotten": len(forgotten)}
+    return {"expired": len(expired), "consolidated": len(consolidated), "forgotten": len(forgotten)}
 
 
 def _auto_maintain_loop(interval_seconds: float) -> None:
@@ -790,7 +916,7 @@ def _auto_maintain_loop(interval_seconds: float) -> None:
         _time.sleep(interval_seconds)
         try:
             result = _run_maintenance_pass()
-            if result["consolidated"] or result["forgotten"]:
+            if any(result.values()):
                 print(f"[midas-mcp] auto-maintain: {result}", file=sys.stderr)
         except Exception as exc:  # never let upkeep kill the server
             print(f"[midas-mcp] auto-maintain error: {exc}", file=sys.stderr)

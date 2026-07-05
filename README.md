@@ -192,15 +192,19 @@ server runs in. Or scope it manually per project/agent/user with `MIDAS_MCP_NAME
 <summary><b>All tools & env knobs</b></summary>
 
 **Tools:** `remember`, `capture` (policy-gated auto-store), `recall` (source-traceable), `build_context`
-(compact, dated, today-anchored prompt block), `memory_state` (current project state), `memory_diff`
-(what changed since), `check_memory_use` (guard), `memory_policy`, `maintain` (dedup + forgetting, returns
-a deletion audit), `stats`, `forget` (chain-safe), `forget_matching` (topic-level erasure, dry-run by
-default), `forget_all`. Prompts: `memory_session`, `distill`.
+(compact, dated, today-anchored prompt block), `resume` (the one-call session-onboarding pack: pinned +
+state + changes + open loops + conflicts), `memory_state` (current project state), `memory_diff`
+(what changed since), `memory_conflicts` (live beliefs that contradict each other, ranked),
+`open_loops` / `remember_commitment` / `close_loop` (promised work that survives sessions),
+`check_memory_use` (guard), `memory_policy`, `maintain` (TTL + dedup + forgetting, returns a deletion
+audit), `stats`, `forget` (chain-safe), `forget_matching` (topic-level erasure, dry-run by default),
+`forget_all`. Prompts: `memory_session`, `distill`.
 
 **Env:** `MIDAS_MCP_DB` · `MIDAS_MCP_EMBEDDER` (`local` / `hashing` / `multilingual` / any fastembed id) ·
 `MIDAS_MCP_MAX_RECORDS` · `MIDAS_MCP_MIN_IMPORTANCE` · `MIDAS_MCP_NAMESPACE` (`=auto` → per-project scope) · `MIDAS_MCP_ANN=1` (sub-linear
 IVF for huge stores) · `MIDAS_MCP_SUPERSEDE` · `MIDAS_MCP_NLI=1` (NLI-gated revision) ·
-`MIDAS_MCP_AUTO_MAINTAIN=<min>` (idle-time upkeep) · `MIDAS_MCP_PINNED` (pin standing directives).
+`MIDAS_MCP_AUTO_MAINTAIN=<min>` (idle-time upkeep) · `MIDAS_MCP_PINNED` (pin standing directives) ·
+`MIDAS_MCP_TTL` (per-kind retention, e.g. `chat=30,note=90`) · `MIDAS_MCP_TOKEN` (HTTP bearer auth).
 
 </details>
 

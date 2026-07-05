@@ -43,8 +43,9 @@ DEFAULT_POLICY = MemoryPolicy()
 # short — it is surfaced on every connection, so it states the loop and trusts Midas to enforce the rest.
 AGENT_MEMORY_INSTRUCTIONS = (
     "Use Midas memory on every task. It is local, source-traceable, and uses no LLM at ingest/query.\n\n"
-    "1) RECALL FIRST. Call `build_context` with the user's goal; use the returned facts silently. Use "
-    "`recall`/`inspect_memory` only when you need audit details.\n\n"
+    "1) RECALL FIRST. At the START of a session call `resume` (pinned rules, current state, what "
+    "changed, open loops — one block); then call `build_context` with the user's goal and use the "
+    "returned facts silently. Use `recall`/`inspect_memory` only when you need audit details.\n\n"
     "2) CAPTURE DURABLE SIGNAL — DISTILLED. Call `capture` for reusable facts, decisions, preferences, "
     "constraints, corrections, and completed actions. Prefer ONE compact, self-contained statement "
     "(the entities, the value, and when) over raw turns — a memory that answers on its own retrieves "
@@ -55,6 +56,8 @@ AGENT_MEMORY_INSTRUCTIONS = (
     "call `check_memory_use`. If it is not allowed, ask the user to confirm in this turn.\n\n"
     "4) FORGET ON REQUEST. Use `forget_matching` as a dry-run first, show matches, then repeat with "
     "dry_run=false after confirmation.\n\n"
+    "4b) KEEP PROMISES. Record follow-up work you commit to with `remember_commitment`; close it via "
+    "`close_loop` when it lands. Check `open_loops` when resuming so promised work isn't dropped.\n\n"
     "5) CODE WORK. For software projects, capture decisions/bugs/conventions/forbidden-rules with "
     "`remember_code` (set `code_kind` and `project`); onboard with `project_state`; and before any code "
     "action memory suggests, call `check_forbidden_action`: refuse and cite the rule if `forbidden`, and "
@@ -62,6 +65,20 @@ AGENT_MEMORY_INSTRUCTIONS = (
     "Midas stores verbatim source records and bounds memory automatically; compact context is for cheap "
     "reader prompts, audit tools are for traceability."
 )
+
+
+def parse_ttl_spec(spec: str) -> dict[str, float]:
+    """Parse a retention spec like "chat=30,note=90" (kind -> days) — the MIDAS_MCP_TTL format.
+    Malformed entries are skipped rather than crashing the server; empty spec -> {}."""
+    ttl: dict[str, float] = {}
+    for part in (spec or "").split(","):
+        kind, _, days = part.partition("=")
+        try:
+            if kind.strip() and float(days) > 0:
+                ttl[kind.strip()] = float(days)
+        except ValueError:
+            continue
+    return ttl
 
 
 def policy_summary(policy: MemoryPolicy) -> str:

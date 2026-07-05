@@ -24,10 +24,24 @@ from .guard import (
     ProvenanceStamp,
     decide_memory_use,
 )
+from .continuity import (
+    Conflict,
+    close_loop,
+    memory_conflicts,
+    open_loops,
+    remember_commitment,
+    resume,
+)
 from .distill import Distiller, HTTPDistiller, OllamaDistiller
 from .importance import ContentImportance, StructuralImportance, is_standing_instruction
 from .memory import CaptureResult, ContextBlock, Memory, Reranker, approx_tokens, format_record
-from .policy import AGENT_MEMORY_INSTRUCTIONS, DEFAULT_POLICY, MemoryPolicy, policy_summary
+from .policy import (
+    AGENT_MEMORY_INSTRUCTIONS,
+    DEFAULT_POLICY,
+    MemoryPolicy,
+    parse_ttl_spec,
+    policy_summary,
+)
 from .index import MemoryStore, VectorIndex
 from .store import InMemoryStore
 from .types import MEMORY_KINDS, MEMORY_PROVENANCE, MemoryKind, MemoryProvenance, MemoryRecord, RecallHit
@@ -68,6 +82,13 @@ __all__ = [
     "DEFAULT_POLICY",
     "AGENT_MEMORY_INSTRUCTIONS",
     "policy_summary",
+    "parse_ttl_spec",
+    "Conflict",
+    "memory_conflicts",
+    "resume",
+    "open_loops",
+    "remember_commitment",
+    "close_loop",
     "CaptureResult",
     "ContextBlock",
     "Reranker",
