@@ -55,17 +55,60 @@ def _claude_desktop_path() -> Path | None:
     return Path.home() / ".config/Claude/claude_desktop_config.json"
 
 
+def _vscode_user_dir() -> Path:
+    if sys.platform == "darwin":
+        return Path.home() / "Library/Application Support/Code/User"
+    if sys.platform.startswith("win"):
+        ad = os.getenv("APPDATA")
+        return (Path(ad) if ad else Path.home() / "AppData/Roaming") / "Code" / "User"
+    return Path.home() / ".config/Code/User"
+
+
+def _zed_settings_path() -> Path:
+    if sys.platform.startswith("win"):
+        ad = os.getenv("APPDATA")
+        return (Path(ad) if ad else Path.home() / "AppData/Roaming") / "Zed" / "settings.json"
+    return Path.home() / ".config/zed/settings.json"
+
+
+# Every JSON-configured client Midas can wire: (display name, client id, config path, JSON key holding
+# the server map, block shape). Shapes differ per client — see _client_block.
+def _json_clients() -> list[tuple[str, str, Path, str, str]]:
+    out = [("Cursor", "cursor", Path.home() / ".cursor/mcp.json", "mcpServers", "std"),
+           ("Windsurf", "windsurf", Path.home() / ".codeium/windsurf/mcp_config.json",
+            "mcpServers", "std"),
+           ("VS Code", "vscode", _vscode_user_dir() / "mcp.json", "servers", "vscode"),
+           ("Gemini CLI", "gemini-cli", Path.home() / ".gemini/settings.json", "mcpServers", "std"),
+           ("Cline", "cline", _vscode_user_dir() / "globalStorage/saoudrizwan.claude-dev/settings"
+            / "cline_mcp_settings.json", "mcpServers", "std"),
+           ("Zed", "zed", _zed_settings_path(), "context_servers", "zed")]
+    cd = _claude_desktop_path()
+    if cd:
+        out.append(("Claude Desktop", "claude-desktop", cd, "mcpServers", "std"))
+    return out
+
+
+def _client_block(shape: str, env: dict) -> dict:
+    """The `midas` server entry in the schema each client expects."""
+    if shape == "vscode":   # VS Code mcp.json declares the transport type explicitly
+        return {"type": "stdio", "command": "midas-mcp", "env": env}
+    if shape == "zed":      # Zed's context_servers entries are flat command + args
+        return {"source": "custom", "command": "midas-mcp", "args": [], "env": env}
+    return {"command": "midas-mcp", "env": env}
+
+
 # ---- init -------------------------------------------------------------------------------------
 
-def _merge_mcp_json(path: Path, block: dict, *, dry: bool) -> str:
-    """Add/refresh a `midas` entry in a client's mcpServers JSON, non-destructively (merge + backup)."""
+def _merge_mcp_json(path: Path, block: dict, *, dry: bool, key: str = "mcpServers") -> str:
+    """Add/refresh a `midas` entry in a client's server-map JSON, non-destructively (merge + backup).
+    `key` is the JSON key holding the server map (mcpServers / servers / context_servers)."""
     cfg: dict = {}
     if path.exists():
         try:
             cfg = json.loads(path.read_text() or "{}")
         except Exception:
             return f"⚠  {path} is not valid JSON — add `midas` by hand"
-    servers = cfg.setdefault("mcpServers", {})
+    servers = cfg.setdefault(key, {})
     verb = "update" if "midas" in servers else "add"
     if dry:
         return f"would {verb} → {path}"
@@ -192,19 +235,14 @@ def cmd_init(args: argparse.Namespace) -> int:
                changed=ok and not dry, reason=msg if (dry or not ok) else None)
 
     # Clients configured by a JSON file (only the ones already present, unless --all):
-    targets = [("Cursor", "cursor", Path.home() / ".cursor/mcp.json"),
-               ("Windsurf", "windsurf", Path.home() / ".codeium/windsurf/mcp_config.json")]
-    cd = _claude_desktop_path()
-    if cd:
-        targets.append(("Claude Desktop", "claude-desktop", cd))
-    for name, client_id, path in targets:
+    for name, client_id, path, key, shape in _json_clients():
         if not (path.exists() or args.all):
             record(name, path, detected=False, wired=False, changed=False,
                    reason="config not found (skipped — use --all to configure anyway)")
             continue
         existed, was = path.exists(), already_wired(path)
-        block = {"command": "midas-mcp", "env": env_for(client_id)}
-        msg = _merge_mcp_json(path, block, dry=dry)
+        block = _client_block(shape, env_for(client_id))
+        msg = _merge_mcp_json(path, block, dry=dry, key=key)
         results.append((name, msg))
         ok = not msg.startswith("⚠")
         record(name, path, detected=existed, wired=was if dry else ok, changed=ok and not dry,
@@ -236,6 +274,8 @@ def cmd_init(args: argparse.Namespace) -> int:
 def cmd_serve(args: argparse.Namespace) -> int:
     if args.db:  # set BEFORE importing mcp_server (it builds its store at import)
         os.environ["MIDAS_MCP_DB"] = _store_path(args.db)
+    if getattr(args, "token", None):
+        os.environ["MIDAS_MCP_TOKEN"] = args.token
     from midas import mcp_server
 
     mcp_server.run_server("http" if args.http else "stdio", host=args.host, port=args.port)
@@ -244,8 +284,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
 # ---- status -----------------------------------------------------------------------------------
 
-def _midas_server_entry(path: Path) -> dict | None:
-    """Parse the `midas` server entry out of a client config (JSON mcpServers / codex TOML), so the
+def _midas_server_entry(path: Path, key: str = "mcpServers") -> dict | None:
+    """Parse the `midas` server entry out of a client config (JSON server map / codex TOML), so the
     receipt can state which command + MIDAS_* env — i.e. which memory and scope — that client actually
     got. Only MIDAS_* env keys are surfaced (the audit boundary excludes anything else a user added)."""
     text = _safe_read(path)
@@ -255,9 +295,9 @@ def _midas_server_entry(path: Path) -> dict | None:
         if path.suffix == ".toml":
             import tomllib
 
-            servers = tomllib.loads(text).get("mcp_servers") or {}
+            servers = tomllib.loads(text).get(key) or {}
         else:
-            servers = json.loads(text).get("mcpServers") or {}
+            servers = json.loads(text).get(key) or {}
     except Exception:
         return None
     entry = servers.get("midas")
@@ -294,9 +334,9 @@ def cmd_status(args: argparse.Namespace) -> int:
 
     clients: list[dict] = []
     ns_values: set = set()
-    for name, p in _client_paths():
+    for name, p, key in _client_paths():
         wired = p.exists() and "midas" in _safe_read(p)
-        entry = _midas_server_entry(p) if wired else None
+        entry = _midas_server_entry(p, key) if wired else None
         env = entry["env"] if entry else {}
         if entry:
             ns_values.add(env.get("MIDAS_MCP_NAMESPACE"))
@@ -360,19 +400,16 @@ def cmd_inspect(args: argparse.Namespace) -> int:
 
 # ---- shared client detection ------------------------------------------------------------------
 
-def _client_paths() -> list[tuple[str, Path]]:
-    paths = [("Claude Code", Path.home() / ".claude.json"),
-             ("Cursor", Path.home() / ".cursor/mcp.json"),
-             ("Codex", Path.home() / ".codex/config.toml"),
-             ("Windsurf", Path.home() / ".codeium/windsurf/mcp_config.json")]
-    cd = _claude_desktop_path()
-    if cd:
-        paths.append(("Claude Desktop", cd))
+def _client_paths() -> list[tuple[str, Path, str]]:
+    """Every client Midas knows how to check: (name, config path, JSON/TOML key of the server map)."""
+    paths = [("Claude Code", Path.home() / ".claude.json", "mcpServers"),
+             ("Codex", Path.home() / ".codex/config.toml", "mcp_servers")]
+    paths += [(name, p, key) for name, _cid, p, key, _shape in _json_clients()]
     return paths
 
 
 def _wired_clients() -> list[str]:
-    return [name for name, p in _client_paths() if p.exists() and "midas" in _safe_read(p)]
+    return [name for name, p, _k in _client_paths() if p.exists() and "midas" in _safe_read(p)]
 
 
 # ---- doctor -----------------------------------------------------------------------------------
@@ -380,14 +417,11 @@ def _wired_clients() -> list[str]:
 def cmd_doctor(args: argparse.Namespace) -> int:
     from midas import __version__
 
-    ok = True
+    checks: list[dict] = []
 
     def check(good: bool, label: str, hint: str = "") -> None:
-        nonlocal ok
-        ok = ok and good
-        print(f"  {'✓' if good else '⚠'}  {label}" + (f"  — {hint}" if hint and not good else ""))
+        checks.append({"ok": good, "check": label, "hint": hint if (hint and not good) else None})
 
-    print(f"Midas {__version__}  ·  Python {sys.version.split()[0]}\n")
     check(shutil.which("midas-mcp") is not None, "midas-mcp on PATH",
           "reinstall, or use the absolute path from `which midas-mcp` in your client config")
 
@@ -418,6 +452,27 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     wired = _wired_clients()
     check(bool(wired), f"clients wired: {', '.join(wired) if wired else 'none'}", "run `midas init`")
+    ok = all(c["ok"] for c in checks)
+
+    if getattr(args, "json", False):  # same audit boundary as the wiring receipt: no memory contents
+        from datetime import datetime, timezone
+
+        print(json.dumps({
+            "midas_version": __version__,
+            "receipt_kind": "doctor",
+            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds")
+            .replace("+00:00", "Z"),
+            "python": sys.version.split()[0],
+            "memory_db": db,
+            "ok": ok,
+            "checks": checks,
+            "clients_wired": wired,
+        }, indent=2))
+        return 0 if ok else 1
+
+    print(f"Midas {__version__}  ·  Python {sys.version.split()[0]}\n")
+    for c in checks:
+        print(f"  {'✓' if c['ok'] else '⚠'}  {c['check']}" + (f"  — {c['hint']}" if c["hint"] else ""))
     print("\n" + ("Everything looks good." if ok else "Some checks need attention (see ⚠ above)."))
     return 0 if ok else 1
 
@@ -488,12 +543,7 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     r = _cli_remove("codex", ["codex", "mcp", "remove", "midas"])
     if r:
         results.append(("Codex", r))
-    json_targets = [("Cursor", Path.home() / ".cursor/mcp.json"),
-                    ("Windsurf", Path.home() / ".codeium/windsurf/mcp_config.json")]
-    cd = _claude_desktop_path()
-    if cd:
-        json_targets.append(("Claude Desktop", cd))
-    for name, path in json_targets:
+    for name, _cid, path, key, _shape in _json_clients():
         if not path.exists():
             continue
         try:
@@ -501,9 +551,9 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
         except Exception:
             results.append((name, "left as-is (unparseable)"))
             continue
-        if "midas" in cfg.get("mcpServers", {}):
+        if "midas" in cfg.get(key, {}):
             shutil.copy(path, str(path) + ".midas-bak")
-            del cfg["mcpServers"]["midas"]
+            del cfg[key]["midas"]
             path.write_text(json.dumps(cfg, indent=2) + "\n")
             results.append((name, "removed"))
     for name, msg in results:
@@ -609,6 +659,8 @@ def main() -> None:
     ps.add_argument("--http", action="store_true", help="serve over HTTP at an MCP URL all clients share")
     ps.add_argument("--host", default="127.0.0.1")
     ps.add_argument("--port", type=int, default=7077)
+    ps.add_argument("--token", help="require this bearer token on every HTTP request "
+                    "(same as MIDAS_MCP_TOKEN)")
     ps.add_argument("--db")
     ps.set_defaults(func=cmd_serve)
 
@@ -633,6 +685,8 @@ def main() -> None:
 
     pd = sub.add_parser("doctor", help="diagnose your install, store, and client config")
     pd.add_argument("--db")
+    pd.add_argument("--json", action="store_true",
+                    help="print a machine-readable diagnosis instead of text")
     pd.set_defaults(func=cmd_doctor)
 
     pe = sub.add_parser("export", help="export all memory to JSON (backup / move machines)")

@@ -20,3 +20,22 @@ jobs:
         run: pip install ".[all,dev]"
       - name: Run the suite
         run: python -m pytest -q
+
+  # The client-wiring code is full of per-OS paths (Claude Desktop, VS Code, Zed live in three
+  # different places) — exercise it where those branches actually run. Core + MCP only: the heavy
+  # embedding extras are covered by the Linux job, and the suite degrades gracefully without them.
+  test-os:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install (core + MCP + dev)
+        run: pip install ".[mcp,dev]" numpy
+      - name: Run the suite
+        run: python -m pytest -q

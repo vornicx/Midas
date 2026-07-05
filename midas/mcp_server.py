@@ -796,9 +796,34 @@ def _auto_maintain_loop(interval_seconds: float) -> None:
             print(f"[midas-mcp] auto-maintain error: {exc}", file=sys.stderr)
 
 
+class _BearerAuth:
+    """Minimal ASGI middleware: reject any HTTP request that doesn't carry `Authorization: Bearer
+    <MIDAS_MCP_TOKEN>`. The HTTP transport turns one process into a shared memory endpoint — without
+    this, ANY local process (or anyone on the interface you bind) could read and write the whole store.
+    Constant-time comparison; stdio transport is unaffected."""
+
+    def __init__(self, app, token: str) -> None:
+        self.app, self._expected = app, f"Bearer {token}"
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            import hmac
+
+            sent = next((v.decode("latin-1") for k, v in scope.get("headers") or []
+                         if k == b"authorization"), "")
+            if not hmac.compare_digest(sent, self._expected):
+                await send({"type": "http.response.start", "status": 401,
+                            "headers": [(b"content-type", b"text/plain"),
+                                        (b"www-authenticate", b"Bearer")]})
+                await send({"type": "http.response.body", "body": b"unauthorized"})
+                return
+        await self.app(scope, receive, send)
+
+
 def run_server(transport: str = "stdio", host: str = "127.0.0.1", port: int = 7077) -> None:
     """Run the MCP server. transport='stdio' (default — each client launches it) or 'http' (one shared
-    server at an MCP URL: http://host:port/mcp). The `midas` CLI calls this; `midas-mcp` uses stdio."""
+    server at an MCP URL: http://host:port/mcp). The `midas` CLI calls this; `midas-mcp` uses stdio.
+    Set MIDAS_MCP_TOKEN (or `midas serve --token`) to require a bearer token on the HTTP transport."""
     interval_min = int(os.getenv("MIDAS_MCP_AUTO_MAINTAIN", "0") or "0")
     if interval_min > 0:
         import threading
@@ -811,7 +836,14 @@ def run_server(transport: str = "stdio", host: str = "127.0.0.1", port: int = 70
         server.settings.host = host
         server.settings.port = port
         print(f"[midas-mcp] MCP URL -> http://{host}:{port}/mcp  (Ctrl-C to stop)", file=sys.stderr)
-        server.run(transport="streamable-http")
+        token = os.getenv("MIDAS_MCP_TOKEN", "")
+        if token:
+            import uvicorn
+
+            print("[midas-mcp] bearer-token auth enabled (MIDAS_MCP_TOKEN)", file=sys.stderr)
+            uvicorn.run(_BearerAuth(server.streamable_http_app(), token), host=host, port=port)
+        else:
+            server.run(transport="streamable-http")
     else:
         server.run()
 

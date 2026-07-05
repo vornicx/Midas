@@ -341,3 +341,31 @@ def test_distill_prompt_drives_no_llm_distillation():
     assert "compact, self-contained" in text
     assert "capture" in text and "proj-a" in text
     assert "no extra tool/model needed" in text or "no Midas-LLM" in text or "no extra" in text
+
+
+def test_bearer_auth_middleware_gates_http() -> None:
+    """The HTTP transport must reject requests without the exact bearer token (401 + WWW-Authenticate),
+    pass authorized ones through, and leave non-http scopes (lifespan) untouched."""
+    import asyncio
+
+    from midas.mcp_server import _BearerAuth
+
+    async def app(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+
+    mw = _BearerAuth(app, "s3cret")
+
+    def call(scope_type: str, auth: str | None):
+        headers = [(b"authorization", auth.encode())] if auth else []
+        events: list = []
+
+        async def send(ev):
+            events.append(ev)
+
+        asyncio.run(mw({"type": scope_type, "headers": headers}, None, send))
+        return events
+
+    assert call("http", "Bearer s3cret")[0]["status"] == 200
+    assert call("http", "Bearer wrong")[0]["status"] == 401
+    assert call("http", None)[0]["status"] == 401
+    assert call("lifespan", None)[0]["status"] == 200  # non-http scopes pass straight through

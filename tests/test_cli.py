@@ -114,6 +114,71 @@ def test_status_json_parses_codex_toml(tmp_path, capsys, monkeypatch) -> None:
     assert receipt["scope_mode"] == "shared"  # no namespace anywhere → one shared pool
 
 
+def test_client_block_shapes() -> None:
+    env = {"MIDAS_MCP_EMBEDDER": "local"}
+    assert cli._client_block("std", env) == {"command": "midas-mcp", "env": env}
+    assert cli._client_block("vscode", env)["type"] == "stdio"       # VS Code declares the transport
+    zed = cli._client_block("zed", env)
+    assert zed["source"] == "custom" and zed["args"] == []           # Zed's context_servers schema
+
+
+def test_merge_mcp_json_custom_key(tmp_path) -> None:
+    p = tmp_path / "mcp.json"
+    p.write_text(json.dumps({"servers": {"other": {"command": "x"}}}))
+    cli._merge_mcp_json(p, cli._client_block("vscode", {}), dry=False, key="servers")
+    cfg = json.loads(p.read_text())
+    assert set(cfg["servers"]) == {"other", "midas"}                 # merged under VS Code's key
+    assert "mcpServers" not in cfg                                   # never invents the wrong key
+
+
+def test_init_wires_new_clients(tmp_path, capsys, monkeypatch) -> None:
+    monkeypatch.setattr(cli.shutil, "which", lambda exe: None)
+    monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
+    vscode = tmp_path / ".config/Code/User/mcp.json"
+    vscode.parent.mkdir(parents=True)
+    vscode.write_text("{}")
+    gemini = tmp_path / ".gemini/settings.json"
+    gemini.parent.mkdir(parents=True)
+    gemini.write_text(json.dumps({"theme": "dark"}))
+    rc = cli.cmd_init(argparse.Namespace(db=str(tmp_path / "m.sqlite3"), dry_run=False,
+                                         all=False, json=True))
+    assert rc == 0
+    by = {c["client"]: c for c in json.loads(capsys.readouterr().out)["clients"]}
+    assert by["VS Code"]["wired"] and by["Gemini CLI"]["wired"]
+    assert by["Zed"]["wired"] is False and by["Cline"]["wired"] is False   # not present → skipped
+    assert json.loads(vscode.read_text())["servers"]["midas"]["type"] == "stdio"
+    cfg = json.loads(gemini.read_text())
+    assert cfg["mcpServers"]["midas"]["command"] == "midas-mcp"
+    assert cfg["theme"] == "dark"                                    # other settings survive the merge
+
+    # status sees them through their own keys
+    cli.cmd_status(argparse.Namespace(db=str(tmp_path / "m.sqlite3"), json=True))
+    sby = {c["client"]: c for c in json.loads(capsys.readouterr().out)["clients"]}
+    assert sby["VS Code"]["wired"] and sby["VS Code"]["server_command"] == "midas-mcp"
+    assert sby["Gemini CLI"]["wired"] and sby["Gemini CLI"]["client_id"] == "gemini-cli"
+
+
+def test_uninstall_removes_from_custom_key(tmp_path, capsys, monkeypatch) -> None:
+    monkeypatch.setattr(cli.shutil, "which", lambda exe: None)
+    monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
+    vscode = tmp_path / ".config/Code/User/mcp.json"
+    vscode.parent.mkdir(parents=True)
+    vscode.write_text(json.dumps({"servers": {"midas": {"command": "midas-mcp"},
+                                              "other": {"command": "x"}}}))
+    rc = cli.cmd_uninstall(argparse.Namespace(db=str(tmp_path / "m.sqlite3"), purge=False))
+    assert rc == 0
+    assert list(json.loads(vscode.read_text())["servers"]) == ["other"]  # midas gone, other kept
+
+
+def test_doctor_json(tmp_path, capsys, monkeypatch) -> None:
+    monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
+    rc = cli.cmd_doctor(argparse.Namespace(db=str(tmp_path / "m.sqlite3"), json=True))
+    out = json.loads(capsys.readouterr().out)
+    assert out["receipt_kind"] == "doctor" and out["ok"] is (rc == 0)
+    assert any("store" in c["check"] and not c["ok"] for c in out["checks"])  # missing store flagged
+    assert all({"ok", "check", "hint"} <= set(c) for c in out["checks"])
+
+
 def test_derive_scope_modes() -> None:
     assert cli._derive_scope(set()) == ("shared", None, [])
     assert cli._derive_scope({None}) == ("shared", None, [])

@@ -120,13 +120,15 @@ wired to, under which scope/policy, and which clients were skipped (config paths
 contents). Paste it into a bug report, or let another agent verify the setup without scraping prose.
 
 `midas init` creates **one shared memory** (`~/.midas/memory.sqlite3`) and points the MCP clients it
-detects — **Claude Code, Codex, Cursor, Claude Desktop, Windsurf** — at it. So all your agents read and
-write the **same** memory, autonomously, with no per-client paths to keep in sync.
+detects — **Claude Code, Codex, Cursor, Claude Desktop, Windsurf, VS Code, Gemini CLI, Cline, Zed** —
+at it. So all your agents read and write the **same** memory, autonomously, with no per-client paths to
+keep in sync.
 
 Prefer a single endpoint over per-client launches? Run one server and give your clients an **MCP URL**:
 
 ```bash
 midas serve --http        # → http://127.0.0.1:7077/mcp   (one server, one memory, every client shares it)
+midas serve --http --token <secret>   # require `Authorization: Bearer <secret>` on every request
 ```
 
 Keep Midas current with **`midas update`**. See your memory anytime with **`midas inspect`**.
@@ -148,6 +150,10 @@ by default — no path needed. The universal block:
 | **Claude Desktop** | Settings → Developer → Edit Config (`claude_desktop_config.json`) — paste, restart |
 | **Codex CLI** | `codex mcp add midas -- midas-mcp` |
 | **Windsurf** | `~/.codeium/windsurf/mcp_config.json` — paste the block |
+| **VS Code** | user `mcp.json` (`servers` key, `"type": "stdio"`) — `midas init` writes it |
+| **Gemini CLI** | `~/.gemini/settings.json` (`mcpServers` key) — `midas init` writes it |
+| **Cline** | `cline_mcp_settings.json` in VS Code global storage — `midas init` writes it |
+| **Zed** | `settings.json` → `context_servers` — `midas init` writes it |
 | **Anything else** | point it at command `midas-mcp` |
 | **No Python** | `npx -y midas-memory-mcp` — the [TypeScript port](packages/midas-ts) (experimental: no semantic embeddings yet) |
 
