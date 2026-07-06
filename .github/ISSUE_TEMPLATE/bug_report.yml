@@ -1,0 +1,50 @@
+name: Bug report
+description: Something in Midas behaves wrong — recall, capture, the guard, the CLI, or a client wiring.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Midas is local-first and deterministic, so most bugs are reproducible —
+        the `midas doctor` output below plus a minimal repro usually pins it fast.
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`midas doctor` output"
+      description: "Run `midas doctor` and paste the full output. It reports your install, store, embedder, and which clients are wired — no memory contents."
+      render: text
+      placeholder: |
+        $ midas doctor
+        Midas 1.0.0  ·  Python 3.12.3
+        ...
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: "The shortest steps or code that reproduce it. A few lines against a fresh store (`MIDAS_MCP_DB=/tmp/repro.sqlite3`) is ideal."
+      render: shell
+    validations:
+      required: false
+  - type: input
+    id: install
+    attributes:
+      label: How you installed Midas
+      placeholder: "uv tool install \"midas-memory[mcp,local]\"  ·  pip  ·  npx midas-memory-mcp (TS port)"
+    validations:
+      required: false
+  - type: input
+    id: client
+    attributes:
+      label: Client / integration (if relevant)
+      placeholder: "Claude Code · Cursor · Codex · the SDK directly · LangGraph store"
+    validations:
+      required: false

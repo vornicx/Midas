@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions & ideas (Discussions)
+    url: https://github.com/vornicx/Midas/discussions
+    about: For usage questions, design discussion, and "is this the right approach?" — before a formal issue.
+  - name: Reproduce a benchmark number
+    url: https://github.com/vornicx/Midas/blob/main/BENCHMARKS.md
+    about: Every number has a one-command repro. If yours differs, open a bug with the command and what you got — that's the most valuable report we can get.
+  - name: Team / Enterprise
+    url: https://github.com/vornicx/Midas/issues/new?title=Team%2FEnterprise%20Midas%20conversation
+    about: Hosted MCP, RBAC namespaces, audit-completeness, data residency, SSO.

@@ -218,6 +218,28 @@ IVF for huge stores) · `MIDAS_MCP_SUPERSEDE` · `MIDAS_MCP_NLI=1` (NLI-gated re
 
 </details>
 
+### Troubleshooting
+
+Something not wired right? **`midas doctor`** is the one-command diagnosis — it checks `midas-mcp` is on
+`PATH`, that your store opens, whether the local embedder is available, and which clients are actually
+wired, with a fix hint per failed check. It reads config paths and versions only — **no memory contents**,
+so its output is safe to paste into a bug report.
+
+```bash
+midas doctor          # ✓/⚠ per check, with a hint for each failure
+midas status          # what's wired + the store's record count
+```
+
+| Symptom | Likely cause & fix |
+|---|---|
+| Client says **"command not found"** | GUI apps don't inherit your shell `PATH`. Use the absolute path from `which midas-mcp` in the client config. |
+| **Recall feels weak / lexical** | The offline hashing embedder is in use. Install the local embedder: `uv tool install "midas-memory[mcp,local]"` (or `pip install "midas-memory[local]"`). `midas doctor` flags this. |
+| A client **doesn't see** another's memory | Confirm both point at the same store — `midas status` shows the path; the wiring receipt (`midas status --json`) shows each client's exact command + env. |
+| **MCP server won't start** | The SDK is installed but the `[mcp]` extra isn't — `pip install "midas-memory[mcp]"`. `midas doctor` calls this out specifically. |
+
+Still stuck? Open a [bug report](https://github.com/vornicx/Midas/issues/new?template=bug_report.yml)
+(it pre-fills the `midas doctor` block) or ask in [Discussions](https://github.com/vornicx/Midas/discussions).
+
 ---
 
 ## Use it from Python (the SDK)
