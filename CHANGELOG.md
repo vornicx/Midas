@@ -8,7 +8,12 @@ breaking changes only land in a major. Format loosely follows
 
 ## [Unreleased]
 
-## [1.1.0] — 2026-07-06
+## [1.0.0] — 2026-07-06
+
+The 1.0 contract: the public surface — the `midas.Memory` SDK, the guard, the coding `is_forbidden`
+gate, the MCP tools, and the `midas` CLI — is now locked under semver. This release consolidates and
+hardens everything since 0.1.1 (the retrieval core, the governance guard, the control-plane, the audit
+chain, the client tooling, and the TypeScript port) and freezes the API.
 
 ### Added
 - **The continuity control-plane** (`midas/continuity.py` + MCP tools): **`resume`** — everything an
@@ -61,29 +66,6 @@ breaking changes only land in a major. Format loosely follows
 - **Encryption at rest (opt-in)**: `SQLiteStore(key=…)` / `MIDAS_MCP_KEY` with the new `[encrypted]`
   extra (SQLCipher). The file on disk is ciphertext; opening without the key fails; if the key is set
   but the extra is missing Midas **fails closed** instead of silently writing plaintext.
-
-### Changed
-- **`midas inspect` redesigned end to end.** A real light theme (not an inverted dark one) alongside the
-  existing dark brand theme, toggle + system-preference default + persisted choice; a fixed, validated
-  categorical color system so every `kind` and `provenance` value keeps the *same* color everywhere in
-  the app (Overview bars, Browse tags, Project governance) instead of one monochrome accent for
-  everything; a real 30-day activity chart (SVG line + area, hover crosshair/tooltip) and a recency
-  (short/medium/long) stacked bar on Overview; grouped, badge-annotated navigation (Memory / Coding /
-  Governance) with a command palette (**⌘K**) and a **/** search shortcut; native `confirm()`/`prompt()`
-  replaced with in-app modal/toast components; a responsive layout down to phone width with a horizontal
-  pill nav. New endpoints backing it: `api_timeseries` (daily capture counts), `api_meta` (version/db/
-  embedder/audit-chain identity), and `by_tier` added to `api_overview`. Fixed a real routing bug in the
-  process: the old build never listened for `hashchange`, so browser back/forward and direct links to a
-  view silently did nothing.
-- The TypeScript `Memory` API is async (`remember`/`capture`/`recall`/`buildContext`/
-  `forgetMatching` return promises) to support the optional ONNX embedder.
-
-## [1.0.0] — 2026-07-05
-
-The 1.0 contract: the API that exists today is the API, locked under semver. No new features gate
-this release — it consolidates what shipped and hardened since 0.1.1 and freezes the surface.
-
-### Added
 - **`midas init --json` / `midas status --json` — a machine-readable client wiring receipt** (#15).
   One command now yields a compact, pasteable proof of what was wired: per client its config path,
   detected/wired/changed state, backup path, and skip reason; plus the memory DB, scope mode
@@ -101,6 +83,20 @@ this release — it consolidates what shipped and hardened since 0.1.1 and freez
   recall finding the signal among 1,500 noise records.
 
 ### Changed
+- **`midas inspect` redesigned end to end.** A real light theme (not an inverted dark one) alongside the
+  existing dark brand theme, toggle + system-preference default + persisted choice; a fixed, validated
+  categorical color system so every `kind` and `provenance` value keeps the *same* color everywhere in
+  the app (Overview bars, Browse tags, Project governance) instead of one monochrome accent for
+  everything; a real 30-day activity chart (SVG line + area, hover crosshair/tooltip) and a recency
+  (short/medium/long) stacked bar on Overview; grouped, badge-annotated navigation (Memory / Coding /
+  Governance) with a command palette (**⌘K**) and a **/** search shortcut; native `confirm()`/`prompt()`
+  replaced with in-app modal/toast components; a responsive layout down to phone width with a horizontal
+  pill nav. New endpoints backing it: `api_timeseries` (daily capture counts), `api_meta` (version/db/
+  embedder/audit-chain identity), and `by_tier` added to `api_overview`. Fixed a real routing bug in the
+  process: the old build never listened for `hashchange`, so browser back/forward and direct links to a
+  view silently did nothing.
+- The TypeScript `Memory` API is async (`remember`/`capture`/`recall`/`buildContext`/
+  `forgetMatching` return promises) to support the optional ONNX embedder.
 - **A bare `Memory()` now auto-selects real semantic recall.** With the `[local]` extra installed,
   `Memory()` upgrades from the offline hashing embedder to `LocalEmbedder` automatically (override
   with `MIDAS_EMBEDDER=hashing|local`; default `auto`). Fixes the out-of-the-box recall weakness an

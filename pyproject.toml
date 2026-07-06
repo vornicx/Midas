@@ -1,6 +1,6 @@
 [project]
 name = "midas-memory"
-version = "1.1.0"
+version = "1.0.0"
 description = "Local-first, eval-first memory for long-horizon AI agents — no LLM at ingest"
 readme = "README.md"
 license = "Apache-2.0"

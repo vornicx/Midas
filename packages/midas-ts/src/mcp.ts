@@ -112,7 +112,7 @@ function text(data: string) {
 
 export function createServer(): McpServer {
   const server = new McpServer(
-    { name: "midas-memory", version: "1.1.0" }, // keep in sync with package.json on each release
+    { name: "midas-memory", version: "1.0.0" }, // keep in sync with package.json on each release
     { instructions: AGENT_MEMORY_INSTRUCTIONS },
   );
 
