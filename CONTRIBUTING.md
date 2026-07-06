@@ -15,6 +15,22 @@ its reported numbers are true. A few principles keep it that way.
    doc (`docs/long-horizon-memory.md`) and [`docs/methodology.md`](docs/methodology.md) keep several on
    purpose (failure traces, `--value-rank-only` forgetting failures, conflicts-v1 residual staleness).
 
+## A lighter bar for docs & examples
+
+The measure-everything bar above is for the **retrieval / forgetting / guard core** — the code whose
+numbers are the project's reputation. It is **not** meant to gate a typo fix, a clearer sentence, a
+client setup guide, a new example, or a dataset mirror. Those are genuinely welcome and merge on a much
+lighter touch: they just need to be **accurate** (don't assert a number the repo hasn't measured) and to
+pass `python -m pytest -q` if they touch runnable code. Good first contributions:
+
+- **Client guides** — one page for wiring Midas into a specific client, verified with `midas doctor`.
+- **Examples** — a short, self-contained script showing one capability end to end.
+- **Docs & repro polish** — fixing a stale command, clarifying methodology, mirroring a dataset so a
+  benchmark reproduces from a clean checkout.
+
+Look for [`good first issue`](https://github.com/vornicx/Midas/labels/good%20first%20issue), or just
+open a PR — for docs/examples you don't need to open an issue first.
+
 ## Eval quick reference
 
 All offline / deterministic (no API key unless `--judge`):

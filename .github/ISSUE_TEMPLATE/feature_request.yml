@@ -1,0 +1,41 @@
+name: Feature request
+description: Propose a capability, a client integration, or a benchmark/measurement.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Midas is **eval-first** and **no-LLM at ingest/query**. Proposals that respect both merge
+        fastest — see [CONTRIBUTING.md](https://github.com/vornicx/Midas/blob/main/CONTRIBUTING.md). If
+        your idea adds an LLM to the ingest/query path, say why the value can't be reached without one.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What can't you do today, or what's harder than it should be?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would you add or change? A rough shape is fine.
+    validations:
+      required: true
+  - type: dropdown
+    id: llm
+    attributes:
+      label: Does this add an LLM call at ingest or query?
+      options:
+        - "No — stays no-LLM / local"
+        - "Yes — and here's why it's worth it (explain below)"
+        - "Not sure"
+    validations:
+      required: true
+  - type: textarea
+    id: measurement
+    attributes:
+      label: How would we know it worked?
+      description: "If it touches retrieval or forgetting, which reproducible metric would move (`recall@k`, retention, a bench)? A measured effect is what gets it merged."
+    validations:
+      required: false
