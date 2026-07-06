@@ -3,6 +3,22 @@
 Notable changes to Midas. Pre-1.0 — the API may change. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Changed
+- **`midas inspect` redesigned end to end.** A real light theme (not an inverted dark one) alongside the
+  existing dark brand theme, toggle + system-preference default + persisted choice; a fixed, validated
+  categorical color system so every `kind` and `provenance` value keeps the *same* color everywhere in
+  the app (Overview bars, Browse tags, Project governance) instead of one monochrome accent for
+  everything; a real 30-day activity chart (SVG line + area, hover crosshair/tooltip) and a recency
+  (short/medium/long) stacked bar on Overview; grouped, badge-annotated navigation (Memory / Coding /
+  Governance) with a command palette (**⌘K**) and a **/** search shortcut; native `confirm()`/`prompt()`
+  replaced with in-app modal/toast components; a responsive layout down to phone width with a horizontal
+  pill nav. New endpoints backing it: `api_timeseries` (daily capture counts), `api_meta` (version/db/
+  embedder/audit-chain identity), and `by_tier` added to `api_overview`. Fixed a real routing bug in the
+  process: the old build never listened for `hashchange`, so browser back/forward and direct links to a
+  view silently did nothing.
+
 ## [0.2.0] — 2026-07-05
 
 ### Added

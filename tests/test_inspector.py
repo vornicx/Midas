@@ -125,3 +125,49 @@ def test_api_audit_chain(tmp_path) -> None:
     assert out["tail"][0]["op"] == "put"
     import json as _json
     assert "PostgreSQL" not in _json.dumps(out)  # hashes only, never content
+
+
+def test_api_overview_includes_recency_tiers() -> None:
+    from midas.inspector import api_overview
+
+    mem = _mem()
+    now = time.time()
+    mem.remember("fresh fact", kind="fact", created_at=now)
+    mem.remember("a week-old fact", kind="fact", created_at=now - 3 * 86400)
+    mem.remember("an old fact", kind="fact", created_at=now - 40 * 86400)
+    o = api_overview(mem)
+    assert o["by_tier"] == {"short": 1, "medium": 1, "long": 1}
+
+
+def test_api_timeseries_buckets_are_zero_filled() -> None:
+    from midas.inspector import api_timeseries
+
+    mem = _mem()
+    now = time.time()
+    mem.remember("today x2 one", kind="note", created_at=now)
+    mem.remember("today x2 two", kind="note", created_at=now)
+    mem.remember("three days ago", kind="note", created_at=now - 3 * 86400)
+    out = api_timeseries(mem, days=7)
+    assert out["days"] == 7 and len(out["buckets"]) == 7
+    counts = {b["date"]: b["count"] for b in out["buckets"]}
+    assert sum(counts.values()) == 3
+    assert list(counts.values()).count(0) == 5  # the other 5 days are zero-filled, not missing
+    # buckets are in chronological order (oldest first, today last)
+    dates = [b["date"] for b in out["buckets"]]
+    assert dates == sorted(dates)
+
+
+def test_api_meta_reports_store_identity() -> None:
+    from midas.inspector import api_meta
+    from midas.sqlite_store import SQLiteStore
+
+    mem = _mem()
+    out = api_meta(mem, db=":memory:", embedder_name="hashing")
+    assert out["db"] == ":memory:" and out["embedder"] == "hashing"
+    assert out["records"] == 0 and out["audit_chain"] is False  # InMemoryStore has no chain
+
+    mem2 = Memory(store=SQLiteStore(":memory:"), embedder=HashingEmbedder())
+    mem2.remember("a fact", kind="fact")
+    out2 = api_meta(mem2, db="/tmp/x.sqlite3", embedder_name="local")
+    assert out2["records"] == 1 and out2["audit_chain"] is True and out2["schema_version"] == 1
+    assert "version" in out2

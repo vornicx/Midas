@@ -280,10 +280,19 @@ midas inspect --db ~/.midas/memory.sqlite3      # opens http://localhost:7777 �
 # before install:  python -m midas.inspector --db <your.sqlite3> --embedder hashing
 ```
 
-- **Browse + search** every memory (verbatim, with provenance + source).
+- **Overview** — counts, attributability, a 30-day activity chart, and kind/provenance/recency breakdowns,
+  each kind and provenance color-coded *consistently across every view* (a fixed categorical palette,
+  validated for colorblind-safe contrast in both themes — never color-only, every value keeps its label).
+- **Browse + search** every memory (verbatim, with provenance + source), filterable by kind, provenance,
+  and sort order.
 - **Belief history + time-travel** — what you believed, what it superseded, and when.
 - **Project state** (decisions / bugs / forbidden) and **what changed** since a date.
 - **Governance** — would memory authorize an action, and why (the audit trail); **forget** with a receipt.
+- **Conflicts** and **Open loops** — the same control-plane views from `memory_conflicts`/`open_loops`,
+  with one-click resolve/close from the UI.
+- **Audit log** — the hash chain's verification status and its most recent entries.
+- Light + dark themes (a real second theme, not an inverted dark one), keyboard shortcuts (**⌘K** to jump
+  anywhere or search, **/** to focus search), and a responsive layout down to phone width.
 
 And every mutation (write / revise / forget) appends to a **tamper-evident, hash-chained audit log**
 inside the store — hashes only, never content. `midas audit` shows it; `midas audit --json` verifies
