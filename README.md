@@ -55,6 +55,27 @@ bet, and that bet is what makes it cheap, private, and trustworthy:
 - **Proven, not asserted.** Every claim has a reproducible benchmark — *including the experiments that
   failed.*
 
+## How Midas compares
+
+Every Midas number below is measured and reproducible from this repo; the LLM-at-ingest column
+reflects the structural properties of that design class (Mem0, Zep, Hindsight) and the figures
+documented in [BENCHMARKS.md](BENCHMARKS.md).
+
+|  | **Midas** | LLM-at-ingest systems (Mem0, Zep, Hindsight) |
+|---|---|---|
+| LLM calls at ingest | **0** | ≥1 per session |
+| Cost per message | **$0** | per-token API spend, forever |
+| Data egress at ingest | **None** | every turn leaves the box |
+| Ingest latency | **~16–116 ms**, local, embed-bound | ~668 ms + API round-trip |
+| Recall returns | **verbatim source turn**, traceable | LLM-rewritten facts (source `recall@k` not computable) |
+| Deterministic & reproducible | **yes — every number, one command** | no |
+| Works fully offline | **yes** (measured end-to-end with a local Ollama reader) | no |
+| LongMemEval-`s` judged answer (gpt-4o) | **0.84** | 0.84 — Observational Memory, with LLM ingest |
+| Whole-conversation aggregation / summarization | ❌ **by design** — top-k retrieval can't cover it ([documented](BENCHMARKS.md)) | ✅ their structural edge |
+
+The last row is deliberate: Midas trades whole-conversation abilities for $0, privacy, and
+auditability, and publishes the measurements that show exactly where that trade bites.
+
 ## More than recall: a memory you can govern
 
 Finding a buried fact is table stakes. A long-horizon coding agent needs memory it can **act on
