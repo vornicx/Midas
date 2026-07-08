@@ -1,4 +1,4 @@
-"""Coding-agent memory bench (Fase B × C) — does the coding vocabulary keep a code agent CONSISTENT and
+"""Coding-agent memory bench — does the coding vocabulary keep a code agent CONSISTENT and
 SAFE across a project's life? Deterministic ($0, no LLM), built on `midas.coding`. It scores three
 properties a generic memory bench can't, and is the coding-vertical companion to the Agent Continuity
 Bench (`eval/continuity.py`) and the Memory-Safety eval (`eval/memory_safety.py`):
@@ -91,7 +91,7 @@ def run(verbose: bool = True) -> dict[str, float]:
         "forbidden_accuracy": f_correct / len(_ACTIONS),
     }
     if verbose:
-        print("\n=== Coding-agent memory bench (Fase B) ===")
+        print("\n=== Coding-agent memory bench ===")
         for k, v in scores.items():
             print(f"{k:<20}{v:>6.2f}")
     return scores

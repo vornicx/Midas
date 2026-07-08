@@ -1,4 +1,4 @@
-"""The coding-agent memory bench (Fase B) pins the vertical's properties end-to-end: a revised
+"""The coding-agent memory bench pins the vertical's properties end-to-end: a revised
 architecture decision surfaces its current value, prior bugs/failures resurface on related queries, and
 forbidden actions are flagged without over-blocking benign ones. Deterministic — HashingEmbedder, no LLM."""
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Coding-agent memory vocabulary (Fase B): code memories map to core kinds + a code_kind/project tag,
+"""Coding-agent memory vocabulary: code memories map to core kinds + a code_kind/project tag,
 and project_state gives the live, grouped onboarding view. Deterministic — HashingEmbedder, no LLM."""
 from __future__ import annotations
 

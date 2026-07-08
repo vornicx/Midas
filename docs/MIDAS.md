@@ -6,7 +6,7 @@ message, fully local, every recall traceable to its source.*
 > This document is the single, complete reference for what Midas **is**, what has been **researched and
 > measured**, what has been **achieved**, and what **remains**. It is written the way Midas is built:
 > lead with the measured truth, name the bets, and publish the misses. Numbers cite their source files
-> (`BENCHMARKS.md`, `docs/frontier-2026.md`, `docs/overnight-experiments.md`) so nothing here is
+> (`BENCHMARKS.md`, `docs/frontier-2026.md`, `docs/research-notes.md`) so nothing here is
 > assertion-only.
 
 **Contents**
@@ -18,7 +18,7 @@ message, fully local, every recall traceable to its source.*
 6. [What has been achieved](#6-what-has-been-achieved)
 7. [Honest weaknesses & structural limits](#7-honest-weaknesses--structural-limits)
 8. [The roadmap — what remains](#8-the-roadmap--what-remains)
-9. [Strategic frame & positioning](#9-strategic-frame--positioning)
+9. [Where Midas sits in the field](#9-where-midas-sits-in-the-field)
 10. [Method & ethos](#10-method--ethos)
 11. [Appendix — module map, glossary, reproduce](#11-appendix)
 
@@ -78,16 +78,15 @@ Three layers, in delivery order:
 
 - **(A) Governance / audit plane** — the depth. provenance + the `check_memory_use` guard + the currency
   rule + bitemporal `as_of` + source-trace = an **audit trail for autonomous agents**: *why* it acted,
-  on *which confirmed source*, and *when*. Externally validated: Banco Santander AI Lab ships
-  `mech-gov-framework` — "governance for high-stakes LLM decisions in banking" — i.e. a regulated bank's
-  own lab is building exactly this category.
+  on *which confirmed source*, and *when*. The category is real beyond Midas — regulated-industry labs
+  are building mechanical-governance frameworks for high-stakes LLM decisions for exactly this reason.
 - **(B) Coding-agent vertical** — the focus. Memory specialized for code work: architecture decisions,
   bug-already-fixed, conventions, forbidden actions, project state. Proven by the **Agent Continuity
-  Bench**. Natural design partner: Apollo.
-- **(C) The benchmark as public wedge** — the brand. The **Agent Continuity Bench** + **Memory-Safety
-  eval** measure what nobody else does (action-safety, decision-adherence, repeated-mistake,
-  attack-success-rate). They make Midas the *standard for measuring agent memory* — a cheap,
-  defensible, honesty-aligned wedge that feeds the core.
+  Bench**.
+- **(C) The benches as an open standard** — the **Agent Continuity Bench** + **Memory-Safety eval**
+  measure what nobody else does (action-safety, decision-adherence, repeated-mistake,
+  attack-success-rate). They are deterministic, $0, and runnable against any memory layer — a way to
+  measure *trust*, not just recall, that anyone can adopt.
 
 ---
 
@@ -104,7 +103,7 @@ Three layers, in delivery order:
    with an audit trail.
 5. **Bitemporal truth.** Every belief carries event time and a supersession link, so Midas can answer
    "what did we believe on date X" and retire stale values without deleting history.
-6. **Measure every default; publish the misses.** The moat is partly the *honesty* — see Section 10.
+6. **Measure every default; publish the misses.** The credibility *is* the honesty — see Section 10.
 
 ---
 
@@ -188,7 +187,7 @@ Two deterministic, no-LLM views that top-k recall is bad at (the query doesn't r
 
 ### 4.8b The coding-agent vertical (`midas/coding.py`)
 
-The Fase-B layer that makes Midas concretely *for code agents* — a **non-invasive** vocabulary over the
+The layer that makes Midas concretely *for code agents* — a **non-invasive** vocabulary over the
 core (each code memory maps to a `MemoryKind` + a `code_kind`/`project` tag, so recall, supersession,
 forgetting, and the Guard all keep working unchanged):
 - **`code_kind`s** — `architecture_decision`, `dependency_choice`, `convention`, `bug_fixed`,
@@ -295,11 +294,11 @@ recall@k 0.80, **0 API calls / $0 / nothing leaves the box**.
   adds +0.10–0.13 recall under forgetting.
 - **Float32 embeddings** — ~7× smaller than `list[float]`, recall unchanged.
 
-### 5.5 The misses — measured negatives we publish (this is the moat)
+### 5.5 The misses — measured negatives we publish
 
 - **Naive distillation** (replace raw turns with LLM summaries): judged **0.37 → 0.08** (catastrophic);
   augmenting recovers to 0.32 (still below raw). Default: distillation **off**, `keep_raw` when on.
-- **Structure-preserving extraction on summarization** (Fase 1): built the judged rubric-coverage
+- **Structure-preserving extraction on summarization**: built the judged rubric-coverage
   harness (`eval/summarization_ab.py`; summarization had *never* been judgeable before). Local (qwen2.5:3b):
   raw **0.28** vs replace **0.07**. **Hosted with a capable extractor (gpt-4o, judge gpt-4o, n=8): raw
   0.45 · augment 0.49 (+0.04, within n=8 noise) · replace 0.34 (−0.11).** A strong model makes the cards
@@ -307,7 +306,7 @@ recall@k 0.80, **0 API calls / $0 / nothing leaves the box**.
   **structural** (broad queries under-retrieve by similarity; any abstraction loses the verbatim detail
   the rubric rewards), **not** an extractor-quality gap. Distillation is not claimed as a summarization
   win at any extractor tier — the "use a capable model" objection is now measured and removed.
-- **Query linear-adapter** (this session, Fase 5; inspired by Santander's `linear-adapter-trainer`):
+- **Query linear-adapter** (a learned linear transform on query embeddings):
   numpy-only, torch kept out even of the experiment. BEAM held-out: train recall@10 **+0.13** but
   **test −0.13** — classic overfit, does **not** generalize. Not shipped.
 - **Hybrid BM25** — negative on conversational data (multi-session 0.97 → 0.81); opt-in only.
@@ -317,21 +316,21 @@ recall@k 0.80, **0 API calls / $0 / nothing leaves the box**.
 - **Cross-encoder reranker** — ~80× latency, **no recall change** (0.88 → 0.88); off on large haystacks.
 - **Embedder upgrade** — mxbai-large +0.03 at 6× latency; marginal. The ceiling is **not** the embedder.
 - **Dual-granularity indexing** — overall recall 0.55 → 0.48; near-duplicate rounds compete for slots.
-- **The meta-conclusion** (`docs/overnight-experiments.md`, `frontier-2026.md`): *no retrieval-component
+- **The meta-conclusion** (`docs/research-notes.md`, `frontier-2026.md`): *no retrieval-component
   lever generalizes reliably.* The remaining gaps are **structural** (summarization/aggregation); the
   scale story is **capacity** (TurboVec), not swapping retrieval parts.
 
-### 5.6 Governance & safety evals (this session — the new IP)
+### 5.6 Governance & safety evals
 
 - **Agent Continuity Bench** (`eval/continuity.py`) — deterministic, $0, no-LLM. Scores **action_safety**
   (guard allows/blocks by provenance + currency, with an allow-discriminator so a "block-everything"
   policy fails), **decision_adherence** (a revised decision surfaces its live value), **repeated_mistake**
   (a prior fix/failure resurfaces). Midas **1.00 / 1.00 / 1.00**.
-- **Memory-Safety eval** (`eval/memory_safety.py`, framing from Santander's autoguardrails) — adversarial:
+- **Memory-Safety eval** (`eval/memory_safety.py`) — adversarial:
   6 attacks (superseded / unconfirmed / cross-agent / **injected-content** / **forgotten** memory trying
   to authorize a use) + 3 benign. Metrics **ASR** (target 0) + **benign_pass** (target 1). Midas **0.00 /
   1.00**.
-- **Coding-agent memory bench** (`eval/coding_bench.py`, Fase B×C) — deterministic, no-LLM:
+- **Coding-agent memory bench** (`eval/coding_bench.py`) — deterministic, no-LLM:
   **decision_currency** (a revised architecture decision surfaces its live value via `project_state`),
   **repeated_mistake** (a prior bug/failure resurfaces), **forbidden_accuracy** (violations flagged, benign
   actions not — a benign floor). Midas **1.00 / 1.00 / 1.00**.
@@ -352,15 +351,6 @@ recall@k 0.80, **0 API calls / $0 / nothing leaves the box**.
 
 - **IVF/ANN** — sub-linear, numpy-only; ~20× at 1M at recall ~0.90; exact↔IVF crossover ~10k records.
 - **TurboVec** — recall = exact at 2/4-bit, RAM 15× smaller; long-horizon memory on a laptop.
-
-### 5.8 What we learned from Banco Santander AI Lab (verified org)
-
-Analyzed in code, not by reputation (all repos are clean v0.1.0/Jun-2026, *early not proven*): the value
-isn't code to import, it's two patterns — **mech-gov-framework**'s "mechanical hard gate, not model
-goodwill" (Midas's guard already is one) and **autoguardrails**' "ASR vs a fixed suite + benign-pass
-floor" (adopted in the Memory-Safety eval) — plus one experiment, **linear-adapter-trainer** (tested,
-measured negative). `sota-stressed-datasets` is a tabular credit set (not memory); `ralph-vault-skill` /
-`llm_bridge` are solid but Apollo-side / already covered.
 
 ---
 
@@ -383,7 +373,7 @@ measured negative). `sota-stressed-datasets` is a tabular credit set (not memory
 - **Three Midas-native benchmarks nobody else has** — the Agent Continuity Bench, the Memory-Safety eval
   (ASR 0.00 / benign_pass 1.00), and the Coding-agent bench (1.00 across decision-currency / repeated-mistake
   / forbidden-accuracy).
-- **The coding-agent vertical (Fase B)** — a `code_kind` memory vocabulary, `project_state` onboarding,
+- **The coding-agent vertical** — a `code_kind` memory vocabulary, `project_state` onboarding,
   **forbidden-action enforcement** (lexical + a first semantic signal), and a code-aware capture policy —
   i.e. *"remembers decisions, won't act on stale or forbidden memory, and proves it"* made into product.
 - **Capacity to 10M-on-a-laptop** — TurboVec 15× RAM compression with recall intact.
@@ -406,17 +396,15 @@ measured negative). `sota-stressed-datasets` is a tabular credit set (not memory
 - **Correctness is reader-dominated** — a bigger reader moves the headline more than the memory does, so
   we lead with reader-independent `recall@k`.
 - **TypeScript port lacks semantic embeddings** — parity is partial (ONNX embeddings pending).
-- **GTM**: the governance/enterprise value is real but B2B/regulated sales are slow; the consumer
-  "memory passport" angle has a hard go-to-market.
 
 ---
 
 ## 8. The roadmap — what remains
 
-Ordered by the vision (governance A → coding-agent vertical B → benchmark wedge C).
+Ordered by the vision (governance A → coding-agent vertical B → the open bench standard C).
 
 ### Near-term
-1. ~~Close Fase 1 honestly~~ — **done**: hosted gpt-4o summarization test showed **no lift** (augment +0.04
+1. ~~Summarization-extraction A/B~~ — **done**: hosted gpt-4o summarization test showed **no lift** (augment +0.04
    in-noise, replace −0.11); the ceiling is structural, not extractor-quality (§5.5).
 2. ~~Coding-agent vertical (B)~~ — **done (foundation)**: `code_kind` vocabulary, `project_state`,
    forbidden-action enforcement, code-aware capture policy, the Coding bench (§4.8b, §5.6).
@@ -425,24 +413,23 @@ Ordered by the vision (governance A → coding-agent vertical B → benchmark we
    from advisory-semantic. **NLI (F1 0.72) and a combined cosine+NLI+lexical classifier (LOO F1 0.71) were
    both measured — neither beats cosine.** A *reliable* gate is genuinely open: it needs a much larger
    labelled set (the n=24 LOO can't generalize), not a cleverer matcher on this data.
-4. ~~Governance levels (L0–L4, mech-gov)~~ — **evaluated, NOT added** (eval-first restraint): a boundary
+4. ~~Finer-grained governance levels (L0–L4)~~ — **evaluated, NOT added** (eval-first restraint): a boundary
    case (`eval/memory_safety.py` — an internal plan justifying a recommendation must block) confirms the
    4-use model (planning / answer / external / destructive) already gates the safety-relevant tiers
    (L0–L1 planning, L2 recommendation = answer, L3–L4 action = confirmation). ASR 0 / benign 1, **no gap**;
    the finer levels are presentational, so we don't add the complexity.
-5. **Package the benches as the public standard (C)** — Continuity + Memory-Safety + Coding bench as the
-   way to measure agent memory; the eval-as-wedge.
+5. **Package the benches as a public standard (C)** — Continuity + Memory-Safety + Coding bench as an
+   open, deterministic way to measure agent memory that anyone can run against their own stack.
 
 ### Mid-term
-5. **Structure-preserving extraction by the host agent** — if Fase 1 hosted confirms it, ship the
-   "no-*Midas*-LLM" path (the agent's model writes entity/attribute/time cards; Midas validates,
-   versions, traces, governs).
-6. **Enterprise/regulated hardening** — the audit trail (`audit_use` / `belief_history` /
+5. **Structure-preserving extraction by the host agent** — the "no-*Midas*-LLM" path (the agent's model
+   writes entity/attribute/time cards; Midas validates, versions, traces, governs). Parked until there
+   is evidence it beats raw turns — the hosted A/B so far measured no lift (§5.5).
+6. **Compliance hardening** — the audit trail (`audit_use` / `belief_history` /
    `audit_completeness`), **provable forgetting** (`forgetting_receipt` — a content-hashed erasure
    certificate that proves *what* was erased without retaining it), and **RBAC** (`midas/access.py` —
    scope a store to a caller's allowed namespaces; multi-tenant isolation). Data residency is inherent
-   (local SQLite, zero egress). Remaining: signed receipts/attestations and hosted Team controls — the
-   compliance story `mech-gov-framework` validates.
+   (local SQLite, zero egress). Remaining: signed receipts/attestations.
 7. **TS parity** — local ONNX semantic embeddings in `packages/midas-ts`. *Assessed*: the port is
    feature-complete on the no-embedding path (`HashingEmbedder` is a byte-for-byte port — same vectors,
    store, guard, MCP tools as Python). Semantic parity needs `@xenova/transformers` (ONNX bge in Node)
@@ -453,31 +440,26 @@ Ordered by the vision (governance A → coding-agent vertical B → benchmark we
    multi-hop.
 
 ### Deferred / parked (with honest reasons)
-- Low-rank query adapter + massive cross-dataset triplets (the only path after Fase 5's overfit).
+- Low-rank query adapter + massive cross-dataset triplets (the only path left after the linear
+  query-adapter overfit, §5.5).
 - Genetic-algorithm policy tuning (premature; risks optimizing a bad metric).
 - Generic vector-DB / RAG-platform scope (commodity, against the thesis).
 
-### Commercial path
-OSS (core, free) · Pro (encrypted sync, backups) · Team (shared namespaces, hosted MCP, admin/audit) ·
-Enterprise/VPC (on-prem, SSO/SAML, RBAC, SLA, DPA) · **Eval Pack** (benchmark a memory stack against
-BEAM/LongMemEval + the Continuity/Safety benches with raw outputs). Midas **does not monetize by closing
-the memory core** — it monetizes operational trust, deployment, team controls, and benchmark-grade eval.
-
 ---
 
-## 9. Strategic frame & positioning
+## 9. Where Midas sits in the field
 
 **The category**: not "another vector store with memory," but **the local, governed memory & trust plane
-for long-horizon coding agents.** The moat is the combination — *local + source-traceable + bitemporal +
-mechanical governance + a measurement culture* — none of which the LLM-at-ingest incumbents offer.
+for long-horizon coding agents.** What sets it apart is the combination — *local + source-traceable +
+bitemporal + mechanical governance + a measurement culture* — none of which the LLM-at-ingest systems offer.
 
-**Versus the field**: Mem0/Zep/Letta/Hindsight/Mastra OM compete on *recall@k and judged answer* bought
-with LLM-at-ingest cost/egress/opacity. Midas competes on a different axis: **$0, private, auditable,
-governed, and measured** — and *ties* their SOTA answer-rate at gpt-4o with $0 ingest. We do **not**
+**Versus the field**: Mem0/Zep/Letta/Hindsight/Mastra OM buy their *recall@k and judged answer* numbers
+with LLM-at-ingest cost/egress/opacity. Midas takes a different axis: **$0, private, auditable,
+governed, and measured** — and *ties* their SOTA answer-rate at gpt-4o with $0 ingest. It does **not**
 chase a few points of judged answer by adopting their cost structure.
 
-**What we deliberately won't do**: LLM at ingest in the core; generic RAG platform; an agent framework;
-selling "graph memory" before it measures; shipping any lever that doesn't generalize.
+**What Midas deliberately won't do**: LLM at ingest in the core; generic RAG platform; an agent framework;
+claiming "graph memory" before it measures; shipping any lever that doesn't generalize.
 
 ---
 
@@ -508,13 +490,13 @@ text) · `distill` (optional tier) · `entity` (experimental) · `mcp_server`
 
 **Eval** (`eval/`): `runner` · `datasets` · `schema` · `metrics` · `adapters/*` (midas / baseline_raw /
 mem0) · `llm` · `retention` · `multiday` · `bench_perf` / `bench_ann` · `distill_ab` · **`summarization_ab`**
-(Fase 1) · **`continuity`** (Continuity Bench) · **`memory_safety`** (Safety eval) · **`coding_bench`**
+(judged summarization A/B) · **`continuity`** (Continuity Bench) · **`memory_safety`** (Safety eval) · **`coding_bench`**
 (Coding bench) · **`forbidden_eval`** (labelled semantic forbidden-action eval) · **`retrieval_adapter`**
-(Fase 5) · `midas_sweep`.
+(query-adapter experiment) · `midas_sweep`.
 
 **Docs**: `BENCHMARKS.md` (numbers) · `methodology.md` (anti-cheating, traces) · `frontier-2026.md`
-(landscape, what to adopt/reject) · `overnight-experiments.md` (the retrieval sweep) ·
-`long-horizon-memory.md` / `research-notes.md` (design notes) · this file.
+(landscape, what to adopt/reject) · `long-horizon-memory.md` / `research-notes.md` (design notes &
+measured lessons) · this file.
 
 ### 11.2 Glossary
 

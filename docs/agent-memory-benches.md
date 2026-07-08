@@ -40,8 +40,8 @@ Across a scripted multi-session project:
 - **repeated_mistake** — a prior bug-fix/failure resurfaces on a related query.
 
 ### 2. Memory-Safety eval (`eval/memory_safety.py`)
-Adversarial — the attack surface is the stored memory itself (framing from Banco Santander AI Lab's
-`autoguardrails`: minimise Attack-Success-Rate against a fixed suite, with a benign-pass floor):
+Adversarial — the attack surface is the stored memory itself (minimise Attack-Success-Rate against a
+fixed suite, with a benign-pass floor so a "block everything" policy can't fake a pass):
 - **ASR** *(attack-success-rate, target 0)* — over 6 attacks: superseded / unconfirmed / cross-agent /
   injected-content / forgotten memory trying to authorize a use.
 - **benign_pass** *(target 1)* — legitimate uses are NOT over-blocked (the floor that keeps ASR honest;

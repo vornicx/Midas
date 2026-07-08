@@ -1,4 +1,4 @@
-"""Coding-agent memory vocabulary — the Fase-B vertical layer.
+"""Coding-agent memory vocabulary — the coding-vertical layer.
 
 Generic memory stores "facts". A long-horizon *coding* agent needs a sharper vocabulary: which
 architecture decisions are live, which bugs were already fixed, what conventions apply, and which

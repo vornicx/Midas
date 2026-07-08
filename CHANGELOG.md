@@ -182,7 +182,7 @@ chain, the client tooling, and the TypeScript port) and freezes the API.
   keeps full vectors on disk and strips them from memory, reading back only the candidate set per query.
   Measured on BEAM-100K: recall **0.53 = exact** at both 4-bit and 2-bit; index RAM 153.6 MB → 10.2 MB
   (15×); extrapolates to 10M×768 ≈ 31 GB → ~2 GB. `examples/turbovec_backend.py`; benchmarks in
-  [`docs/overnight-experiments.md`](docs/overnight-experiments.md).
+  [`BENCHMARKS.md`](BENCHMARKS.md).
 - **`MemoryStore` / `VectorIndex` Protocols + allowlist pushdown** — the store/index surface is now an
   explicit contract (`midas/index.py`), and a query's scope is pushed into search as an `allowed_ids`
   allowlist (O(1) membership / in-kernel for native backends) instead of a per-row Python predicate.
@@ -190,7 +190,7 @@ chain, the client tooling, and the TypeScript port) and freezes the API.
   BM42 / SPLADE++ via fastembed), ColBERT late-interaction reranker (`--midas-reranker colbert`),
   Matryoshka dim truncation (`--local-truncate-dim`), and Model2Vec static embeddings (`--model2vec`,
   `[model2vec]` extra). Per-dataset results — which generalize and which don't — in
-  [`docs/overnight-experiments.md`](docs/overnight-experiments.md).
+  [`docs/MIDAS.md`](docs/MIDAS.md) §5.5 and [`docs/research-notes.md`](docs/research-notes.md).
 
 ### Changed
 - **Shared, persistent memory by default.** The MCP store now defaults to `~/.midas/memory.sqlite3` (was

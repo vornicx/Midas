@@ -52,12 +52,6 @@ Kept here so nobody has to guess — each is a documented, measured ceiling, not
   and it breaks the $0 / zero-egress / traceable invariants. See [`docs/frontier-2026.md`](docs/frontier-2026.md).
 - **Whole-conversation aggregation / summarization queries.** Top-k retrieval structurally can't cover
   these; documented as the trade Midas makes. See [BENCHMARKS.md](BENCHMARKS.md).
-- **A cloud service in the OSS core.** Hosted/team features are the commercial path (see the
-  *Commercial path* table in the [README](README.md)); the local core stays Apache-2.0 and never
-  phones home.
-
-## Team / Enterprise
-
-Hosted MCP, RBAC namespaces, admin + audit trail, SSO, on-prem/VPC, provable forgetting, and the
-Agent-Memory Audit are the paid track — details in the README's *Commercial path* section. The OSS
-core is never closed to fund them.
+- **A cloud service, account system, or telemetry.** Midas is local-first by design: the memory is a
+  SQLite file on your machine and it never phones home. Everything in this repo is and stays free
+  under Apache-2.0.

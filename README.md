@@ -30,7 +30,7 @@ midas init                                  # create the shared memory + wire up
   ·
   <a href="docs/MIDAS.md"><b>Complete overview</b></a>
   ·
-  <a href="https://github.com/vornicx/Midas/issues/new?title=Team%2FEnterprise%20Midas%20conversation"><b>Team / Enterprise</b></a>
+  <a href="ROADMAP.md"><b>Roadmap</b></a>
 </p>
 
 ---
@@ -343,21 +343,16 @@ the whole chain and reports the first broken entry if anyone rewrote history.
 
 No LLM, no account, runs on your file. The thing a black-box memory can't show.
 
-## Commercial path
+## Free &amp; open source
 
-The core stays open source under **Apache-2.0** — local SQLite memory, MCP tools, SDKs, and the bench
-suite are free to use, fork, and embed. Midas is **dev / enterprise-led**: paid work is what *teams* and
-*regulated orgs* need around that core. It does **not** monetize by closing the memory core.
+Midas is **fully free and open source under [Apache-2.0](LICENSE)** — the memory engine, the guard, the
+MCP server, the CLI, the inspector, the TypeScript port, and the entire [bench suite](docs/agent-memory-benches.md).
+No paid tiers, no feature gates, no telemetry, no account. Use it, fork it, embed it in commercial
+products — the license permits all of it.
 
-| Edition | For | Includes | Status |
-|---|---|---|---|
-| **OSS** | every dev | local core, SDK, MCP, the [bench suite](docs/agent-memory-benches.md) | Available now |
-| **Team** | agent teams | hosted MCP, RBAC namespaces, admin + audit trail, SSO | Founding customers |
-| **Enterprise / VPC** | regulated | on-prem/VPC, provable forgetting, audit-completeness, data residency, SSO/SAML, SLA, DPA | By arrangement |
-| **[Agent-Memory Audit](docs/agent-memory-audit.md)** | memory buyers / builders | benchmark *your* stack vs the suite + `recall@k`, with failure traces + recommendations | By arrangement |
-
-The differentiator isn't recall — it's **memory an agent can be trusted to act on**, proven by the benches
-and the audit. Strategy and editions in full: **[docs/gtm.md](docs/gtm.md)**.
+If Midas is useful to you, the best ways to give back are a ⭐, a
+[reproduced benchmark number](BENCHMARKS.md), a bug report, or a
+[measured contribution](CONTRIBUTING.md) — see the [roadmap](ROADMAP.md) for where help matters most.
 
 ## Honest status
 

@@ -1,7 +1,7 @@
 """Retrieval query-adapter experiment (eval-only, no torch, no LLM) — the precision lever.
 
-Inspired by Banco Santander AI Lab's linear-adapter-trainer: learn a single linear map on the QUERY
-embedding (not the index, not the embedding model) so retrieval aligns better with what queries need.
+Learn a single linear map on the QUERY embedding (not the index, not the embedding model) so
+retrieval aligns better with what queries need.
 It acts ONLY on the query, costs nothing at ingest, and needs no reindex — the one shape of retrieval
 improvement that fits Midas's no-LLM, source-traceable bet (a reranker/LLM-extractor does not).
 

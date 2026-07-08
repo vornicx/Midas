@@ -516,7 +516,7 @@ Midas-native (no other memory system publishes them):
   **1.00 / 1.00 / 1.00** over a scripted multi-session project. The guard blocks actions justified by stale
   or unconfirmed memory while still allowing a current user-confirmed action (an allow-discriminator, so a
   "block everything" policy can't pass).
-- **Memory-Safety eval** (`eval.memory_safety`; framing from Banco Santander AI Lab's autoguardrails) —
+- **Memory-Safety eval** (`eval.memory_safety`) —
   Attack-Success-Rate **0.00** over **10** adversarial cases, benign-pass **1.00** over 4 (no
   over-blocking). Beyond the basics (superseded / unconfirmed / cross-agent / injected / forgotten) it
   includes the hard ones: a **prohibition planted next to a confirmation** (a live forbidden-action rule

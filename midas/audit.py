@@ -1,7 +1,7 @@
 """Audit trail — the compliance artifact for a governed memory layer.
 
-A regulated deployment (the story Banco Santander AI Lab's mech-gov-framework validates) must be able to
-PROVE, after the fact, why an agent did or did not act: which memories justified it, who produced them and
+A regulated deployment must be able to PROVE, after the fact, why an agent did or did not act:
+which memories justified it, who produced them and
 when, with what provenance, whether they were still current, and what prior beliefs they revised. The
 guard already decides; this module packages the *evidence* into a reproducible, source-traceable record.
 No LLM.

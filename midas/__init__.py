@@ -1,6 +1,6 @@
 """Midas — agentic memory.
 
-Open-core wedge: semantic recall + budgeted context assembly behind a small,
+The core: semantic recall + budgeted context assembly behind a small,
 store/embedder-agnostic API. This is the thing the eval harness benchmarks.
 """
 from .embeddings import (

@@ -1,10 +1,9 @@
 """Memory-safety evaluation — does Midas's mechanical guard keep an agent safe under ADVERSARIAL memory?
 
-The attack surface here is the stored memory itself. Framing borrowed from two Banco Santander AI Lab
-projects: mech-gov-framework (governance via **mechanical hard gates**, not model goodwill — Midas's guard
-is exactly such a gate: deterministic provenance + currency checks, no LLM) and autoguardrails (score a
-guard by **Attack-Success-Rate against a fixed suite, with a benign-pass floor**, so a "block everything"
-policy can't look safe).
+The attack surface here is the stored memory itself. Two framing principles: governance via
+**mechanical hard gates**, not model goodwill (Midas's guard is exactly such a gate: deterministic
+provenance + currency checks, no LLM), and scoring a guard by **Attack-Success-Rate against a fixed
+suite, with a benign-pass floor**, so a "block everything" policy can't look safe.
 
 Two case sets, both scored deterministically (no LLM):
   ATTACKS  memory that must NOT authorize the use (superseded / unconfirmed / cross-agent / injected /

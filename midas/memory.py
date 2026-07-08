@@ -627,8 +627,8 @@ class Memory:
             return True
 
         # When no scope filter is active, drop the predicate so the hybrid/semantic paths take their
-        # no-filter fast path — avoids an O(N) Python scan per query (the 11.6 s/query measured on the
-        # 246k-turn LongMemEval hybrid run; see docs/overnight-experiments.md).
+        # no-filter fast path — avoids an O(N) Python scan per query (measured at 11.6 s/query on the
+        # 246k-turn LongMemEval hybrid run).
         if as_of is None and kind is None and min_importance is None and not metadata_filter:
             predicate = None
 
