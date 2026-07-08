@@ -2,8 +2,10 @@ name: Release
 
 # Tag a release and this publishes it everywhere:
 #   git tag vX.Y.Z && git push origin vX.Y.Z
-# PyPI uses trusted publishing (OIDC — no token). npm uses the NPM_TOKEN repo secret.
-# Both steps are idempotent: a version already on the registry is skipped, not failed.
+# PyPI: uses the PYPI_API_TOKEN repo secret if set; otherwise falls back to
+# trusted publishing (OIDC — configure the publisher on pypi.org). npm uses the
+# NPM_TOKEN repo secret. Both steps are idempotent: a version already on the
+# registry is skipped, not failed.
 
 on:
   push:
@@ -27,6 +29,8 @@ jobs:
       - run: python -m build
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
+          # Token auth when the secret exists; empty → the action uses OIDC trusted publishing.
+          password: ${{ secrets.PYPI_API_TOKEN }}
           skip-existing: true
 
   npm:
