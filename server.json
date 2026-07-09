@@ -13,7 +13,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "midas-memory-mcp",
-      "version": "1.0.0",
+      "version": "0.0.1",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
