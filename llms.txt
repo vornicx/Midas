@@ -1,6 +1,6 @@
 # Midas
 
-> Midas is the local memory layer for long-horizon AI agents — no LLM at ingest, $0 per message, fully local, every recall traceable to its source. Free and open source under Apache-2.0. Python SDK + MCP server (works with Claude Code, Cursor, Codex, and any MCP client) + TypeScript port.
+> Midas is the local memory layer for long-horizon AI agents — no LLM at ingest, $0 per message, fully local, every recall traceable to its source. Free and open source under Apache-2.0. Python SDK + MCP server (works with Claude Code, Cursor, Codex, Grok Build, and any MCP client) + TypeScript port.
 
 Key facts: ingest uses local embeddings only (no LLM calls, zero data egress, ~16–116 ms); recall returns the verbatim source turn, never an LLM rewrite; typed belief revision supersedes stale values; a provenance guard mechanically blocks memory-justified external or destructive actions unless user-confirmed and still current (adversarial suite: attack-success-rate 0.00, benign-pass 1.00). Retrieval measured on full public sets: LongMemEval-s recall@k 0.92, LoCoMo 0.73, BEAM 0.56→0.32 from 100K to 10M tokens; judged answer 0.84 (gpt-4o) ties LLM-at-ingest SOTA at $0 ingest. Known limitation (published): whole-conversation summarization/aggregation is out of scope by design.
 

@@ -39,7 +39,10 @@ def test_init_dry_run_creates_no_store(tmp_path) -> None:
     assert rc == 0 and not db.exists()
 
 
-def test_init_creates_the_store(tmp_path) -> None:
+def test_init_creates_the_store(tmp_path, monkeypatch) -> None:
+    # Never call real client CLIs in tests.
+    monkeypatch.setattr(cli.shutil, "which", lambda exe: None)
+    _sandbox_client_paths(monkeypatch, tmp_path)
     db = tmp_path / "sub" / "memory.sqlite3"
     rc = cli.cmd_init(argparse.Namespace(db=str(db), dry_run=False, all=False))
     assert rc == 0 and db.exists()  # the shared store is created (parent dir too)
@@ -65,7 +68,7 @@ def test_init_json_receipt_dry_run(tmp_path, capsys) -> None:
     assert receipt["scope_mode"] == "shared" and receipt["namespace"] is None
     assert receipt["policy"]["external_or_destructive_actions_require_check_memory_use"] is True
     names = {c["client"] for c in receipt["clients"]}
-    assert {"Claude Code", "Codex", "Cursor", "Windsurf"} <= names  # skipped clients are explicit
+    assert {"Claude Code", "Codex", "Grok Build", "Cursor", "Windsurf"} <= names
     for c in receipt["clients"]:
         assert {"client", "config_path", "detected", "wired", "changed", "backup_path",
                 "reason"} <= set(c)
@@ -124,6 +127,24 @@ def test_status_json_parses_codex_toml(tmp_path, capsys, monkeypatch) -> None:
     assert receipt["scope_mode"] == "shared"  # no namespace anywhere → one shared pool
 
 
+def test_status_json_parses_grok_build_toml(tmp_path, capsys, monkeypatch) -> None:
+    _sandbox_client_paths(monkeypatch, tmp_path)
+    grok = tmp_path / ".grok/config.toml"
+    grok.parent.mkdir(parents=True)
+    grok.write_text(
+        '[mcp_servers.midas]\ncommand = "midas-mcp"\n'
+        '[mcp_servers.midas.env]\nMIDAS_MCP_EMBEDDER = "local"\n'
+        'MIDAS_MCP_CLIENT = "grok-build"\nMIDAS_MCP_NAMESPACE = "auto"\n'
+    )
+    cli.cmd_status(argparse.Namespace(db=str(tmp_path / "m.sqlite3"), json=True))
+    receipt = json.loads(capsys.readouterr().out)
+    by = {c["client"]: c for c in receipt["clients"]}
+    assert by["Grok Build"]["wired"] and by["Grok Build"]["server_command"] == "midas-mcp"
+    assert by["Grok Build"]["client_id"] == "grok-build"
+    assert by["Grok Build"]["namespace"] == "auto"
+    assert receipt["scope_mode"] == "project-scoped"
+
+
 def test_client_block_shapes() -> None:
     env = {"MIDAS_MCP_EMBEDDER": "local"}
     assert cli._client_block("std", env) == {"command": "midas-mcp", "env": env}
@@ -166,6 +187,45 @@ def test_init_wires_new_clients(tmp_path, capsys, monkeypatch) -> None:
     sby = {c["client"]: c for c in json.loads(capsys.readouterr().out)["clients"]}
     assert sby["VS Code"]["wired"] and sby["VS Code"]["server_command"] == "midas-mcp"
     assert sby["Gemini CLI"]["wired"] and sby["Gemini CLI"]["client_id"] == "gemini-cli"
+
+
+def test_init_wires_grok_build_via_native_cli(tmp_path, capsys, monkeypatch) -> None:
+    _sandbox_client_paths(monkeypatch, tmp_path)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(cli.shutil, "which", lambda exe: "/fake/grok" if exe == "grok" else None)
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return argparse.Namespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+    rc = cli.cmd_init(argparse.Namespace(db=str(tmp_path / "m.sqlite3"), dry_run=False,
+                                         all=False, json=True, project_scoped=True))
+    assert rc == 0
+    receipt = json.loads(capsys.readouterr().out)
+    grok = {c["client"]: c for c in receipt["clients"]}["Grok Build"]
+    assert grok["detected"] and grok["wired"] and grok["changed"]
+    assert grok["config_path"] == str(tmp_path / ".grok/config.toml")
+    assert calls == [[
+        "grok", "mcp", "add", "--scope", "user", "midas",
+        "-e", "MIDAS_MCP_EMBEDDER=local", "-e", "MIDAS_MCP_CLIENT=grok-build",
+        "-e", "MIDAS_MCP_NAMESPACE=auto", "--", "midas-mcp",
+    ]]
+
+
+def test_uninstall_removes_grok_build_via_native_cli(tmp_path, capsys, monkeypatch) -> None:
+    _sandbox_client_paths(monkeypatch, tmp_path)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(cli.shutil, "which", lambda exe: "/fake/grok" if exe == "grok" else None)
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return argparse.Namespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+    assert cli.cmd_uninstall(argparse.Namespace(db=str(tmp_path / "m.sqlite3"), purge=False)) == 0
+    assert calls == [["grok", "mcp", "remove", "--scope", "user", "midas"]]
+    assert "Grok Build: removed" in capsys.readouterr().out
 
 
 def test_uninstall_removes_from_custom_key(tmp_path, capsys, monkeypatch) -> None:

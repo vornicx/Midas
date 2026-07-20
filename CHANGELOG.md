@@ -8,6 +8,12 @@ breaking changes only land in a major. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+- **Grok Build support in `midas init`**: when the `grok` CLI is installed, Midas now uses Grok's
+  native `grok mcp add --scope user` flow to wire the shared store with `MIDAS_MCP_CLIENT=grok-build`.
+  `midas status [--json]`, `midas doctor`, `midas init --dry-run`, project-scoped mode, and
+  `midas uninstall` all understand `~/.grok/config.toml` / `[mcp_servers.midas]` as well.
+
 ## [1.0.0] — 2026-07-06
 
 The 1.0 contract: the public surface — the `midas.Memory` SDK, the guard, the coding `is_forbidden`

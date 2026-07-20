@@ -1,14 +1,14 @@
 """The `midas` command — one entry point for setup, serving, updating, and inspecting.
 
-    midas init       create the shared memory + wire up your MCP clients (Claude Code, Codex, Cursor…)
+    midas init       create shared memory + wire MCP clients (Claude, Codex, Grok Build…)
     midas serve      run the MCP server (stdio; or --http for an MCP URL all clients can share)
     midas status     show the store, version, and which clients are configured
     midas update     upgrade Midas to the latest version
     midas inspect    open the local Memory Inspector
 
 **One memory, shared.** By default every client points at `~/.midas/memory.sqlite3`, so Claude Code,
-Codex and Cursor all read and write the SAME memory — autonomously, with no per-client paths to keep in
-sync. `midas init` does the wiring for you.
+Codex, Grok Build, and Cursor all use the SAME memory — autonomously, with no per-client paths to
+keep in sync. `midas init` does the wiring for you.
 """
 from __future__ import annotations
 
@@ -122,8 +122,9 @@ def _merge_mcp_json(path: Path, block: dict, *, dry: bool, key: str = "mcpServer
 
 def _cli_add(cmd: list[str], *, dry: bool, force: bool = False,
              remove: list[str] | None = None) -> tuple[str, bool] | None:
-    """Configure a client via its own CLI (claude/codex). None if that CLI isn't installed; otherwise
-    (message, ok). With force, remove any existing `midas` entry first so re-running init can't collide."""
+    """Configure a client via its own CLI (Claude/Codex/Grok). None if that CLI isn't installed;
+    otherwise (message, ok). With force, remove any existing `midas` entry first so re-running init
+    can't collide."""
     if not shutil.which(cmd[0]):
         return None
     if dry:
@@ -223,6 +224,10 @@ def cmd_init(args: argparse.Namespace) -> int:
         ("Codex", Path.home() / ".codex/config.toml", codex_note,
          ["codex", "mcp", "add", "midas", "--", "midas-mcp"],
          ["codex", "mcp", "remove", "midas"]),
+        ("Grok Build", Path.home() / ".grok/config.toml", "",
+         ["grok", "mcp", "add", "--scope", "user", "midas", *eflags(env_for("grok-build")),
+          "--", "midas-mcp"],
+         ["grok", "mcp", "remove", "--scope", "user", "midas"]),
     ):
         res = _cli_add(add_cmd, dry=dry, force=force, remove=rm_cmd)
         if res is None:
@@ -409,7 +414,8 @@ def cmd_inspect(args: argparse.Namespace) -> int:
 def _client_paths() -> list[tuple[str, Path, str]]:
     """Every client Midas knows how to check: (name, config path, JSON/TOML key of the server map)."""
     paths = [("Claude Code", Path.home() / ".claude.json", "mcpServers"),
-             ("Codex", Path.home() / ".codex/config.toml", "mcp_servers")]
+             ("Codex", Path.home() / ".codex/config.toml", "mcp_servers"),
+             ("Grok Build", Path.home() / ".grok/config.toml", "mcp_servers")]
     paths += [(name, p, key) for name, _cid, p, key, _shape in _json_clients()]
     return paths
 
@@ -688,6 +694,9 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     r = _cli_remove("codex", ["codex", "mcp", "remove", "midas"])
     if r:
         results.append(("Codex", r))
+    r = _cli_remove("grok", ["grok", "mcp", "remove", "--scope", "user", "midas"])
+    if r:
+        results.append(("Grok Build", r))
     from midas.hooks import uninstall_claude_hook
 
     r = uninstall_claude_hook(Path.home() / ".claude" / "settings.json")

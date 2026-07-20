@@ -142,9 +142,9 @@ wired to, under which scope/policy, and which clients were skipped (config paths
 contents). Paste it into a bug report, or let another agent verify the setup without scraping prose.
 
 `midas init` creates **one shared memory** (`~/.midas/memory.sqlite3`) and points the MCP clients it
-detects — **Claude Code, Codex, Cursor, Claude Desktop, Windsurf, VS Code, Gemini CLI, Cline, Zed** —
-at it. So all your agents read and write the **same** memory, autonomously, with no per-client paths to
-keep in sync.
+detects — **Claude Code, Codex, Grok Build, Cursor, Claude Desktop, Windsurf, VS Code, Gemini CLI,
+Cline, Zed** — at it. So all your agents read and write the **same** memory, autonomously, with no
+per-client paths to keep in sync.
 
 Prefer a single endpoint over per-client launches? Run one server and give your clients an **MCP URL**:
 
@@ -179,6 +179,7 @@ by default — no path needed. The universal block:
 | **Cursor** | `~/.cursor/mcp.json` — paste the JSON block |
 | **Claude Desktop** | Settings → Developer → Edit Config (`claude_desktop_config.json`) — paste, restart |
 | **Codex CLI** | `codex mcp add midas -- midas-mcp` |
+| **Grok Build** | `grok mcp add --scope user midas -e MIDAS_MCP_EMBEDDER=local -e MIDAS_MCP_CLIENT=grok-build -- midas-mcp` |
 | **Windsurf** | `~/.codeium/windsurf/mcp_config.json` — paste the block |
 | **VS Code** | user `mcp.json` (`servers` key, `"type": "stdio"`) — `midas init` writes it |
 | **Gemini CLI** | `~/.gemini/settings.json` (`mcpServers` key) — `midas init` writes it |
