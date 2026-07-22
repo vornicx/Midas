@@ -21,6 +21,7 @@ uv tool install "midas-memory[mcp,local]"   # install
 midas init                                  # create the shared memory + wire up your MCP clients
 # or, no Python:    npx -y midas-memory-mcp     # TypeScript port
 # or, as a library: pip install "midas-memory[local]"
+uv tool upgrade midas-memory   # Update Midas
 ```
 
 <p align="center">
