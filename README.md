@@ -7,7 +7,7 @@
   <a href="https://pypi.org/project/midas-memory/"><img src="https://img.shields.io/pypi/v/midas-memory" alt="PyPI"></a>
   <a href="https://www.npmjs.com/package/midas-memory-mcp"><img src="https://img.shields.io/npm/v/midas-memory-mcp?label=npm" alt="npm"></a>
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-green" alt="License: Apache-2.0"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"></a>
 </p>
 
 Your AI assistant forgets everything between sessions. **Midas is the memory that lives next to it, on
@@ -345,7 +345,7 @@ No LLM, no account, runs on your file. The thing a black-box memory can't show.
 
 ## Free &amp; open source
 
-Midas is **fully free and open source under [Apache-2.0](LICENSE)** — the memory engine, the guard, the
+Midas is **fully free and open source under [MIT](LICENSE)** — the memory engine, the guard, the
 MCP server, the CLI, the inspector, the TypeScript port, and the entire [bench suite](docs/agent-memory-benches.md).
 No paid tiers, no feature gates, no telemetry, no account. Use it, fork it, embed it in commercial
 products — the license permits all of it.
@@ -393,4 +393,4 @@ and capture/recall/forget make **no network calls**. No account, API key, or tel
 traffic is a one-time embedding-model download (for the `local` backend) and the package install.
 Optional **encryption at rest**: set `MIDAS_MCP_KEY` with the `[encrypted]` extra and the store is a
 SQLCipher database — unreadable without the key (and Midas fails closed rather than silently writing
-plaintext). Full details in [`PRIVACY.md`](PRIVACY.md) · [Apache-2.0](LICENSE).
+plaintext). Full details in [`PRIVACY.md`](PRIVACY.md) · [MIT](LICENSE).

@@ -378,7 +378,7 @@ recall@k 0.80, **0 API calls / $0 / nothing leaves the box**.
   i.e. *"remembers decisions, won't act on stale or forbidden memory, and proves it"* made into product.
 - **Capacity to 10M-on-a-laptop** — TurboVec 15× RAM compression with recall intact.
 - **Shipping surfaces** — Python SDK, MCP server (one file, many clients), TS port, LangGraph store;
-  Apache-2.0; **252 tests green**.
+  MIT; **252 tests green**.
 
 ---
 

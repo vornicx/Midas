@@ -16,7 +16,7 @@
   "homepage": "https://github.com/vornicx/Midas",
   "documentation": "https://github.com/vornicx/Midas#readme",
   "support": "https://github.com/vornicx/Midas/issues",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "keywords": ["memory", "agent", "local-first", "offline", "rag", "long-horizon", "privacy"],
   "privacy_policies": ["https://github.com/vornicx/Midas/blob/main/PRIVACY.md"],
   "compatibility": {

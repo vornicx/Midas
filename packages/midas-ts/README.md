@@ -81,5 +81,5 @@ Node **>= 22.5** (uses the built-in `node:sqlite`; you may see its experimental 
 npm test   # builds + runs the suite, including the Python-parity fixture
 ```
 
-Apache-2.0 — same license, same repo, same [PRIVACY.md](../../PRIVACY.md) posture: everything stays
+MIT — same license, same repo, same [PRIVACY.md](../../PRIVACY.md) posture: everything stays
 on your machine.
