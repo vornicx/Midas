@@ -6,7 +6,7 @@
 **One-liner:** The local memory layer for long-horizon AI agents — remembers across sessions, keeps what's current, and won't act on stale memory.
 **What it does:** Midas gives coding agents (Claude Code, Cursor, Codex, and any MCP client) one shared, persistent memory that lives in a SQLite file on the user's machine. It ingests with no LLM (local embeddings only — $0 per message, zero data egress), returns verbatim source-traceable recall, revises stale beliefs instead of piling up duplicates, and mechanically blocks agents from acting on memory that is stale, unconfirmed, or forbidden.
 **Product category:** Agent memory / AI agent infrastructure (searched as "AI agent memory", "MCP memory server", "Claude Code memory", "Mem0 alternative").
-**Product type:** Open-source developer tool (Python SDK + MCP server + TypeScript port). Apache-2.0, fully free — no paid tiers, no telemetry, no account.
+**Product type:** Open-source developer tool (Python SDK + MCP server + TypeScript port). MIT, fully free — no paid tiers, no telemetry, no account.
 **Business model:** None — free and open source. The maintainer's return is reputation, portfolio, and community. (Positioning must never imply a sales motion.)
 
 ## Target Audience
@@ -49,7 +49,7 @@
 |-----------|----------|
 | "No LLM at ingest must mean worse memory" | Judged answer 0.84 ties the LLM-ingest SOTA (same gpt-4o judge); recall@k 0.92 on full LongMemEval-s. One command reproduces every number. |
 | "What's the catch / where does it lose?" | Whole-conversation summarization — documented as a structural trade in BENCHMARKS.md, stated in Midas's own comparison table. The honesty *is* the answer. |
-| "Another memory tool, why trust it?" | Fully local (read the SQLite file yourself), `midas inspect` shows everything, hash-chained audit log, Apache-2.0, no account/telemetry. |
+| "Another memory tool, why trust it?" | Fully local (read the SQLite file yourself), `midas inspect` shows everything, hash-chained audit log, MIT, no account/telemetry. |
 | "Is it maintained / production-ready?" | 1.0.0 under semver, 346-test suite, multi-OS CI, Python + TypeScript. |
 
 **Anti-persona:** Teams that want whole-conversation summaries/aggregation as the primary feature; products wanting a hosted memory API with zero self-hosting.
@@ -86,7 +86,7 @@
 **Value themes:**
 | Theme | Proof |
 |-------|-------|
-| Free & private | $0/message, zero egress, offline e2e measured, Apache-2.0 |
+| Free & private | $0/message, zero egress, offline e2e measured, MIT |
 | Trustworthy recall | verbatim source turns, hash-chained audit log, `midas inspect` |
 | Safe to act on | guard + memory-safety bench (10/10 attacks blocked, no over-blocking) |
 | Honest engineering | published negatives (naive distillation 0.37→0.08, etc.) |

@@ -54,4 +54,4 @@ Kept here so nobody has to guess — each is a documented, measured ceiling, not
   these; documented as the trade Midas makes. See [BENCHMARKS.md](BENCHMARKS.md).
 - **A cloud service, account system, or telemetry.** Midas is local-first by design: the memory is a
   SQLite file on your machine and it never phones home. Everything in this repo is and stays free
-  under Apache-2.0.
+  under MIT.

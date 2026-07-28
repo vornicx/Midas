@@ -14,6 +14,11 @@ breaking changes only land in a major. Format loosely follows
   `midas status [--json]`, `midas doctor`, `midas init --dry-run`, project-scoped mode, and
   `midas uninstall` all understand `~/.grok/config.toml` / `[mcp_servers.midas]` as well.
 
+### Changed
+- **License changed from Apache-2.0 to [MIT](LICENSE)** — the simplest, most permissive license there
+  is, so the project is maximally reusable by the community. Everything stays free: use it, fork it,
+  embed it in commercial products, no attribution beyond the copyright notice.
+
 ## [1.0.0] — 2026-07-06
 
 The 1.0 contract: the public surface — the `midas.Memory` SDK, the guard, the coding `is_forbidden`

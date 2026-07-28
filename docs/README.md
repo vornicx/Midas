@@ -1,7 +1,7 @@
 # Midas documentation
 
 Midas is the local memory layer for long-horizon AI agents — no LLM at ingest, $0 per message,
-fully local, every recall traceable to its source. **Free and open source under Apache-2.0.**
+fully local, every recall traceable to its source. **Free and open source under MIT.**
 
 New here? The [main README](../README.md) has the 2-minute install (`midas init` wires up every MCP
 client it finds) and the headline numbers. This page is the map of everything else.
@@ -41,4 +41,4 @@ The reasoning behind the design, written for people building or evaluating memor
 | [CONTRIBUTING](../CONTRIBUTING.md) | The eval-first bar for core changes, and the lighter bar for docs & examples |
 | [CHANGELOG](../CHANGELOG.md) | Every release, in detail |
 | [PRIVACY](../PRIVACY.md) | Exactly what Midas does and does not do with your data (short version: it never leaves your machine) |
-| [LICENSE](../LICENSE) | Apache-2.0 — use it, fork it, embed it in commercial products |
+| [LICENSE](../LICENSE) | MIT — use it, fork it, embed it in commercial products |
