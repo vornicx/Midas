@@ -52,11 +52,12 @@ from functools import cache, partial, wraps
 from threading import RLock
 
 from midas import (
-    AGENT_MEMORY_INSTRUCTIONS, MEMORY_PROVENANCE, MEMORY_USES, HashingEmbedder, Memory,
+    AGENT_MEMORY_INSTRUCTIONS, MEMORY_PROVENANCE, MEMORY_USES, Memory,
     MemoryPolicy, StructuralImportance, __version__, policy_summary,
 )
 from midas.state import memory_diff as _diff_view, memory_state as _state_view
 from midas.audit import audit_use as _audit_use
+from midas.embeddings import mcp_embeddings
 from midas.coding import (
     is_forbidden as _is_forbidden,
     project_state as _project_state_view,
@@ -70,6 +71,8 @@ from midas.continuity import (
     resume as _resume_view,
 )
 from midas.policy import parse_ttl_spec
+from midas.project_scope import git_output, project_scope
+from midas.index import count_records, scan_records
 # Age-based retention (MIDAS_MCP_TTL="chat=30,note=90": kind -> days) applied on maintenance passes.
 _TTL = parse_ttl_spec(os.getenv("MIDAS_MCP_TTL", ""))
 
@@ -87,6 +90,7 @@ class SessionContext:
     namespace: str
     origin: dict
     session_id: str = "default"
+    scope_name: str | None = None
 
 
 _session: ContextVar[SessionContext | None] = ContextVar("midas_session", default=None)
@@ -94,28 +98,20 @@ _session: ContextVar[SessionContext | None] = ContextVar("midas_session", defaul
 
 def session_context(config: dict) -> SessionContext:
     """Resolve the launching client's scope and code origin, independent of the worker's cwd."""
-    import subprocess
-
     cwd = config["cwd"]
     basename = os.path.basename(cwd)
 
-    def git(*args: str) -> str:
-        try:
-            result = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=2)
-            return result.stdout.strip() if result.returncode == 0 else ""
-        except (OSError, subprocess.SubprocessError):
-            return ""
-
     namespace = config["namespace"]
-    if namespace == "auto":
-        namespace = os.path.basename(git("rev-parse", "--show-toplevel")) or basename
+    scope = project_scope(cwd) if namespace == "auto" else None
     origin = {"cwd": basename} if basename else {}
-    commit = git("rev-parse", "--short", "HEAD")
+    commit = git_output(cwd, "rev-parse", "--short", "HEAD")
     if commit:
-        origin.update(git=commit, branch=git("rev-parse", "--abbrev-ref", "HEAD"))
+        origin.update(git=commit, branch=git_output(cwd, "rev-parse", "--abbrev-ref", "HEAD"))
     client = config["client"]
-    return SessionContext(client, config["actor"] or client, namespace, origin,
-                          config.get("session") or "default")
+    return SessionContext(
+        client, config["actor"] or client, scope.namespace if scope else namespace, origin,
+        config.get("session") or "default", scope.name if scope else None,
+    )
 
 
 @cache
@@ -131,7 +127,28 @@ def _context() -> SessionContext:
 
 
 def _ns(namespace: str) -> str:
-    return namespace or _context().namespace
+    context = _context()
+    if context.scope_name is not None:
+        if namespace and namespace != context.namespace:
+            raise ValueError("This session is scoped to its current project.")
+        return context.namespace
+    return namespace or context.namespace
+
+
+def _in_session_scope(record) -> bool:
+    context = _context()
+    return context.scope_name is None or record.metadata.get("namespace") == context.namespace
+
+
+def _isolated_namespace() -> str | None:
+    context = _context()
+    return context.namespace if context.scope_name is not None else None
+
+
+def _count_namespace(store, namespace: str | None) -> int:
+    if namespace is None:
+        return count_records(store)
+    return sum(record.metadata.get("namespace") == namespace for record in scan_records(store))
 
 
 def _source(session: str) -> str:
@@ -144,6 +161,8 @@ def _ns_metadata(namespace: str, session: str) -> dict:
     md = {"session": context.session_id if session == "default" else session}
     if ns := _ns(namespace):
         md["namespace"] = ns
+    if context.scope_name is not None:
+        md["project_scope_name"] = context.scope_name
     if context.origin:
         md["origin"] = context.origin
     return md
@@ -160,31 +179,9 @@ _USE_NLI = os.getenv("MIDAS_MCP_NLI", "0") == "1"
 _PINNED = int(os.getenv("MIDAS_MCP_PINNED", "2") or "0")
 
 
-_MULTILINGUAL_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-
-
 def build_memory() -> Memory:
-    """Local semantic memory by default (graceful fallback to the offline hashing embedder), with
-    optional SQLite persistence via MIDAS_MCP_DB. Importance is derived from content (no LLM) when a
-    caller doesn't supply it, so forgetting/tiering have a salience to work with."""
-    embedder = HashingEmbedder()
-    reranker = None
-    choice = os.getenv("MIDAS_MCP_EMBEDDER", "local").lower()
-    threads = max(1, int(os.getenv("MIDAS_MCP_MODEL_THREADS", "2")))
-    if choice != "hashing":
-        try:
-            from midas import LocalEmbedder, LocalReranker
-
-            if choice == "multilingual" or "/" in choice:
-                # Non-English memory: bge-base is English-only (measured: Spanish answer_dumb
-                # 0.68 vs 1.00 with the multilingual model). The cross-encoder reranker is
-                # English-trained (ms-marco), so it stays off for non-English models.
-                model = _MULTILINGUAL_MODEL if choice == "multilingual" else os.getenv("MIDAS_MCP_EMBEDDER")
-                embedder = LocalEmbedder(model_name=model, threads=threads)
-            else:
-                embedder, reranker = LocalEmbedder(threads=threads), LocalReranker(threads=threads)
-        except Exception as exc:  # fastembed missing or model load failed
-            print(f"[midas-mcp] local embedder unavailable ({exc}); using hashing", file=sys.stderr)
+    """Build the shared engine with the selected local embedder and persistent store."""
+    embedder, reranker = mcp_embeddings()
 
     store = None
     # One shared, persistent store BY DEFAULT: ~/.midas/memory.sqlite3 — so every MCP client (Claude
@@ -269,6 +266,14 @@ def _tool(**options):
     return decorate
 
 
+def _trim_after_write() -> None:
+    if _MAX_RECORDS:
+        namespace = _isolated_namespace()
+        mem = _memory()
+        if _count_namespace(mem.store, namespace) > _MAX_RECORDS:
+            mem.forget_decayed(max_records=_MAX_RECORDS, namespace=namespace)
+
+
 async def capture_prompt(event: dict) -> None:
     """Offer a live, opted-in client prompt to the same engine as the MCP sessions."""
     if not isinstance(event, dict) or any(not isinstance(event.get(field), str)
@@ -285,8 +290,8 @@ async def capture_prompt(event: dict) -> None:
             mem = _memory()
             result = mem.capture(prompt, kind="chat", actor=client, source=f"hook:{client}:{session_id}",
                                  metadata=_ns_metadata("", session_id))
-            if result.stored and _MAX_RECORDS and len(mem.store.all()) > _MAX_RECORDS:
-                mem.forget_decayed(max_records=_MAX_RECORDS)
+            if result.stored:
+                _trim_after_write()
         finally:
             _session.reset(token)
 
@@ -328,8 +333,7 @@ def remember(
         actor=actor or _context().actor,
         metadata=_ns_metadata(namespace, session),
     )
-    if _MAX_RECORDS and len(_memory().store.all()) > _MAX_RECORDS:
-        _memory().forget_decayed(max_records=_MAX_RECORDS)  # keep memory bounded (no LLM)
+    _trim_after_write()
     return f"remembered ({rec.id})"
 
 
@@ -362,8 +366,8 @@ def capture(
         actor=actor or _context().actor,
         metadata=_ns_metadata(namespace, session),
     )
-    if result.stored and _MAX_RECORDS and len(_memory().store.all()) > _MAX_RECORDS:
-        _memory().forget_decayed(max_records=_MAX_RECORDS)
+    if result.stored:
+        _trim_after_write()
     return {
         "stored": result.stored,
         "reason": result.reason,
@@ -399,8 +403,7 @@ def remember_code(
         actor=_context().actor, source=_source(session),
         metadata=_ns_metadata(namespace, session),
     )
-    if _MAX_RECORDS and len(_memory().store.all()) > _MAX_RECORDS:
-        _memory().forget_decayed(max_records=_MAX_RECORDS)  # keep memory bounded (no LLM)
+    _trim_after_write()
     return _serialize_record(rec)
 
 
@@ -510,7 +513,7 @@ def recall(
 def inspect_memory(memory_id: str) -> dict:
     """Inspect one stored memory by id without search, mutation, or embedding exposure."""
     record = _memory().store.get(memory_id)
-    if record is None:
+    if record is None or not _in_session_scope(record):
         return {"found": False, "id": memory_id}
     return {"found": True, **_serialize_record(record)}
 
@@ -562,7 +565,8 @@ def memory_state(namespace: str = "", kinds: str = "", limit: int = 50) -> dict:
     """
     kind_tuple = tuple(k.strip() for k in kinds.split(",") if k.strip())
     extra = {"kinds": kind_tuple} if kind_tuple else {}
-    records = _state_view(_memory(), scope=_ns_filter(namespace), limit=int(limit), **extra)
+    records = _state_view(_memory(), scope=_ns_filter(namespace), limit=int(limit),
+                          embeddings=False, **extra)
     return {"count": len(records), "state": [_serialize_record(r) for r in records]}
 
 
@@ -576,7 +580,7 @@ def memory_diff(hours: float = 24.0, namespace: str = "") -> dict:
     everything. Deterministic, no LLM.
     """
     since = time.time() - float(hours) * 3600.0
-    diff = _diff_view(_memory(), since, scope=_ns_filter(namespace))
+    diff = _diff_view(_memory(), since, scope=_ns_filter(namespace), embeddings=False)
     return {
         "since_hours": float(hours),
         "added": [_serialize_record(r) for r in diff.added],
@@ -599,7 +603,7 @@ def resume(project: str = "", namespace: str = "", hours: float = 168.0,
     needs a query): resume is the query-less session start. Deterministic, no LLM.
     """
     pack = _resume_view(
-        _memory(), scope=_ns_filter(namespace), project=project or None,
+        _memory(), scope=_ns_filter(namespace), project=project or None, embeddings=False,
         since=time.time() - float(hours) * 3600.0, token_budget=int(token_budget),
     )
     return {
@@ -651,7 +655,7 @@ def open_loops(project: str = "", namespace: str = "", limit: int = 20) -> dict:
     scope = _ns_filter(namespace) or {}
     if project:
         scope["project"] = project
-    records = _open_loops_view(_memory(), scope=scope or None, limit=int(limit))
+    records = _open_loops_view(_memory(), scope=scope or None, limit=int(limit), embeddings=False)
     return {"count": len(records), "open_loops": [_serialize_record(r) for r in records]}
 
 
@@ -683,6 +687,10 @@ def close_loop(loop_id: str, resolution: str) -> str:
     `loop_id` from `open_loops` (the record id).
     """
     try:
+        if _isolated_namespace() is not None:
+            record = _memory().store.get(loop_id)
+            if record is None or not _in_session_scope(record):
+                return f"no open commitment with id '{loop_id}'"
         rec = _close_loop_impl(_memory(), loop_id, resolution, actor=_context().actor)
     except ValueError as exc:
         return str(exc)
@@ -700,7 +708,7 @@ def project_state(project: str, limit: int = 200) -> dict:
     what is forbidden before acting. Deterministic, no LLM. Capture code memories with the SDK's
     `midas.coding.remember_*` helpers (they tag `code_kind` + `project`).
     """
-    grouped = _project_state_view(_memory(), project, limit=int(limit))
+    grouped = _project_state_view(_memory(), project, limit=int(limit), namespace=_isolated_namespace())
     return {
         "project": project,
         "counts": {k: len(recs) for k, recs in grouped.items()},
@@ -720,8 +728,9 @@ def check_forbidden_action(action: str, project: str) -> dict:
         semantic signal is noisy (~31% false positives, `eval.forbidden_eval`), so it warns, not blocks.
     Separate from the provenance/currency gate (`check_memory_use`).
     """
-    lexical = _is_forbidden(_memory(), action, project, use_embeddings=False)
-    matched = _is_forbidden(_memory(), action, project)  # lexical + semantic
+    namespace = _isolated_namespace()
+    lexical = _is_forbidden(_memory(), action, project, use_embeddings=False, namespace=namespace)
+    matched = _is_forbidden(_memory(), action, project, namespace=namespace)
     lex_ids = {r.id for r in lexical}
     semantic_only = [r for r in matched if r.id not in lex_ids]
     return {
@@ -794,6 +803,10 @@ def check_memory_use(
 def forget(memory_id: str) -> str:
     """Delete a single memory by id (ids come from `recall`). Supersession chains through the
     deleted record are relinked, so belief-revision history stays walkable."""
+    if _isolated_namespace() is not None:
+        record = _memory().store.get(memory_id)
+        if record is None or not _in_session_scope(record):
+            return f"no memory with id {memory_id}"
     return "forgotten" if _memory().forget(memory_id) else f"no memory with id {memory_id}"
 
 
@@ -837,9 +850,16 @@ def forget_matching(
     annotations=ToolAnnotations(title="Forget all", readOnlyHint=False, destructiveHint=True),
 )
 def forget_all() -> str:
-    """Clear all stored memories (fresh start)."""
-    n = len(_memory().store.all())
-    _memory().store.clear()
+    """Clear this project's memories, or the whole store in shared mode."""
+    store = _memory().store
+    if namespace := _isolated_namespace():
+        clear = getattr(store, "clear_namespace", None)
+        if clear is not None:
+            return f"cleared {clear(namespace)} memories"
+        ids = [r.id for r in scan_records(store) if r.metadata.get("namespace") == namespace]
+        return f"cleared {sum(store.delete(rid) for rid in ids)} memories"
+    n = count_records(store)
+    store.clear()
     return f"cleared {n} memories"
 
 
@@ -861,11 +881,12 @@ def maintain(consolidate_threshold: float = 0.0, max_records: int = 0, min_value
     Durable memories (facts/preferences/constraints, high importance) and supersession chains are
     never dropped. Returns counts and the ids removed (auditable).
     """
-    before = len(_memory().store.all())
+    namespace = _isolated_namespace()
+    before = _count_namespace(_memory().store, namespace)
     ttl_map = parse_ttl_spec(ttl) if ttl else _TTL
-    expired = _memory().forget_expired(ttl_map) if ttl_map else []
+    expired = _memory().forget_expired(ttl_map, namespace=namespace) if ttl_map else []
     consolidated = (
-        _memory().consolidate(similarity_threshold=float(consolidate_threshold))
+        _memory().consolidate(similarity_threshold=float(consolidate_threshold), namespace=namespace)
         if consolidate_threshold and consolidate_threshold > 0
         else []
     )
@@ -873,13 +894,14 @@ def maintain(consolidate_threshold: float = 0.0, max_records: int = 0, min_value
         _memory().forget_decayed(
             max_records=int(max_records) or None,
             min_value=float(min_value) or None,
+            namespace=namespace,
         )
         if (max_records or min_value)
         else []
     )
     return {
         "before": before,
-        "remaining": len(_memory().store.all()),
+        "remaining": _count_namespace(_memory().store, namespace),
         "expired": len(expired),
         "consolidated": len(consolidated),
         "forgotten": len(forgotten),
@@ -902,8 +924,11 @@ def stats(namespace: str = "") -> dict:
     by_provenance: dict[str, int] = {p: 0 for p in MEMORY_PROVENANCE}
     by_tier: dict[str, int] = {"short": 0, "medium": 0, "long": 0}
     by_namespace: dict[str, int] = {}
-    for record in _memory().store.all():
+    isolated = _isolated_namespace()
+    for record in scan_records(_memory().store):
         rec_ns = record.metadata.get("namespace") or "(none)"
+        if isolated is not None and rec_ns != isolated:
+            continue
         by_namespace[rec_ns] = by_namespace.get(rec_ns, 0) + 1
         if ns and record.metadata.get("namespace") != ns:
             continue

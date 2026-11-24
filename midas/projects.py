@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from .audit import audit_completeness
+from .index import scan_records
 
 if TYPE_CHECKING:
     from .memory import Memory
@@ -20,12 +21,14 @@ def project_of(record: "MemoryRecord") -> str | None:
     """The project a record belongs to — explicit code tag, else namespace, else capture cwd."""
     md = record.metadata or {}
     origin = md.get("origin") or {}
+    if md.get("project_scope_name") and md.get("namespace"):
+        return md["namespace"]
     return md.get("project") or md.get("namespace") or origin.get("cwd") or None
 
 
 def _by_project(mem: "Memory") -> dict[str, list["MemoryRecord"]]:
     groups: dict[str, list[MemoryRecord]] = {}
-    for r in mem.store.all():
+    for r in scan_records(mem.store):
         name = project_of(r)
         if name:
             groups.setdefault(name, []).append(r)
@@ -38,6 +41,7 @@ def list_projects(mem: "Memory") -> list[dict[str, Any]]:
     for name, recs in _by_project(mem).items():
         out.append({
             "name": name,
+            "label": recs[0].metadata.get("project_scope_name") or name,
             "total": len(recs),
             "live": sum(1 for r in recs if r.superseded_by is None),
             "attributable": round(audit_completeness(recs), 2),
@@ -49,12 +53,14 @@ def list_projects(mem: "Memory") -> list[dict[str, Any]]:
 
 def project_overview(mem: "Memory", name: str) -> dict[str, Any]:
     """Per-project health: counts, attributability, recency, and the kind distribution."""
-    recs = [r for r in mem.store.all() if project_of(r) == name]
+    recs = [r for r in scan_records(mem.store) if project_of(r) == name]
     by_kind: dict[str, int] = {}
     for r in recs:
         by_kind[r.kind] = by_kind.get(r.kind, 0) + 1
     return {
         "name": name,
+        "label": next((r.metadata["project_scope_name"] for r in recs
+                       if r.metadata.get("project_scope_name")), name),
         "total": len(recs),
         "live": sum(1 for r in recs if r.superseded_by is None),
         "superseded": sum(1 for r in recs if r.superseded_by is not None),
@@ -68,14 +74,14 @@ def project_governance(mem: "Memory", name: str) -> dict[str, Any]:
     """The governance picture of a project: its active prohibitions, the trust mix (by provenance), who
     contributed (by actor), and how much has been revised. The same view the paid Team dashboard renders,
     multi-user. `forbidden` is returned as records — the caller serializes."""
-    recs = [r for r in mem.store.all() if project_of(r) == name]
+    recs = [r for r in scan_records(mem.store) if project_of(r) == name]
     by_prov: dict[str, int] = {}
     by_actor: dict[str, int] = {}
     for r in recs:
         by_prov[r.provenance] = by_prov.get(r.provenance, 0) + 1
         actor = r.actor or "—"
         by_actor[actor] = by_actor.get(actor, 0) + 1
-    forbidden = [r for r in recs
+    forbidden = [mem.store.get(r.id) or r for r in recs
                  if r.superseded_by is None and (r.metadata or {}).get("code_kind") == "forbidden_action"]
     return {
         "forbidden": forbidden,

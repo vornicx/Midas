@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from midas.project_scope import project_scope
 
 
 pytest.importorskip("mcp")
@@ -82,7 +83,8 @@ def test_concurrent_stdio_clients_share_worker_and_live_prompt_capture(tmp_path)
             [record] = await tool(reader, "recall", query="PostgreSQL", limit=1)
             hit = json.loads(record)
             assert hit["source"].startswith("mcp:codex:") and hit["actor"] == "codex"
-            assert hit["metadata"]["namespace"] == "project"
+            assert hit["metadata"]["namespace"] == project_scope(project).namespace
+            assert hit["metadata"]["project_scope_name"] == "project"
             assert hit["metadata"]["origin"]["cwd"] == "project"
             assert await tool(other, "recall", query="PostgreSQL") == []
 

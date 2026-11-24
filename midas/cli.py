@@ -36,7 +36,7 @@ def _ensure_store(db: str) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     from midas.sqlite_store import SQLiteStore
 
-    SQLiteStore(str(p))  # creates a valid, empty SQLite store if missing
+    SQLiteStore(str(p)).close()  # creates a valid, empty SQLite store if missing
 
 
 def _safe_read(p: Path) -> str:
@@ -352,10 +352,15 @@ def cmd_status(args: argparse.Namespace) -> int:
     if store_info["exists"]:
         from midas.sqlite_store import SQLiteStore
 
-        recs = list(SQLiteStore(db).all())
-        store_info.update(records=len(recs),
-                          live=sum(1 for r in recs if r.superseded_by is None),
-                          size_kb=Path(db).stat().st_size // 1024)
+        store = SQLiteStore(db)
+        try:
+            records = live = 0
+            for record in store.iter_records(embeddings=False):
+                records += 1
+                live += record.superseded_by is None
+            store_info.update(records=records, live=live, size_kb=Path(db).stat().st_size // 1024)
+        finally:
+            store.close()
 
     clients: list[dict] = []
     ns_values: set = set()
@@ -490,7 +495,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         from midas.sqlite_store import SQLiteStore
         try:
             store = SQLiteStore(db)
-            check(True, f"store: {db}  ({len(store.all())} records, schema v{store.schema_version()})")
+            check(True, f"store: {db}  ({store.count()} records, schema v{store.schema_version()})")
             chain = store.verify_audit_log()
             check(chain["ok"], f"audit chain intact ({chain['entries']} entries)",
                   f"broken at seq {chain['first_invalid_seq']} — see `midas audit`")
@@ -688,7 +693,7 @@ def _import_rules(args: argparse.Namespace, source: str) -> int:
         print(f"nothing importable found in {path}", file=sys.stderr)
         return 1
 
-    existing = {" ".join(r.content.split()).lower() for r in mem.store.all()}
+    existing = {" ".join(r.content.split()).lower() for r in mem.store.iter_records(embeddings=False)}
     added = skipped = 0
     for d in dicts:
         key = " ".join(d["content"].split()).lower()
@@ -706,8 +711,126 @@ def _import_rules(args: argparse.Namespace, source: str) -> int:
     return 0
 
 
+def _import_native(args: argparse.Namespace, source: str) -> int:
+    from dataclasses import asdict
+    import hashlib
+
+    from midas.native_import import content_key, load_native
+    from midas.project_scope import project_scope
+
+    apply = getattr(args, "apply", False)
+    requested = set(getattr(args, "select", None) or [])
+    if apply and not requested:
+        print("Select the memories to import with --select after reviewing the preview.", file=sys.stderr)
+        return 1
+    if getattr(args, "confirmed", False) or getattr(args, "overwrite", False):
+        print("Native memories are imported as observations, with existing records preserved.",
+              file=sys.stderr)
+        return 1
+    try:
+        directory = Path(getattr(args, "into", None) or Path.cwd()).expanduser()
+        if not directory.is_dir():
+            raise ValueError(f"Project directory does not exist: {directory}")
+        scope = project_scope(directory)
+        items = load_native(Path(args.file).expanduser(), source)
+    except (OSError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if not items:
+        print("No importable native memories found.", file=sys.stderr)
+        return 1
+    unknown = requested - {item.selection for item in items}
+    if unknown:
+        print(f"Unknown or changed selection: {', '.join(sorted(unknown))}. Run the preview again.",
+              file=sys.stderr)
+        return 1
+    selected = [item for item in items if not requested or item.selection in requested]
+    if not apply:
+        if getattr(args, "json", False):
+            print(json.dumps({
+                "namespace": scope.namespace, "project": scope.name, "items": [asdict(i) for i in selected],
+            }, indent=2))
+        else:
+            print(f"Preview for {scope.name} ({scope.namespace})")
+            for item in selected:
+                where = f"{item.file}:{item.line}"
+                if item.group or item.origin_scope:
+                    where += f" ({' · '.join(x for x in (item.group, item.origin_scope) if x)})"
+                print(f"{item.selection}  {item.kind}  {json.dumps(where, ensure_ascii=False)}")
+                # Escape terminal control characters from generated files in the review surface.
+                print("  " + json.dumps(item.content, ensure_ascii=False))
+        return 0
+
+    from midas.embeddings import mcp_embeddings
+    from midas.index import scan_records
+    from midas.sqlite_store import SQLiteStore
+    from midas.types import MemoryRecord
+
+    db = _store_path(args.db)
+    source_client = "claude-code" if source == "claude-memory" else "codex"
+    added = skipped = 0
+    store = SQLiteStore(db)
+    try:
+        existing = {content_key(r.content) for r in scan_records(store)
+                    if r.metadata.get("namespace") == scope.namespace}
+        candidates = []
+        for item in selected:
+            key = content_key(item.content)
+            if key in existing:
+                skipped += 1
+            else:
+                existing.add(key)
+                candidates.append((item, key))
+        if candidates:
+            embedder, _ = mcp_embeddings(with_reranker=False)
+            dimensions = store.embedding_dimensions()
+            if dimensions and getattr(embedder, "dim", None) not in dimensions:
+                raise ValueError("Embedding dimensions differ from this store. Set MIDAS_MCP_EMBEDDER "
+                                 "to the embedder used by its MCP clients and try again.")
+            for offset in range(0, len(candidates), 32):
+                batch = candidates[offset:offset + 32]
+                vectors = embedder.embed_many([item.content for item, _ in batch])
+                for (item, key), vector in zip(batch, vectors, strict=True):
+                    identity = f"{scope.namespace}\0{key}".encode("utf-8", "surrogatepass")
+                    record = MemoryRecord(
+                        id=hashlib.sha256(identity).hexdigest(),
+                        content=item.content, kind=item.kind, importance=3,
+                        provenance="observation", actor=source_client,
+                        source=f"import:{source_client}:{item.file}:{item.line}",
+                        metadata={
+                            "namespace": scope.namespace, "project_scope_name": scope.name,
+                            "imported_from": item.file, "imported_line": item.line,
+                            "native_group": item.group, "native_section": item.section,
+                            "native_scope": item.origin_scope,
+                        },
+                        created_at=item.modified, updated_at=item.modified, embedding=vector,
+                    )
+                    if store.put_if_absent(record):
+                        added += 1
+                    else:
+                        skipped += 1
+    except (OSError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    finally:
+        store.close()
+    if getattr(args, "json", False):
+        print(json.dumps({"namespace": scope.namespace, "imported": added, "skipped": skipped}))
+    else:
+        print(f"Imported {added} native memories into {scope.name} ({skipped} already present).")
+    return 0
+
+
 def cmd_import(args: argparse.Namespace) -> int:
+    from midas.native_import import NATIVE_SOURCES
+
     source = getattr(args, "source", "midas")
+    if source in NATIVE_SOURCES:
+        return _import_native(args, source)
+    if any(getattr(args, flag, None) for flag in ("preview", "apply", "select", "into", "json")):
+        print("Preview and selection flags apply to Claude Code and Codex native memory imports.",
+              file=sys.stderr)
+        return 1
     if source != "midas":
         return _import_rules(args, source)
     from midas.sqlite_store import SQLiteStore
@@ -718,7 +841,7 @@ def cmd_import(args: argparse.Namespace) -> int:
     db = _store_path(args.db)
     _ensure_store(db)
     store = SQLiteStore(db)
-    existing = {r.id for r in store.all()}
+    existing = {r.id for r in store.iter_records(embeddings=False)}
     added = skipped = 0
     for d in records:
         if not args.overwrite and d.get("id") in existing:
@@ -788,6 +911,60 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
 
 # ---- projects ---------------------------------------------------------------------------------
 
+def cmd_scope(args: argparse.Namespace) -> int:
+    from midas.project_scope import project_scope
+
+    directory = Path(args.directory or Path.cwd()).expanduser()
+    if not directory.is_dir():
+        print(f"Project directory does not exist: {directory}", file=sys.stderr)
+        return 1
+    scope = project_scope(directory)
+    legacy = args.adopt_legacy
+    ids = set(args.record or [])
+    if (args.apply or ids) and not legacy:
+        print("--record and --apply require --adopt-legacy.", file=sys.stderr)
+        return 1
+    report = {"name": scope.name, "namespace": scope.namespace, "legacy": scope.legacy_namespace}
+    if legacy:
+        from midas.index import scan_records
+        from midas.sqlite_store import SQLiteStore
+
+        db = _store_path(args.db)
+        if not Path(db).is_file():
+            print(f"No memory store at {db}.", file=sys.stderr)
+            return 1
+        if args.apply and not ids:
+            print("Select legacy records with --record after reviewing the preview.", file=sys.stderr)
+            return 1
+        store = SQLiteStore(db)
+        try:
+            if args.apply:
+                report["moved"] = store.adopt_namespace(legacy, scope.namespace, scope.name, ids)
+            else:
+                report["records"] = [
+                    {"id": r.id, "content": r.content, "source": r.source,
+                     "superseded_by": r.superseded_by, "closes": r.metadata.get("closes")}
+                    for r in scan_records(store) if r.metadata.get("namespace") == legacy
+                    and (not ids or r.id in ids)
+                ]
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        finally:
+            store.close()
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        print(f"{scope.name}  {scope.namespace}")
+        if "moved" in report:
+            print(f"Moved {report['moved']} legacy memories.")
+        elif "records" in report:
+            for record in report["records"]:
+                print(record["id"], json.dumps(record["content"], ensure_ascii=False))
+            print(f"{len(report['records'])} legacy memories in {json.dumps(legacy)}.")
+    return 0
+
+
 def cmd_projects(args: argparse.Namespace) -> int:
     from datetime import datetime
     from types import SimpleNamespace
@@ -803,10 +980,11 @@ def cmd_projects(args: argparse.Namespace) -> int:
     if not projs:
         print("no projects yet — memory gets grouped by project / namespace / cwd.")
         return 0
-    print(f"{'PROJECT':<26}{'LIVE':>6}{'TOTAL':>7}{'ATTRIB':>8}  LAST ACTIVE")
+    print(f"{'PROJECT':<38}{'LIVE':>6}{'TOTAL':>7}{'ATTRIB':>8}  LAST ACTIVE")
     for p in projs:
         la = datetime.fromtimestamp(p["last_active"]).strftime("%Y-%m-%d") if p["last_active"] else "—"
-        print(f"{p['name'][:26]:<26}{p['live']:>6}{p['total']:>7}{round(p['attributable'] * 100):>7}%  {la}")
+        print(f"{p['name']:<38}{p['live']:>6}{p['total']:>7}{round(p['attributable'] * 100):>7}%  {la}"
+              + (f" · {p['label']}" if p["label"] != p["name"] else ""))
     return 0
 
 
@@ -927,19 +1105,35 @@ def main() -> None:
     pe.set_defaults(func=cmd_export)
 
     pm = sub.add_parser("import", help="import memory (midas export JSON, CLAUDE.md, .cursorrules…)")
-    pm.add_argument("file", help="the file to import")
+    pm.add_argument("file", help="a file or a native memory directory")
     pm.add_argument("--from", dest="source", default="midas",
-                    choices=("midas", "claude-md", "cursorrules", "jsonl", "mem0", "zep"),
+                    choices=("midas", "claude-md", "cursorrules", "jsonl", "mem0", "zep",
+                             "claude-memory", "codex-memory"),
                     help="what the file is: a midas export (default), a rules markdown "
                          "(CLAUDE.md/AGENTS.md), a .cursorrules, generic JSONL records, or a "
-                         "Mem0/Zep JSON export")
+                         "Mem0/Zep JSON export, or native Claude Code/Codex memory")
     pm.add_argument("--project", help="tag imported rules with this project scope")
     pm.add_argument("--confirmed", action="store_true",
                     help="stamp imported rules as user-confirmed (they may then authorize "
                          "guarded actions — only if you vouch for the file)")
     pm.add_argument("--db")
     pm.add_argument("--overwrite", action="store_true", help="overwrite records with the same id")
+    preview_mode = pm.add_mutually_exclusive_group()
+    preview_mode.add_argument("--preview", action="store_true", help="preview native memories (default)")
+    preview_mode.add_argument("--apply", action="store_true", help="import the selected native memories")
+    pm.add_argument("--select", action="append", metavar="ID", help="a native memory preview ID (repeatable)")
+    pm.add_argument("--into", metavar="DIRECTORY", help="target repo for native imports (default: cwd)")
+    pm.add_argument("--json", action="store_true", help="output a native import receipt in JSON")
     pm.set_defaults(func=cmd_import)
+
+    pscope = sub.add_parser("scope", help="show a repository scope or review legacy namespace records")
+    pscope.add_argument("--directory", help="project directory (default: current directory)")
+    pscope.add_argument("--adopt-legacy", metavar="NAMESPACE", help="review a previous namespace")
+    pscope.add_argument("--record", action="append", metavar="ID", help="legacy record to adopt (repeatable)")
+    pscope.add_argument("--apply", action="store_true", help="move only the reviewed, selected records")
+    pscope.add_argument("--db")
+    pscope.add_argument("--json", action="store_true")
+    pscope.set_defaults(func=cmd_scope)
 
     pun = sub.add_parser("uninstall", help="remove midas from your MCP clients (memory kept unless --purge)")
     pun.add_argument("--db")

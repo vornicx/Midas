@@ -16,6 +16,7 @@ import re
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
+from .index import scan_records
 from .types import MemoryKind, MemoryProvenance, MemoryRecord
 
 if TYPE_CHECKING:
@@ -88,22 +89,25 @@ def remember_forbidden_action(mem: "Memory", content: str, *, project: str, **kw
     return remember_code(mem, content, "forbidden_action", project=project, **kw)
 
 
-def project_state(mem: "Memory", project: str, *, limit: int = 200) -> dict[str, list[MemoryRecord]]:
+def project_state(mem: "Memory", project: str, *, limit: int = 200,
+                  namespace: str | None = None) -> dict[str, list[MemoryRecord]]:
     """The current code-state of a project, grouped by `code_kind` — the onboarding view for a coding
     agent. Returns only LIVE (non-superseded) code memories in the project, newest-first within each
     group, so a revised architecture decision shows its current value and a retired forbidden rule
     drops out. Deterministic, no LLM."""
     records = [
         r
-        for r in mem.store.all()
+        for r in scan_records(mem.store)
         if r.superseded_by is None
-        and r.metadata.get("project") == project
+        and (r.metadata.get("project") == project
+             or (r.metadata.get("project_scope_name") and r.metadata.get("namespace") == project))
+        and (namespace is None or r.metadata.get("namespace") == namespace)
         and r.metadata.get("code_kind")
     ]
     records.sort(key=lambda r: r.updated_at, reverse=True)
     grouped: dict[str, list[MemoryRecord]] = defaultdict(list)
     for r in records[:limit]:
-        grouped[r.metadata["code_kind"]].append(r)
+        grouped[r.metadata["code_kind"]].append(mem.store.get(r.id) or r)
     return dict(grouped)
 
 
@@ -137,6 +141,7 @@ def is_forbidden(
     min_shared: int = 2,
     min_similarity: float = 0.58,
     use_embeddings: bool = True,
+    namespace: str | None = None,
 ) -> list[MemoryRecord]:
     """Return the live `forbidden_action` rules a proposed `action` falls under (empty list ⇒ allowed).
 
@@ -166,13 +171,15 @@ def is_forbidden(
             action_emb = None
 
     hits: list[MemoryRecord] = []
-    for r in mem.store.all():
+    for r in scan_records(mem.store):
         if not (
             r.superseded_by is None
             and r.metadata.get("project") == project
+            and (namespace is None or r.metadata.get("namespace") == namespace)
             and r.metadata.get("code_kind") == "forbidden_action"
         ):
             continue
+        r = mem.store.get(r.id) or r
         shared = action_words & _words(r.content)
         lexical = (
             len(action_words) >= min_shared

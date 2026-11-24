@@ -176,6 +176,19 @@ Already carrying agent memory in files? **`midas import --from claude-md CLAUDE.
 `--from cursorrules`, `--from jsonl`, `--from mem0`, `--from zep`) turns those rules and exports into
 first-class, recallable, governable memories — tagged with where they came from, idempotent on re-run.
 
+To bring over native Claude Code or Codex memories, run the preview from the target repository:
+
+```bash
+midas import --from claude-memory "/path/to/claude/project/memory" --preview
+midas import --from codex-memory "/path/to/codex/memories_v2" --preview
+midas import --from codex-memory "/path/to/codex/memories_v2" --apply --select PREVIEW_ID
+```
+
+`--select` can be repeated. Use `--into DIRECTORY` to choose another target repo or `--json` for
+a machine-readable preview. Both Codex memory directories work. Imported records keep the source
+file and line, use observation provenance, and deduplicate within the target repository. Set
+`MIDAS_MCP_EMBEDDER` to the mode used by your clients if they use a custom model or hashing.
+
 For automatic capture while sessions are open, run **`midas init --claude-hook --codex-hook`**.
 Each flag enables the respective client. The hooks offer new user prompts to the local shared
 worker, where the existing capture policy decides what to keep. Codex requires you to trust the
@@ -226,9 +239,19 @@ current).
 By default the shared worker holds **one live memory** (`~/.midas/memory.sqlite3`). A fact captured
 in one connected client is available to other clients in the same scope as soon as it is stored.
 
-Want **per-project** separation instead? **`midas init --project-scoped`** (or `MIDAS_MCP_NAMESPACE=auto`)
-gives each project its own partition in the same store — the scope is derived from the git repo / cwd the
-server runs in. Or scope it manually per project/agent/user with `MIDAS_MCP_NAMESPACE`.
+**`midas init --project-scoped`** (or `MIDAS_MCP_NAMESPACE=auto`) gives each project its own
+partition. Linked Git worktrees use the same local Git directory identity. Outside Git, the
+canonical directory is the identity. Run **`midas scope`** to see the current ID. Explicit named
+namespaces remain available through `MIDAS_MCP_NAMESPACE`.
+
+Earlier versions used the folder name. To adopt records from that namespace, preview them with
+`midas scope --adopt-legacy OLD_NAME`, then repeat the command with `--apply --record RECORD_ID`
+for each selected ID. Select both sides of any linked revision or commitment when moving it.
+
+SQLite exact search reads vectors in bounded batches. The on-disk format and existing embeddings
+carry over. Warm search can take longer on large corpora because it reads from disk on each query.
+The optional `MIDAS_MCP_ANN=1` mode builds an in-memory index. To measure disk mode locally from
+a checkout, install `psutil` and run `python -m eval.bench_sqlite_disk --records 100000 --scoped`.
 
 <p align="center">
   <img src="docs/demo-multi-client.gif" alt="Two live processes share one Midas SQLite file: a recall that finds nothing, a capture from a different process, then the same never-restarted session recalls it" width="820">

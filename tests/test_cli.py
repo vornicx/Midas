@@ -316,11 +316,14 @@ def test_schema_version_and_newer_guard(tmp_path) -> None:
 
 def test_resolve_namespace_modes(tmp_path) -> None:
     from midas import mcp_server
+    from midas.project_scope import project_scope
 
     config = {"cwd": str(tmp_path), "client": "agent", "actor": "", "namespace": ""}
     assert mcp_server.session_context(config).namespace == ""
     assert mcp_server.session_context({**config, "namespace": "team-a"}).namespace == "team-a"
-    assert mcp_server.session_context({**config, "namespace": "auto"}).namespace == tmp_path.name
+    context = mcp_server.session_context({**config, "namespace": "auto"})
+    assert context.namespace == project_scope(tmp_path).namespace
+    assert context.scope_name == tmp_path.name
 
 
 def test_source_and_origin_attribution() -> None:

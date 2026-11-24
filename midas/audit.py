@@ -19,6 +19,7 @@ import hashlib
 import time
 from typing import TYPE_CHECKING, Any
 
+from .index import scan_records
 from .types import MemoryRecord
 
 if TYPE_CHECKING:
@@ -64,11 +65,15 @@ def audit_record(r: MemoryRecord) -> dict[str, Any]:
     }
 
 
-def belief_history(mem: "Memory", record_id: str) -> list[MemoryRecord]:
+def belief_history(mem: "Memory", record_id: str, *, embeddings: bool = True) -> list[MemoryRecord]:
     """The full belief-revision chain `record_id` belongs to, OLDEST → newest. Reconstructs the timeline
     from the `superseded_by` links: each version and what replaced it, so an auditor can see "we believed
     v1 from t1, revised to v2 at t2, …, current is vN". Empty if the id is unknown."""
-    by_id = {r.id: r for r in mem.store.all()}
+    target = mem.store.get(record_id)
+    if target is None:
+        return []
+    namespace = target.metadata.get("namespace")
+    by_id = {r.id: r for r in scan_records(mem.store) if r.metadata.get("namespace") == namespace}
     if record_id not in by_id:
         return []
     # superseded_by points at the NEWER record; map newer_id -> the record it replaced (older).
@@ -89,7 +94,7 @@ def belief_history(mem: "Memory", record_id: str) -> list[MemoryRecord]:
         rec = by_id[cur]
         chain.append(rec)
         cur = rec.superseded_by
-    return chain
+    return [mem.store.get(r.id) or r for r in chain] if embeddings else chain
 
 
 def audit_completeness(records: list[MemoryRecord]) -> float:
@@ -111,8 +116,7 @@ def audit_use(
     and belief history of each supporting memory + the attributability score. What you hand an auditor to
     answer "why did the agent (not) do this?" — reproducible and source-traceable, no LLM."""
     decision = mem.guard_reliance(query, intended_use=intended_use, **recall_kwargs)
-    by_id = {r.id: r for r in mem.store.all()}
-    evidence_records = [by_id[e.id] for e in decision.evidence if e.id in by_id]
+    evidence_records = [r for e in decision.evidence if (r := mem.store.get(e.id)) is not None]
     return {
         "query": query,
         "intended_use": decision.intended_use,
@@ -121,7 +125,7 @@ def audit_use(
         "required_provenance": list(decision.required_provenance),
         "audit_completeness": audit_completeness(evidence_records),
         "evidence": [
-            {**audit_record(r), "belief_history": [audit_record(h) for h in belief_history(mem, r.id)]}
+            {**audit_record(r), "belief_history": [audit_record(h) for h in belief_history(mem, r.id, embeddings=False)]}
             for r in evidence_records
         ],
         "blocked_ids": list(decision.blocked_ids),

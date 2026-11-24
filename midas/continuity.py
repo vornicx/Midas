@@ -21,11 +21,14 @@ it returns *candidates to resolve*, ranked, never auto-deletes anything.
 """
 from __future__ import annotations
 
+import heapq
 import re
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from .index import scan_records
+from .store import InMemoryStore
 from .memory import _content_words, _fmt_date, _proper_entities, approx_tokens, format_record
 from .state import DURABLE_KINDS, MemoryDiff, _scope_match, memory_diff, memory_state
 from .types import MemoryRecord
@@ -128,21 +131,24 @@ def memory_conflicts(
     NLI it falls back to a same-slot heuristic: numbers disagree, or exactly one side negates.
     Bounded work: the newest `pool` live records × `neighbors` nearest each. No LLM."""
     nli = nli if nli is not None else getattr(mem, "_nli", None)
-    live = [
-        r for r in mem.store.all()
-        if r.superseded_by is None and r.embedding is not None
-        and (kinds is None or r.kind in kinds) and _scope_match(r, scope)
-    ]
-    live.sort(key=lambda r: r.updated_at, reverse=True)
-    live = live[:pool]
-    live_ids = {r.id for r in live}
+    candidates = (
+        r for r in scan_records(mem.store, embedded_only=True)
+        if r.superseded_by is None and (kinds is None or r.kind in kinds) and _scope_match(r, scope)
+    )
+    newest = heapq.nlargest(pool, candidates, key=lambda r: r.updated_at)
+    cohort = InMemoryStore()
+    for record in newest:
+        current = mem.store.get(record.id)
+        if (current is not None and current.embedding is not None and current.superseded_by is None
+                and _scope_match(current, scope)):
+            cohort.put(current)
 
     conflicts: list[Conflict] = []
     seen: set[tuple[str, str]] = set()
-    for record in live:
-        near = mem.store.search(
+    for record in cohort.all():
+        near = cohort.search(
             record.embedding, limit=neighbors,
-            predicate=lambda r, rid=record.id: r.id != rid and r.id in live_ids,
+            predicate=lambda r: r.id != record.id,
         )
         for score, other in near:
             if score < min_similarity:
@@ -189,17 +195,19 @@ def open_loops(
     *,
     scope: dict[str, Any] | None = None,
     limit: int = 50,
+    embeddings: bool = True,
 ) -> list[MemoryRecord]:
     """Live (unclosed) commitments, OLDEST first — the longest-open promise is the most overdue.
     Closed loops are superseded by their resolution, so they drop out here but keep their history."""
     records = [
-        r for r in mem.store.all()
+        r for r in scan_records(mem.store)
         if r.superseded_by is None and r.kind == "commitment"
         and not r.metadata.get("closes")  # a resolution record is the close, not a new loop
         and _scope_match(r, scope)
     ]
     records.sort(key=lambda r: r.created_at)
-    return records[:limit] if limit else records
+    selected = records[:limit] if limit else records
+    return [mem.store.get(r.id) or r for r in selected] if embeddings else selected
 
 
 def close_loop(mem: "Memory", loop_id: str, resolution: str, *, actor: str | None = None) -> MemoryRecord:
@@ -229,6 +237,7 @@ def resume(
     since: float | None = None,
     token_budget: int = 900,
     now: float | None = None,
+    embeddings: bool = True,
 ) -> dict[str, Any]:
     """Everything an agent needs to pick up where it left off, in one deterministic call: pinned
     standing directives, live forbidden rules, the current durable state, what changed since `since`
@@ -240,15 +249,15 @@ def resume(
     if project:
         scope = {**(scope or {}), "project": project}
 
-    live = [r for r in mem.store.all() if r.superseded_by is None and _scope_match(r, scope)]
+    live = [r for r in scan_records(mem.store) if r.superseded_by is None and _scope_match(r, scope)]
     pinned = sorted((r for r in live if r.metadata.get("standing") or r.kind == "mission"),
                     key=lambda r: r.updated_at, reverse=True)
     forbidden = sorted((r for r in live if r.metadata.get("code_kind") == "forbidden_action"),
                        key=lambda r: r.updated_at, reverse=True)
     skip = {r.id for r in pinned} | {r.id for r in forbidden}
-    state = [r for r in memory_state(mem, scope=scope, limit=0) if r.id not in skip]
-    diff: MemoryDiff = memory_diff(mem, since, scope=scope)
-    loops = open_loops(mem, scope=scope)
+    state = [r for r in memory_state(mem, scope=scope, limit=0, embeddings=embeddings) if r.id not in skip]
+    diff: MemoryDiff = memory_diff(mem, since, scope=scope, embeddings=embeddings)
+    loops = open_loops(mem, scope=scope, embeddings=embeddings)
     conflicts = memory_conflicts(mem, scope=scope, limit=5)
 
     lines: list[str] = [f"RESUME (today is {_fmt_date(now)}; changes since {_fmt_date(since)})"]
@@ -279,6 +288,10 @@ def resume(
     emit("CONFLICTS (unresolved — verify before relying on either):",
          [f"- [{c.signal}] \"{' '.join(c.a.content.split())[:200]}\"  vs  "
           f"\"{' '.join(c.b.content.split())[:200]}\"" for c in conflicts])
+
+    if embeddings:
+        pinned = [mem.store.get(r.id) or r for r in pinned]
+        forbidden = [mem.store.get(r.id) or r for r in forbidden]
 
     return {
         "generated_at": now,

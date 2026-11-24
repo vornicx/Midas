@@ -28,6 +28,7 @@ _MD_INLINE_RE = re.compile(r"\*\*([^*]+)\*\*|\*([^*]+)\*|__([^_]+)__|`([^`]+)`")
 class ImportedItem:
     content: str
     section: str  # the heading path the item sat under ("" at top level)
+    line: int = 1
 
 
 def _strip_inline_md(text: str) -> str:
@@ -41,15 +42,16 @@ def parse_markdown_rules(text: str) -> list[ImportedItem]:
     section = ""
     in_fence = False
     paragraph: list[str] = []
+    paragraph_line = 1
 
     def flush_paragraph() -> None:
         nonlocal paragraph
         joined = _strip_inline_md(" ".join(paragraph))
         if len(joined) >= 20:  # a one-word line is noise, not a rule
-            items.append(ImportedItem(content=joined, section=section))
+            items.append(ImportedItem(content=joined, section=section, line=paragraph_line))
         paragraph = []
 
-    for raw in text.splitlines():
+    for line, raw in enumerate(text.splitlines(), 1):
         if _FENCE_RE.match(raw):
             flush_paragraph()
             in_fence = not in_fence
@@ -66,9 +68,11 @@ def parse_markdown_rules(text: str) -> list[ImportedItem]:
             flush_paragraph()
             content = _strip_inline_md(bullet.group(1))
             if len(content) >= 8:
-                items.append(ImportedItem(content=content, section=section))
+                items.append(ImportedItem(content=content, section=section, line=line))
             continue
         if raw.strip():
+            if not paragraph:
+                paragraph_line = line
             paragraph.append(raw.strip())
         else:
             flush_paragraph()

@@ -25,6 +25,7 @@ from typing import Any, Callable, Protocol, runtime_checkable
 
 from .embeddings import Embedder, HashingEmbedder, cosine
 from .importance import ContentImportance
+from .index import scan_records
 from .policy import DEFAULT_POLICY, MemoryPolicy
 from .store import InMemoryStore
 from .types import MEMORY_PROVENANCE, MemoryKind, MemoryProvenance, MemoryRecord, RecallHit
@@ -314,8 +315,9 @@ class Memory:
         # bitemporal signal long-horizon temporal reasoning needs. Defaults to the wall clock.
         ts = created_at if created_at is not None else self._now()
         if self._reinforce:
-            self._reinforce_existing(embedding, ts)  # a restatement boosts the matched memory
-        importance = self._derive_importance(importance, content, embedding)
+            self._reinforce_existing(embedding, ts, (metadata or {}).get("namespace"))
+        importance = self._derive_importance(importance, content, embedding,
+                                             (metadata or {}).get("namespace"))
         record = MemoryRecord(
             id=str(uuid.uuid4()),
             content=content,
@@ -368,16 +370,17 @@ class Memory:
             embedding = _as_f32(embedding)  # store as float32 array, not list[float] (footprint)
             ts = item.get("created_at")  # event time when provided (see remember); else ingest time
             ts = ts if ts is not None else self._now()
-            if self._reinforce:
-                self._reinforce_existing(embedding, ts)  # a restatement boosts the matched memory
             metadata = item.get("metadata") or {}
+            if self._reinforce:
+                self._reinforce_existing(embedding, ts, metadata.get("namespace"))
             if detect is not None and detect(item["content"]):
                 metadata = {**metadata, "standing": True}
             record = MemoryRecord(
                 id=str(uuid.uuid4()),
                 content=item["content"],
                 kind=item.get("kind", "note"),
-                importance=self._derive_importance(item.get("importance"), item["content"], embedding),
+                importance=self._derive_importance(item.get("importance"), item["content"], embedding,
+                                                   metadata.get("namespace")),
                 source=item.get("source"),
                 provenance=_normalize_provenance(item.get("provenance") or "observation"),
                 actor=item.get("actor"),
@@ -414,7 +417,8 @@ class Memory:
         policy = policy or self._policy
         scorer = self._importance_scorer or ContentImportance()
         embedding = self.embedder.embed(content)
-        importance = self._blend_novelty(scorer(content), embedding)
+        namespace = (metadata or {}).get("namespace")
+        importance = self._blend_novelty(scorer(content), embedding, namespace)
         if kind not in policy.accept_kinds:
             return CaptureResult(False, f"kind '{kind}' not accepted by policy", importance=importance)
         if importance < policy.min_importance:
@@ -424,7 +428,8 @@ class Memory:
                 importance=importance,
             )
         if policy.dedup_threshold and policy.dedup_threshold > 0:
-            near = self.store.search(embedding, limit=1)
+            near = self.store.search(embedding, limit=1,
+                                     predicate=lambda r: r.metadata.get("namespace") == namespace)
             if near and near[0][0] >= policy.dedup_threshold:
                 existing = near[0][1]
                 upgraded = self._upgrade_provenance(
@@ -529,13 +534,14 @@ class Memory:
         self.store.put(record)
         return True
 
-    def _novelty(self, embedding: list[float] | None) -> float:
+    def _novelty(self, embedding: list[float] | None, namespace: str | None = None) -> float:
         """Novelty-vs-store: 1 - max cosine similarity to anything already stored (1 = wholly new,
         0 = an exact duplicate). A store-aware salience signal — a turn dissimilar to every existing
         memory carries new information; a near-restatement of a known fact does not. No LLM."""
         if embedding is None:
             return 1.0
-        hits = self.store.search(embedding, limit=1)
+        hits = self.store.search(embedding, limit=1,
+                                 predicate=lambda r: r.metadata.get("namespace") == namespace)
         max_sim = max(0.0, hits[0][0]) if hits else 0.0
         return max(0.0, 1.0 - max_sim)
 
@@ -544,19 +550,23 @@ class Memory:
         (recency refreshes). The principled inverse of novelty: repetition signals salience."""
         record.importance = _clamp_importance(record.importance + self._reinforce_bump)
         record.updated_at = now
+        self.store.put(record)
 
-    def _reinforce_existing(self, embedding: list[float] | None, now: float) -> MemoryRecord | None:
+    def _reinforce_existing(self, embedding: list[float] | None, now: float,
+                            namespace: str | None = None) -> MemoryRecord | None:
         """When a new turn closely matches an existing memory (cosine >= `reinforce_threshold`), treat
         it as a restatement and reinforce that memory. Returns the reinforced record, or None. No LLM."""
         if not self._reinforce or embedding is None:
             return None
-        hits = self.store.search(embedding, limit=1)
+        hits = self.store.search(embedding, limit=1,
+                                 predicate=lambda r: r.metadata.get("namespace") == namespace)
         if hits and hits[0][0] >= self._reinforce_threshold:
             self._reinforce_record(hits[0][1], now)
             return hits[0][1]
         return None
 
-    def _blend_novelty(self, base_importance: int, embedding: list[float] | None) -> int:
+    def _blend_novelty(self, base_importance: int, embedding: list[float] | None,
+                       namespace: str | None = None) -> int:
         """Blend a content-salience importance (1-5) with novelty-vs-store via `novelty_weight` in
         [0,1] (a convex combination of the two normalised signals), then bucket back to 1-5. At weight
         0 this is exactly the content score; higher weights let a *new* fact outrank a *repeated* one
@@ -565,13 +575,14 @@ class Memory:
         base = _clamp_importance(base_importance)
         if self._novelty_weight <= 0 or embedding is None:
             return base
-        nov = self._novelty(embedding)
+        nov = self._novelty(embedding, namespace)
         content_norm = (base - 1) / 4
         combined = (1 - self._novelty_weight) * content_norm + self._novelty_weight * nov
         return _clamp_importance(1 + round(combined * 4))
 
     def _derive_importance(
-        self, importance: int | None, content: str, embedding: list[float] | None = None
+        self, importance: int | None, content: str, embedding: list[float] | None = None,
+        namespace: str | None = None,
     ) -> int:
         """Importance as given, else derived (no LLM): the content scorer's salience (or 1 when no
         scorer), optionally blended with novelty-vs-store. Used by `remember`/`remember_many` so raw
@@ -579,7 +590,7 @@ class Memory:
         if importance is not None:
             return _clamp_importance(importance)
         base = self._importance_scorer(content) if self._importance_scorer else 1
-        return self._blend_novelty(base, embedding)
+        return self._blend_novelty(base, embedding, namespace)
 
     def recall(
         self,
@@ -640,7 +651,15 @@ class Memory:
                 query, q_emb, pool=pool, predicate=predicate, fusion=fusion
             )
         else:
-            candidates = self.store.search(q_emb, limit=pool, predicate=predicate)
+            ns = (metadata_filter or {}).get("namespace")
+            search_namespace = getattr(self.store, "search_namespace", None)
+            if isinstance(ns, str) and search_namespace is not None:
+                scope_only = (metadata_filter == {"namespace": ns} and as_of is None
+                              and kind is None and min_importance is None)
+                candidates = search_namespace(q_emb, namespace=ns, limit=pool,
+                                              predicate=None if scope_only else predicate)
+            else:
+                candidates = self.store.search(q_emb, limit=pool, predicate=predicate)
         if self._supersede:
             candidates = self._resolve_candidates(candidates, as_of=as_of)
         if not candidates:
@@ -791,7 +810,7 @@ class Memory:
             allowed: set[str] | None = None
             semantic = self.store.search(q_emb, limit=pool)
         else:
-            records = [r for r in self.store.all() if predicate(r)]
+            records = [r for r in scan_records(self.store) if predicate(r)]
             allowed = {r.id for r in records}
             rec_by_id = {r.id: r for r in records}
             semantic = self.store.search(q_emb, limit=pool, allowed_ids=allowed)
@@ -806,8 +825,10 @@ class Memory:
         by_id: dict[str, tuple[float, MemoryRecord]] = {rec.id: (cos, rec) for cos, rec in semantic}
         for rid in bm_ranked[:pool]:
             if rid not in by_id:
-                rec = rec_by_id.get(rid)
-                if rec is None:
+                if rid not in rec_by_id:
+                    continue
+                rec = self.store.get(rid)
+                if rec is None or (predicate is not None and not predicate(rec)):
                     continue
                 cos = cosine(q_emb, rec.embedding) if rec.embedding is not None else 0.0
                 by_id[rid] = (cos, rec)
@@ -834,12 +855,11 @@ class Memory:
         """All records keyed by id, cached on the store's `version` (falls back to a per-call build
         for stores without a counter). Lets hybrid recall reuse the map instead of rebuilding it per
         query — the no-filter fast path."""
-        records = self.store.all()
-        version = getattr(self.store, "version", None)
+        version = self._store_version()
         if version is None:
-            return {r.id: r for r in records}
+            return {r.id: r for r in scan_records(self.store)}
         if self._rec_by_id_cache is None or self._rec_by_id_cache[0] != version:
-            self._rec_by_id_cache = (version, {r.id: r for r in records})
+            self._rec_by_id_cache = (version, {r.id: r for r in scan_records(self.store)})
         return self._rec_by_id_cache[1]
 
     def _bm25_index(self):
@@ -849,13 +869,18 @@ class Memory:
         from .bm25 import BM25
 
         factory = self._lexical_index_factory or BM25
-        records = self.store.all()  # for SQLiteStore this also refreshes from other processes
-        version = getattr(self.store, "version", None)
-        if version is None:
-            return factory(records)
-        if self._bm25_cache is None or self._bm25_cache[0] != version:
-            self._bm25_cache = (version, factory(records))
+        version = self._store_version()
+        if version is None or self._bm25_cache is None or self._bm25_cache[0] != version:
+            records = list(scan_records(self.store, embeddings=self._lexical_index_factory is not None))
+            index = factory(records)
+            if version is None:
+                return index
+            self._bm25_cache = (version, index)
         return self._bm25_cache[1]
+
+    def _store_version(self):
+        refresh = getattr(self.store, "refresh_version", None)
+        return refresh() if refresh is not None else getattr(self.store, "version", None)
 
     def recall_confidence(self, query: str, **recall_kwargs: Any) -> tuple[list[RecallHit], float]:
         """Recall with confidence score.
@@ -939,6 +964,7 @@ class Memory:
 
         predicate = lambda r: (
             r.id != new_record.id
+            and r.metadata.get("namespace") == new_record.metadata.get("namespace")
             and (not self._supersede_same_kind_only or r.kind == new_record.kind)
         )
         candidates = self.store.search(
@@ -1001,7 +1027,7 @@ class Memory:
         while current.superseded_by is not None and current.id not in seen:
             seen.add(current.id)
             nxt = self.store.get(current.superseded_by)
-            if nxt is None:
+            if nxt is None or nxt.metadata.get("namespace") != record.metadata.get("namespace"):
                 break
             current = nxt
         return current
@@ -1014,7 +1040,8 @@ class Memory:
         while current.superseded_by is not None and current.id not in seen:
             seen.add(current.id)
             nxt = self.store.get(current.superseded_by)
-            if nxt is None or nxt.created_at > as_of:
+            if (nxt is None or nxt.metadata.get("namespace") != record.metadata.get("namespace")
+                    or nxt.created_at > as_of):
                 break  # the successor wasn't true yet at the as-of time
             current = nxt
         return current
@@ -1062,7 +1089,7 @@ class Memory:
             hit_ids = {r.id for r in records}
             candidates = [
                 r
-                for r in self.store.all()
+                for r in scan_records(self.store)
                 if (r.metadata.get("standing") or r.kind == "mission")
                 and r.id not in hit_ids
                 and r.superseded_by is None
@@ -1072,7 +1099,7 @@ class Memory:
                 )
             ]
             candidates.sort(key=lambda r: (r.importance, r.updated_at), reverse=True)
-            pinned = candidates[:pinned_limit]
+            pinned = [self.store.get(r.id) or r for r in candidates[:pinned_limit]]
         if window > 0 and thread_key is not None:
             records = self._append_neighbors(
                 records,
@@ -1180,13 +1207,19 @@ class Memory:
     ) -> list[MemoryRecord]:
         """Expand each hit with its ±window same-thread neighbours, in hit-priority order.
         Threads are grouped by `record.metadata[thread_key]`, ordered by insertion."""
+        if not hits:
+            return []
+        relevant_threads = {hit.record.metadata.get(thread_key) for hit in hits}
         threads: dict[Any, list[MemoryRecord]] = {}
-        for record in self.store.all():
+        for record in scan_records(self.store):
+            thread = record.metadata.get(thread_key)
+            if thread not in relevant_threads:
+                continue
             if metadata_filter and any(
                 record.metadata.get(k) != v for k, v in metadata_filter.items()
             ):
                 continue
-            threads.setdefault(record.metadata.get(thread_key), []).append(record)
+            threads.setdefault(thread, []).append(record)
         index: dict[str, tuple[Any, int]] = {}
         for key, recs in threads.items():
             for i, rec in enumerate(recs):
@@ -1212,7 +1245,7 @@ class Memory:
                     continue
                 if nb.id not in seen:
                     seen.add(nb.id)
-                    ordered.append(nb)
+                    ordered.append(self.store.get(nb.id) or nb)
         return ordered
 
     def _append_neighbors(
@@ -1278,6 +1311,7 @@ class Memory:
         protect_importance: int = 4,
         protect_kinds: tuple[MemoryKind, ...] = DURABLE_KINDS,
         keep_chains: bool = True,
+        namespace: str | None = None,
     ) -> list[str]:
         """Selective forgetting (no LLM): bound memory growth by evicting the lowest-`memory_value`
         records — the aging, low-importance, non-durable long tail — so storage and the retrieved
@@ -1302,7 +1336,7 @@ class Memory:
         forgotten” story needs. A no-op (returns []) when nothing is unprotected or both limits are
         None."""
         now = now if now is not None else self._now()
-        records = self.store.all()
+        records = list(scan_records(self.store))
         # Anything still referenced by a `superseded_by` link must not be orphaned.
         pointed_to = {r.superseded_by for r in records if r.superseded_by is not None}
 
@@ -1313,6 +1347,8 @@ class Memory:
                 return True
             return False
 
+        if namespace is not None:
+            records = [r for r in records if r.metadata.get("namespace") == namespace]
         candidates = [r for r in records if not protected(r)]
         value = {r.id: self.memory_value(r, now=now) for r in candidates}
         scored = sorted(candidates, key=lambda r: value[r.id])  # lowest value first
@@ -1343,6 +1379,7 @@ class Memory:
         *,
         now: float | None = None,
         keep_chains: bool = True,
+        namespace: str | None = None,
     ) -> list[str]:
         """Retention policy: delete records whose kind has outlived its TTL (`ttl_by_kind` maps kind ->
         max age in DAYS, e.g. {"chat": 30, "note": 90}). This is age-based retention — the compliance
@@ -1353,11 +1390,12 @@ class Memory:
         silently (an explicit `forget` outranks retention; a TTL should not). Returns the deleted ids,
         oldest first — the retention audit trail. No LLM."""
         now = now if now is not None else self._now()
-        records = self.store.all()
+        records = list(scan_records(self.store))
         pointed_to = {r.superseded_by for r in records if r.superseded_by is not None}
         expired = [
             r for r in records
             if r.kind in ttl_by_kind
+            and (namespace is None or r.metadata.get("namespace") == namespace)
             and (now - r.created_at) > ttl_by_kind[r.kind] * 86_400.0
             and r.provenance != "user_confirmation"
             and not r.metadata.get("standing")
@@ -1377,8 +1415,11 @@ class Memory:
         target = self.store.get(record_id)
         if target is None:
             return False
-        for record in self.store.all():
-            if record.superseded_by == record_id:
+        predecessors = [r.id for r in scan_records(self.store) if r.superseded_by == record_id
+                        and r.metadata.get("namespace") == target.metadata.get("namespace")]
+        for predecessor in predecessors:
+            record = self.store.get(predecessor)
+            if record is not None:
                 record.superseded_by = target.superseded_by
                 self.store.put(record)
         return self.store.delete(record_id)
@@ -1420,6 +1461,7 @@ class Memory:
         now: float | None = None,
         keep_chains: bool = True,
         pool: int = 50,
+        namespace: str | None = None,
     ) -> list[str]:
         """Extractive consolidation (no LLM): collapse near-**duplicate** memories — restatements of the
         *same* thing — keeping the single highest-value copy and dropping the redundant rest. This is the
@@ -1435,22 +1477,28 @@ class Memory:
         merged, and supersession-chain members are left intact (`keep_chains`). Returns the dropped ids
         (audit trail). Run as a periodic maintenance pass; one pass merges clusters up to `pool` wide."""
         now = now if now is not None else self._now()
-        records = [r for r in self.store.all() if r.embedding is not None]
+        records = list(scan_records(self.store, embedded_only=True))
         pointed_to = {r.superseded_by for r in records if r.superseded_by is not None}
 
         def in_chain(r: MemoryRecord) -> bool:
             return r.superseded_by is not None or r.id in pointed_to
 
         # Highest-value first: the copy we keep as the cluster representative.
+        if namespace is not None:
+            records = [r for r in records if r.metadata.get("namespace") == namespace]
         records.sort(key=lambda r: self.memory_value(r, now=now), reverse=True)
         dropped: set[str] = set()
         for rep in records:
             if rep.id in dropped or (keep_chains and in_chain(rep)):
                 continue
+            stored = self.store.get(rep.id)
+            if stored is None or stored.embedding is None:
+                continue
             near = self.store.search(
-                rep.embedding,
+                stored.embedding,
                 limit=pool,
-                predicate=lambda r: r.id != rep.id and r.id not in dropped,
+                predicate=lambda r: r.id != rep.id and r.id not in dropped
+                and r.metadata.get("namespace") == rep.metadata.get("namespace"),
             )
             for sim, other in near:
                 if sim < similarity_threshold:

@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from .index import scan_records
 from .types import MemoryKind, MemoryRecord
 
 if TYPE_CHECKING:
@@ -42,19 +43,21 @@ def memory_state(
     scope: dict[str, Any] | None = None,
     kinds: tuple[MemoryKind, ...] | None = DURABLE_KINDS,
     limit: int = 50,
+    embeddings: bool = True,
 ) -> list[MemoryRecord]:
     """The live durable state of a scope: non-superseded records of `kinds`, newest-first. Not a
     similarity search — it returns the project's current beliefs regardless of query phrasing, which is
     exactly where broad "what's the current state?" questions under-retrieve with top-k. No LLM."""
     records = [
         r
-        for r in mem.store.all()
+        for r in scan_records(mem.store)
         if r.superseded_by is None
         and (kinds is None or r.kind in kinds)
         and _scope_match(r, scope)
     ]
     records.sort(key=lambda r: r.updated_at, reverse=True)
-    return records[:limit] if limit else records
+    selected = records[:limit] if limit else records
+    return [mem.store.get(r.id) or r for r in selected] if embeddings else selected
 
 
 @dataclass(frozen=True)
@@ -74,11 +77,12 @@ def memory_diff(
     since: float,
     *,
     scope: dict[str, Any] | None = None,
+    embeddings: bool = True,
 ) -> MemoryDiff:
     """Beliefs added or revised since `since` (epoch seconds). A revision is dated by when its
     replacement was created (Midas stores the supersession link, not a separate timestamp). The
     "what's new since our last session" view for long-horizon agents. No LLM."""
-    records = list(mem.store.all())
+    records = list(scan_records(mem.store))
     by_id = {r.id: r for r in records}
     # ids that REPLACE an older belief — their "new" record is a revision, not a fresh add.
     superseding_ids = {r.superseded_by for r in records if r.superseded_by is not None}
@@ -90,11 +94,14 @@ def memory_diff(
             continue
         if r.superseded_by is not None:
             new = by_id.get(r.superseded_by)
-            if new is not None and new.created_at >= since:
+            if new is not None and new.created_at >= since and _scope_match(new, scope):
                 revised.append((r, new))
         elif r.created_at >= since and r.id not in superseding_ids:
             added.append(r)
 
     added.sort(key=lambda r: r.created_at, reverse=True)
     revised.sort(key=lambda pair: pair[1].created_at, reverse=True)
+    if embeddings:
+        added = [mem.store.get(r.id) or r for r in added]
+        revised = [(mem.store.get(old.id) or old, mem.store.get(new.id) or new) for old, new in revised]
     return MemoryDiff(added=added, revised=revised)

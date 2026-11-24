@@ -13,6 +13,7 @@ tested). Run:  midas inspect --db ~/.midas/memory.sqlite3   (or `python -m midas
 from __future__ import annotations
 
 import argparse
+import heapq
 import json
 import os
 import time
@@ -22,6 +23,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .audit import audit_completeness, audit_record, audit_use, belief_history, forgetting_receipt
 from .coding import project_state
+from .index import count_records, scan_records
 from .projects import list_projects, project_governance, project_of, project_overview
 from .state import memory_diff
 
@@ -37,7 +39,8 @@ def api_records(mem: "Memory", *, q: str = "", kind: str = "", limit: int = 200)
     if q:
         recs = [h.record for h in mem.recall(q, limit=limit, min_relevance_ratio=0.0)]
     else:
-        recs = sorted(mem.store.all(), key=lambda r: r.updated_at, reverse=True)
+        recs = heapq.nlargest(limit, (r for r in scan_records(mem.store) if not kind or r.kind == kind),
+                              key=lambda r: r.updated_at)
     if kind:
         recs = [r for r in recs if r.kind == kind]
     return [audit_record(r) for r in recs[:limit]]
@@ -45,10 +48,10 @@ def api_records(mem: "Memory", *, q: str = "", kind: str = "", limit: int = 200)
 
 def api_record(mem: "Memory", record_id: str) -> dict[str, Any] | None:
     """One record + its full belief-revision history (oldest → newest) — the time-travel view."""
-    rec = next((r for r in mem.store.all() if r.id == record_id), None)
+    rec = mem.store.get(record_id)
     if rec is None:
         return None
-    return {"record": audit_record(rec), "history": [audit_record(h) for h in belief_history(mem, record_id)]}
+    return {"record": audit_record(rec), "history": [audit_record(h) for h in belief_history(mem, record_id, embeddings=False)]}
 
 
 def api_project_state(mem: "Memory", project: str) -> dict[str, list[dict[str, Any]]]:
@@ -64,7 +67,7 @@ def api_projects(mem: "Memory") -> list[dict[str, Any]]:
 def api_project(mem: "Memory", name: str) -> dict[str, Any]:
     """Per-project detail: overview stats + governance (prohibitions, trust mix, actors) + the code-state
     grouped by kind + recent records."""
-    recs = sorted((r for r in mem.store.all() if project_of(r) == name),
+    recs = sorted((r for r in scan_records(mem.store) if project_of(r) == name),
                   key=lambda r: r.updated_at, reverse=True)
     gov = project_governance(mem, name)
     return {
@@ -83,7 +86,7 @@ def api_project(mem: "Memory", name: str) -> dict[str, Any]:
 
 def api_diff(mem: "Memory", *, hours: float = 24.0) -> dict[str, Any]:
     """What was added or revised in the last `hours` — the 'what changed since last session' view."""
-    diff = memory_diff(mem, time.time() - hours * 3600.0)
+    diff = memory_diff(mem, time.time() - hours * 3600.0, embeddings=False)
     return {
         "added": [audit_record(r) for r in diff.added],
         "revised": [{"old": audit_record(o), "new": audit_record(n)} for o, n in diff.revised],
@@ -97,7 +100,7 @@ def api_audit(mem: "Memory", query: str, use: str = "external_action") -> dict[s
 
 def api_forget(mem: "Memory", record_id: str) -> dict[str, Any]:
     """Forget a record and return a content-hashed erasure receipt (proves it was erased)."""
-    rec = next((r for r in mem.store.all() if r.id == record_id), None)
+    rec = mem.store.get(record_id)
     if rec is None:
         return {"ok": False, "error": "not found"}
     receipt = forgetting_receipt([rec], actor="inspector", reason="forgotten via inspector")
@@ -106,7 +109,7 @@ def api_forget(mem: "Memory", record_id: str) -> dict[str, Any]:
 
 
 def api_stats(mem: "Memory") -> dict[str, Any]:
-    recs = list(mem.store.all())
+    recs = list(scan_records(mem.store))
     kinds: dict[str, int] = {}
     for r in recs:
         kinds[r.kind] = kinds.get(r.kind, 0) + 1
@@ -129,7 +132,7 @@ def api_loops(mem: "Memory") -> list[dict[str, Any]]:
     """Open commitments (promised work never closed), oldest — most overdue — first."""
     from .continuity import open_loops
 
-    return [audit_record(r) for r in open_loops(mem)]
+    return [audit_record(r) for r in open_loops(mem, embeddings=False)]
 
 
 def api_close_loop(mem: "Memory", loop_id: str, resolution: str) -> dict[str, Any]:
@@ -156,7 +159,7 @@ def api_overview(mem: "Memory") -> dict[str, Any]:
     """The memory-health dashboard a team/enterprise needs at a glance: counts, attributability (the
     compliance metric: fraction with both a source and an actor), revision activity, recency, and the
     distribution by kind / provenance / project / recency tier. All computed — no fabricated counters."""
-    recs = list(mem.store.all())
+    recs = list(scan_records(mem.store))
     total = len(recs)
     now = time.time()
     by_kind: dict[str, int] = {}
@@ -204,7 +207,7 @@ def api_timeseries(mem: "Memory", *, days: int = 30) -> dict[str, Any]:
         (today - _dt.timedelta(days=i)).isoformat(): 0 for i in range(days - 1, -1, -1)
     }
     cutoff = time.time() - days * 86_400.0
-    for r in mem.store.all():
+    for r in scan_records(mem.store):
         if r.created_at < cutoff:
             continue
         day = _dt.datetime.fromtimestamp(r.created_at, tz=_dt.timezone.utc).date().isoformat()
@@ -223,7 +226,7 @@ def api_meta(mem: "Memory", *, db: str, embedder_name: str) -> dict[str, Any]:
         "version": __version__,
         "db": db,
         "embedder": embedder_name,
-        "records": len(store.all()),
+        "records": count_records(store),
         "schema_version": store.schema_version() if hasattr(store, "schema_version") else None,
         "audit_chain": hasattr(store, "verify_audit_log"),
     }
@@ -752,7 +755,7 @@ const V={
   const ps=await get('/api/projects');
   main.innerHTML=head('Projects','Every project Midas has memory for &mdash; derived from its tag, scope, and capture origin.')
    +(ps.length?`<div class="plist">`+ps.map(p=>`<div class="pcard" tabindex="0" data-p="${esc(p.name)}">
-     <div class="pn">${esc(p.name)}</div>
+     <div class="pn">${esc(p.label || p.name)}</div>
      <div class="pstat"><b>${p.live}</b> live &middot; ${p.total} total</div>
      <div class="pstat">${Math.round(p.attributable*100)}% attributable &middot; ${ago(p.last_active)}</div></div>`).join('')+`</div>`
     :emptyState('No projects yet &mdash; captures get grouped by project / namespace / cwd.'));

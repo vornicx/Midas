@@ -21,7 +21,7 @@ everything and discarding afterwards: it neither over-fetches nor starves recall
 """
 from __future__ import annotations
 
-from typing import Callable, Collection, Protocol, Sequence, runtime_checkable
+from typing import Callable, Collection, Iterator, Protocol, Sequence, runtime_checkable
 
 from .types import MemoryRecord
 
@@ -51,6 +51,21 @@ class MemoryStore(Protocol):
         predicate: Callable[[MemoryRecord], bool] | None = None,
         allowed_ids: Collection[str] | None = None,
     ) -> list[tuple[float, MemoryRecord]]: ...
+
+
+def scan_records(store: MemoryStore, *, embeddings: bool = False,
+                 embedded_only: bool = False) -> Iterator[MemoryRecord]:
+    """Use a metadata-only cursor where available and keep custom stores compatible."""
+    scan = getattr(store, "iter_records", None)
+    if scan is not None:
+        yield from scan(embeddings=embeddings, embedded_only=embedded_only)
+    else:
+        yield from (record for record in store.all() if not embedded_only or record.embedding is not None)
+
+
+def count_records(store: MemoryStore) -> int:
+    count = getattr(store, "count", None)
+    return count() if count is not None else len(store.all())
 
 
 @runtime_checkable

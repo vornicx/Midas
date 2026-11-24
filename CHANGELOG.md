@@ -11,6 +11,9 @@ breaking changes only land in a major. Format loosely follows
 ## [1.1.0]
 
 ### Added
+- **Preview and selectively import native memory** from Claude Code and Codex v1/v2 Markdown.
+  Each import carries its original file and line, keeps observation provenance, and is idempotent
+  within the target repository. `midas scope` can preview and adopt selected legacy records.
 - **Update notices and a read-only check**: `midas update --check` queries PyPI for stable releases.
   `midas status`, `midas doctor`, and the shared MCP worker use a daily cache for notifications.
   `midas update` keeps the current installation manager. Set `MIDAS_UPDATE_CHECK=0` to turn off
@@ -23,6 +26,10 @@ breaking changes only land in a major. Format loosely follows
   `midas uninstall` all understand `~/.grok/config.toml` / `[mcp_servers.midas]` as well.
 
 ### Changed
+- **SQLite exact search reads bounded batches from disk**, leaving the original database and
+  embedding bytes in place. IVF remains an opt-in in-memory index.
+- **Automatic project scopes use Git's common directory**. Linked worktrees share a scope,
+  and independent repositories with the same folder name stay separate.
 - **One worker per SQLite database for Python MCP clients**: stdio relays share its models and
   memory. The worker exits 30 seconds after the last session closes.
 - **License changed from Apache-2.0 to [MIT](LICENSE)** — the simplest, most permissive license there

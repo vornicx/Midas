@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import math
 import os
+import sys
 import re
 import sqlite3
 import struct
@@ -394,6 +395,32 @@ class LocalReranker:
             return [float(s) for s in self._model.rerank(q, docs)]
         except Exception:
             return [0.0] * len(docs)
+
+
+def mcp_embeddings(*, with_reranker: bool = True) -> tuple[Embedder, LocalReranker | None]:
+    """Select the same model for MCP capture and offline CLI imports."""
+    choice = os.getenv("MIDAS_MCP_EMBEDDER", "local")
+    name = choice.lower()
+    if name == "hashing":
+        return HashingEmbedder(), None
+    threads = max(1, int(os.getenv("MIDAS_MCP_MODEL_THREADS", "2")))
+    try:
+        if name == "multilingual":
+            choice = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+        if "/" in choice:
+            return LocalEmbedder(model_name=choice, threads=threads), None
+        embedder = LocalEmbedder(threads=threads)
+    except Exception as exc:
+        print(f"[midas] local embedder unavailable ({exc}); using hashing", file=sys.stderr)
+        return HashingEmbedder(), None
+    reranker = None
+    if with_reranker:
+        try:
+            reranker = LocalReranker(threads=threads)
+        except Exception as exc:
+            print(f"[midas] local reranker unavailable ({exc}); using hashing", file=sys.stderr)
+            return HashingEmbedder(), None
+    return embedder, reranker
 
 
 def l2_normalize(vec: list[float]) -> list[float]:

@@ -97,3 +97,58 @@ def test_provenance_persists_after_reopen(tmp_path):
     assert rec.actor == "user"
     assert rec.source == "mcp:s1"
     reopened.store.close()
+
+
+def test_disk_search_exact_batches_allowlist_and_old_vectors(tmp_path):
+    from math import cos, sin
+
+    import pytest
+
+    from midas import MemoryRecord
+    from midas.embeddings import cosine
+
+    path = tmp_path / "disk.sqlite3"
+    store = SQLiteStore(path)
+    for i in range(650):
+        angle = i / 650
+        store.put(MemoryRecord(str(i), f"Memory {i}", embedding=[cos(angle), sin(angle)]))
+    store.put(MemoryRecord("legacy", "Vector from another embedder", embedding=[-1.0]))
+    store.close()
+
+    store = SQLiteStore(path)
+    assert not store._records and store._matrix is None
+    query = [cos(.8034), sin(.8034)]
+    allowed = {str(i) for i in range(400, 600)} | {"legacy"}
+    predicate = lambda r: len(r.embedding) == 2 and int(r.id) % 2 == 0
+    expected = sorted(((cosine(query, r.embedding), r.id) for r in store.all()
+                       if r.id in allowed and predicate(r)), reverse=True)[:8]
+    results = store.search(query, limit=8, predicate=predicate, allowed_ids=allowed)
+    assert [r.id for _, r in results] == [rid for _, rid in expected]
+    assert [s for s, _ in results] == pytest.approx([s for s, _ in expected], abs=1e-6)
+    assert len(store.search(query, limit=13)) == 13
+    assert not store._records and store._matrix is None
+    store.close()
+
+
+def test_context_and_hybrid_use_metadata_cursors_and_observe_other_writers(tmp_path, monkeypatch):
+    db = tmp_path / "context.sqlite3"
+    reader = Memory(store=SQLiteStore(db), embedder=HashingEmbedder(), detect_standing=True)
+    writer = Memory(store=SQLiteStore(db), embedder=HashingEmbedder())
+    reader.remember("Always use staging for smoke tests.", kind="constraint")
+
+    def full_read():
+        raise AssertionError("context must not load all embeddings")
+
+    monkeypatch.setattr(reader.store, "all", full_read)
+    reader.recall("Redis", hybrid=True)
+    writer.remember("Redis manages the production queues.", kind="fact",
+                    metadata={"namespace": "service"})
+    hit = reader.recall("Redis production queues", hybrid=True,
+                        metadata_filter={"namespace": "service"})[0]
+    assert hit.record.embedding is not None
+    context = reader.build_context("Redis queues", hybrid=True, pinned_limit=2,
+                                   window=1, thread_key="session")
+    assert "staging" in context.text and "Redis" in context.text
+    assert all(record.embedding is not None for record in context.records)
+    reader.store.close()
+    writer.store.close()
