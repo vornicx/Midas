@@ -30,6 +30,7 @@ _COLUMNS = ("id, content, kind, importance, source, provenance, actor, metadata_
             "created_at, updated_at, superseded_by")
 _SEARCH_BATCH = 256
 _SQL_VARIABLE_LIMIT = 900
+_NAMESPACE_SQL = "CASE WHEN json_valid(metadata_json) THEN json_extract(metadata_json, '$.namespace') END"
 
 
 def _audit_hash(seq: int, at: float, op: str, record_id: str, content_sha: str,
@@ -81,7 +82,7 @@ class SQLiteStore(InMemoryStore):
         else:
             self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
         try:
-            self._conn.execute("SELECT json_extract('{}', '$.namespace')").fetchone()
+            self._conn.execute("SELECT json_valid('{}'), json_extract('{}', '$.namespace')").fetchone()
             self._sql_namespaces = True
         except self._conn.OperationalError:  # Older SQLite/SQLCipher builds can lack JSON1.
             self._sql_namespaces = False
@@ -143,6 +144,13 @@ class SQLiteStore(InMemoryStore):
             )
         if "actor" not in columns:
             self._conn.execute("ALTER TABLE memories ADD COLUMN actor TEXT")
+        # An additive index keeps the database format and existing vectors intact. Reuse the
+        # expression in search: SQLite only matches an expression index to the same expression.
+        if self._sql_namespaces:
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS memories_vector_namespace "
+                f"ON memories ({_NAMESPACE_SQL}) WHERE embedding IS NOT NULL"
+            )
         # --- future migrations go here: `if cur < 2: <ALTER/UPDATE…>` then bump SCHEMA_VERSION ---
         if cur != SCHEMA_VERSION:
             self._conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
@@ -320,6 +328,20 @@ class SQLiteStore(InMemoryStore):
                 "SELECT DISTINCT length(embedding) / 4 FROM memories WHERE embedding IS NOT NULL"
             )}
 
+    def has_only_embedding_dimension(self, dimension: int) -> bool:
+        """Identify a legacy vector width without decoding vectors or scanning mismatched stores."""
+        size = dimension * 4
+        with self._lock:
+            return bool(self._conn.execute(
+                """SELECT CASE
+                   WHEN (SELECT length(embedding) FROM memories WHERE embedding IS NOT NULL LIMIT 1) = ?
+                   THEN NOT EXISTS (
+                       SELECT 1 FROM memories WHERE embedding IS NOT NULL AND length(embedding) != ?
+                   )
+                   ELSE 0 END""",
+                (size, size),
+            ).fetchone()[0])
+
     def search(
         self,
         embedding: list[float],
@@ -365,7 +387,7 @@ class SQLiteStore(InMemoryStore):
         sql = f"SELECT {fields}, embedding FROM memories WHERE embedding IS NOT NULL"
         params = []
         if namespace is not None:
-            sql += " AND json_extract(metadata_json, '$.namespace') = ?"
+            sql += f" AND {_NAMESPACE_SQL} = ?"
             params.append(namespace)
         if allowed is not None and len(allowed) <= _SQL_VARIABLE_LIMIT:
             sql += " AND id IN (" + ",".join("?" for _ in allowed) + ")"

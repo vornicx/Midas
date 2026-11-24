@@ -152,3 +152,41 @@ def test_context_and_hybrid_use_metadata_cursors_and_observe_other_writers(tmp_p
     assert all(record.embedding is not None for record in context.records)
     reader.store.close()
     writer.store.close()
+
+
+def test_existing_database_gains_scoped_index_used_by_real_search(tmp_path):
+    import sqlite3
+
+    import pytest
+
+    from midas import MemoryRecord
+
+    path = tmp_path / "legacy.sqlite3"
+    with sqlite3.connect(path) as conn:
+        try:
+            conn.execute("SELECT json_valid('{}')").fetchone()
+        except sqlite3.OperationalError:
+            pytest.skip("Requires SQLite JSON functions")
+
+    store = SQLiteStore(path)
+    store.put(MemoryRecord("a", "Archic decision", metadata={"namespace": "archic"},
+                           embedding=[1.0, 0.0]))
+    store.put(MemoryRecord("b", "Other project", metadata={"namespace": "other"},
+                           embedding=[1.0, 0.0]))
+    store.close()
+    with sqlite3.connect(path) as conn:
+        conn.execute("DROP INDEX memories_vector_namespace")
+        # A malformed legacy metadata field must not prevent the rest of the DB from upgrading.
+        conn.execute("UPDATE memories SET metadata_json = 'invalid' WHERE id = 'b'")
+
+    upgraded = SQLiteStore(path)
+    traced = []
+    upgraded._conn.set_trace_callback(traced.append)
+    assert [(score, record.id) for score, record in
+            upgraded.search_namespace([1.0, 0.0], limit=3, namespace="archic")] == [(1.0, "a")]
+    upgraded._conn.set_trace_callback(None)
+    query = next(sql for sql in traced if "SELECT id, embedding" in sql)
+    plan = upgraded._conn.execute("EXPLAIN QUERY PLAN " + query).fetchall()
+    assert any("USING INDEX memories_vector_namespace" in step[-1] for step in plan)
+    assert upgraded.verify_audit_log()["entries"] == 2
+    upgraded.close()

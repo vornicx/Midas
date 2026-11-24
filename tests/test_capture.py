@@ -5,7 +5,9 @@ why — so the agent (or MCP client) learns the bar instead of polluting memory.
 """
 from __future__ import annotations
 
-from midas import AGENT_MEMORY_INSTRUCTIONS, DEFAULT_POLICY, Memory, MemoryPolicy, policy_summary
+from midas import (
+    AGENT_MEMORY_INSTRUCTIONS, DEFAULT_POLICY, HashingEmbedder, Memory, MemoryPolicy, policy_summary,
+)
 
 
 def test_capture_stores_relevant_fact() -> None:
@@ -67,6 +69,36 @@ def test_capture_per_call_policy_overrides_instance() -> None:
     m = Memory(policy=MemoryPolicy(min_importance=5))
     r = m.capture("Decision: we ship on Friday.", kind="note", policy=MemoryPolicy(min_importance=1))
     assert r.stored  # the per-call policy wins
+
+
+def test_capture_embeds_accepted_content_once_and_skips_text_only_rejections() -> None:
+    class CountingEmbedder(HashingEmbedder):
+        def __init__(self):
+            super().__init__()
+            self.texts = []
+
+        def embed(self, text):
+            self.texts.append(text)
+            return super().embed(text)
+
+    embedder = CountingEmbedder()
+    mem = Memory(embedder=embedder, detect_standing=True)
+    assert not mem.capture("haha yeah sounds good").stored
+    assert not mem.capture("The deployment is pinned to version 16.", kind="chat",
+                           policy=MemoryPolicy(accept_kinds=("fact",))).stored
+    assert embedder.texts == []
+    content = "From now on, deploy through staging with PostgreSQL version 16."
+    result = mem.capture(f"  {content}  ", kind="constraint", created_at=42,
+                         metadata={"namespace": "archic"}, source="hook:claude-code:session")
+    assert result.stored and embedder.texts == [content]
+    assert result.record.metadata == {"namespace": "archic", "standing": True}
+    assert result.record.created_at == 42 and result.record.embedding is not None
+    assert not mem.capture(content, kind="constraint", metadata={"namespace": "archic"}).stored
+    assert embedder.texts == [content, content]
+
+    novelty = Memory(embedder=embedder, novelty_weight=0.5)
+    assert novelty.capture("Production uses PostgreSQL 16.", kind="fact").stored
+    assert embedder.texts == [content, content, "Production uses PostgreSQL 16."]
 
 
 def test_policy_and_instructions_surface_the_parameters() -> None:

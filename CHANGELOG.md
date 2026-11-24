@@ -26,6 +26,8 @@ breaking changes only land in a major. Format loosely follows
   `midas uninstall` all understand `~/.grok/config.toml` / `[mcp_servers.midas]` as well.
 
 ### Changed
+- **Scoped SQLite search indexes the project filter** on supported SQLite builds. Existing databases
+  gain the index on open, with their records and vectors preserved.
 - **SQLite exact search reads bounded batches from disk**, leaving the original database and
   embedding bytes in place. IVF remains an opt-in in-memory index.
 - **Automatic project scopes use Git's common directory**. Linked worktrees share a scope,
@@ -35,6 +37,12 @@ breaking changes only land in a major. Format loosely follows
 - **License changed from Apache-2.0 to [MIT](LICENSE)** — the simplest, most permissive license there
   is, so the project is maximally reusable by the community. Everything stays free: use it, fork it,
   embed it in commercial products, no attribution beyond the copyright notice.
+
+### Fixed
+- **Accepted captures reuse one embedding** for duplicate checking and storage. The text-only
+  capture policy can discard low-value turns before embedding when novelty scoring is disabled.
+- **Reranker failures preserve semantic retrieval**. The default model selection keeps hashing
+  for legacy stores containing only the old fallback's vectors.
 
 ## [1.0.0] — 2026-07-06
 

@@ -16,7 +16,7 @@ from pathlib import Path
 
 from ._version import VERSION
 
-PROTOCOL = 3
+PROTOCOL = 4
 MAX_MESSAGE_BYTES = 8 * 1024 * 1024
 ENGINE_SETTINGS = {
     "MIDAS_MCP_EMBEDDER": "local",

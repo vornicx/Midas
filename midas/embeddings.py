@@ -385,8 +385,8 @@ class LocalReranker:
 
     def rerank(self, query: str, documents: list[str]) -> list[float]:
         """Return a relevance score per document (higher = more relevant), in order.
-        Length-capped to stay within the cross-encoder context; degrades to neutral scores on
-        any runtime error rather than crashing the whole query."""
+        Length-capped to stay within the cross-encoder context. Non-finite scores signal that
+        these candidates should use embedding similarity after a runtime failure."""
         if not documents:
             return []
         q = query[: self._MAX_QUERY_CHARS]
@@ -394,7 +394,7 @@ class LocalReranker:
         try:
             return [float(s) for s in self._model.rerank(q, docs)]
         except Exception:
-            return [0.0] * len(docs)
+            return [-math.inf] * len(docs)
 
 
 def mcp_embeddings(*, with_reranker: bool = True) -> tuple[Embedder, LocalReranker | None]:
@@ -418,8 +418,7 @@ def mcp_embeddings(*, with_reranker: bool = True) -> tuple[Embedder, LocalRerank
         try:
             reranker = LocalReranker(threads=threads)
         except Exception as exc:
-            print(f"[midas] local reranker unavailable ({exc}); using hashing", file=sys.stderr)
-            return HashingEmbedder(), None
+            print(f"[midas] local reranker unavailable ({exc}); using semantic similarity", file=sys.stderr)
     return embedder, reranker
 
 

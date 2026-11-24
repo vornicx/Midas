@@ -57,7 +57,7 @@ from midas import (
 )
 from midas.state import memory_diff as _diff_view, memory_state as _state_view
 from midas.audit import audit_use as _audit_use
-from midas.embeddings import mcp_embeddings
+from midas.embeddings import HashingEmbedder, mcp_embeddings
 from midas.coding import (
     is_forbidden as _is_forbidden,
     project_state as _project_state_view,
@@ -181,9 +181,8 @@ _PINNED = int(os.getenv("MIDAS_MCP_PINNED", "2") or "0")
 
 def build_memory() -> Memory:
     """Build the shared engine with the selected local embedder and persistent store."""
-    embedder, reranker = mcp_embeddings()
-
     store = None
+    legacy_embedder = None
     # One shared, persistent store BY DEFAULT: ~/.midas/memory.sqlite3 — so every MCP client (Claude
     # Code, Codex, Cursor…) that launches `midas-mcp` reads and writes the SAME memory, with zero config.
     # Override with MIDAS_MCP_DB=<path>, or MIDAS_MCP_DB=":memory:" for an ephemeral store.
@@ -199,11 +198,19 @@ def build_memory() -> Memory:
         from midas.sqlite_store import SQLiteStore
 
         store = SQLiteStore(db, ann_threshold=10_000 if ann else None)
+        if os.getenv("MIDAS_MCP_EMBEDDER", "local").lower() == "local":
+            hashing = HashingEmbedder()
+            # The former reranker fallback could write just hashing vectors under the default config.
+            if store.has_only_embedding_dimension(hashing.dim):
+                legacy_embedder = hashing
+                print(f"[midas-mcp] retaining hashing for existing {hashing.dim}-dimensional memory",
+                      file=sys.stderr)
         print(f"[midas-mcp] memory: {db}", file=sys.stderr)
     elif ann:
         from midas import InMemoryStore
 
         store = InMemoryStore(ann_threshold=10_000)
+    embedder, reranker = (legacy_embedder, None) if legacy_embedder is not None else mcp_embeddings()
     nli = None
     if _USE_NLI:
         from midas.nli import LocalNLI

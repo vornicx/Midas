@@ -15,7 +15,8 @@ from midas.sqlite_store import SQLiteStore
 def test_encrypted_store_roundtrip_and_ciphertext(tmp_path) -> None:
     db = str(tmp_path / "m.sqlite3")
     mem = Memory(store=SQLiteStore(db, key="s3cret"), embedder=HashingEmbedder())
-    mem.remember("The primary database is PostgreSQL.", kind="constraint", importance=5)
+    mem.remember("The primary database is PostgreSQL.", kind="constraint", importance=5,
+                 metadata={"namespace": "archic"})
 
     # plaintext never touches disk
     raw = (tmp_path / "m.sqlite3").read_bytes()
@@ -24,6 +25,8 @@ def test_encrypted_store_roundtrip_and_ciphertext(tmp_path) -> None:
     # right key: reopen and recall; audit chain intact
     again = SQLiteStore(db, key="s3cret")
     assert any("PostgreSQL" in r.content for r in again.all())
+    assert again.search_namespace(HashingEmbedder().embed("PostgreSQL"), limit=1, namespace="archic")
+    assert not again.search_namespace(HashingEmbedder().embed("PostgreSQL"), limit=1, namespace="other")
     assert again.verify_audit_log()["ok"]
 
     # plain sqlite (no key) cannot read the file

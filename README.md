@@ -248,10 +248,14 @@ Earlier versions used the folder name. To adopt records from that namespace, pre
 `midas scope --adopt-legacy OLD_NAME`, then repeat the command with `--apply --record RECORD_ID`
 for each selected ID. Select both sides of any linked revision or commitment when moving it.
 
-SQLite exact search reads vectors in bounded batches. The on-disk format and existing embeddings
-carry over. Warm search can take longer on large corpora because it reads from disk on each query.
+SQLite exact search reads vectors in bounded batches. An index helps scoped searches skip other
+projects. The on-disk format and existing embeddings carry over. Warm search can take longer on
+large corpora because it reads vectors from disk on each query.
 The optional `MIDAS_MCP_ANN=1` mode builds an in-memory index. To measure disk mode locally from
 a checkout, install `psutil` and run `python -m eval.bench_sqlite_disk --records 100000 --scoped`.
+
+If the local reranker fails, queries keep using the semantic embedder. In the default local mode,
+an existing store containing only legacy hashing vectors keeps using hashing for compatibility.
 
 <p align="center">
   <img src="docs/demo-multi-client.gif" alt="Two live processes share one Midas SQLite file: a recall that finds nothing, a capture from a different process, then the same never-restarted session recalls it" width="820">

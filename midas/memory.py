@@ -301,6 +301,24 @@ class Memory:
         content = (content or "").strip()
         if not content:
             raise ValueError("Memory.remember: `content` is required")
+        return self._remember_embedded(
+            content, self.embedder.embed(content), kind=kind, importance=importance, source=source,
+            provenance=provenance, actor=actor, metadata=metadata, created_at=created_at,
+        )
+
+    def _remember_embedded(
+        self,
+        content: str,
+        embedding: list[float],
+        *,
+        kind: MemoryKind,
+        importance: int | None,
+        source: str | None,
+        provenance: MemoryProvenance,
+        actor: str | None,
+        metadata: dict[str, Any] | None,
+        created_at: float | None,
+    ) -> MemoryRecord:
         if self._detect_standing:
             from .importance import is_standing_instruction
 
@@ -309,15 +327,15 @@ class Memory:
                 # turn yet is semantically unrelated to most queries — tag it so build_context can
                 # PIN it into the prompt regardless of relevance (the Letta core-memory idea, no LLM).
                 metadata = {**(metadata or {}), "standing": True}
-        embedding = _as_f32(self.embedder.embed(content))
+        embedding = _as_f32(embedding)
         # `created_at` is the EVENT time (when the fact was true/stated), distinct from ingest order.
         # Passing it makes recency and chronological context reflect real time, not load order — the
         # bitemporal signal long-horizon temporal reasoning needs. Defaults to the wall clock.
         ts = created_at if created_at is not None else self._now()
+        namespace = (metadata or {}).get("namespace")
         if self._reinforce:
-            self._reinforce_existing(embedding, ts, (metadata or {}).get("namespace"))
-        importance = self._derive_importance(importance, content, embedding,
-                                             (metadata or {}).get("namespace"))
+            self._reinforce_existing(embedding, ts, namespace)
+        importance = self._derive_importance(importance, content, embedding, namespace)
         record = MemoryRecord(
             id=str(uuid.uuid4()),
             content=content,
@@ -359,41 +377,19 @@ class Memory:
         if len(embeddings) != len(normalized):
             raise ValueError("Memory.remember_many: embedder returned the wrong number of embeddings")
 
-        detect = None
-        if self._detect_standing:
-            from .importance import is_standing_instruction
-
-            detect = is_standing_instruction
-
-        records: list[MemoryRecord] = []
-        for item, embedding in zip(normalized, embeddings):
-            embedding = _as_f32(embedding)  # store as float32 array, not list[float] (footprint)
-            ts = item.get("created_at")  # event time when provided (see remember); else ingest time
-            ts = ts if ts is not None else self._now()
-            metadata = item.get("metadata") or {}
-            if self._reinforce:
-                self._reinforce_existing(embedding, ts, metadata.get("namespace"))
-            if detect is not None and detect(item["content"]):
-                metadata = {**metadata, "standing": True}
-            record = MemoryRecord(
-                id=str(uuid.uuid4()),
-                content=item["content"],
+        return [
+            self._remember_embedded(
+                item["content"], embedding,
                 kind=item.get("kind", "note"),
-                importance=self._derive_importance(item.get("importance"), item["content"], embedding,
-                                                   metadata.get("namespace")),
+                importance=item.get("importance"),
                 source=item.get("source"),
-                provenance=_normalize_provenance(item.get("provenance") or "observation"),
+                provenance=item.get("provenance") or "observation",
                 actor=item.get("actor"),
-                metadata=metadata,
-                created_at=ts,
-                updated_at=ts,
-                embedding=embedding,
+                metadata=item.get("metadata"),
+                created_at=item.get("created_at"),
             )
-            self.store.put(record)
-            if self._supersede:
-                self._maybe_supersede(record)
-            records.append(record)
-        return records
+            for item, embedding in zip(normalized, embeddings)
+        ]
 
     def capture(
         self,
@@ -416,9 +412,12 @@ class Memory:
             return CaptureResult(False, "empty content")
         policy = policy or self._policy
         scorer = self._importance_scorer or ContentImportance()
-        embedding = self.embedder.embed(content)
         namespace = (metadata or {}).get("namespace")
-        importance = self._blend_novelty(scorer(content), embedding, namespace)
+        importance = _clamp_importance(scorer(content))
+        embedding = None
+        if self._novelty_weight > 0:
+            embedding = self.embedder.embed(content)
+            importance = self._blend_novelty(importance, embedding, namespace)
         if kind not in policy.accept_kinds:
             return CaptureResult(False, f"kind '{kind}' not accepted by policy", importance=importance)
         if importance < policy.min_importance:
@@ -427,9 +426,10 @@ class Memory:
                 f"below relevance floor (importance {importance} < {policy.min_importance})",
                 importance=importance,
             )
+        if embedding is None:
+            embedding = self.embedder.embed(content)
         if policy.dedup_threshold and policy.dedup_threshold > 0:
-            near = self.store.search(embedding, limit=1,
-                                     predicate=lambda r: r.metadata.get("namespace") == namespace)
+            near = self._search_in_namespace(embedding, limit=1, namespace=namespace)
             if near and near[0][0] >= policy.dedup_threshold:
                 existing = near[0][1]
                 upgraded = self._upgrade_provenance(
@@ -452,8 +452,8 @@ class Memory:
                 return CaptureResult(
                     False, reason, record=existing, importance=importance,
                 )
-        record = self.remember(
-            content, kind=kind, importance=importance, source=source,
+        record = self._remember_embedded(
+            content, embedding, kind=kind, importance=importance, source=source,
             provenance=provenance, actor=actor,
             metadata=metadata, created_at=created_at,
         )
@@ -534,14 +534,26 @@ class Memory:
         self.store.put(record)
         return True
 
+    def _search_in_namespace(
+        self, embedding: list[float], *, limit: int, namespace: str | None,
+        predicate: Callable[[MemoryRecord], bool] | None = None,
+    ) -> list[tuple[float, MemoryRecord]]:
+        search_namespace = getattr(self.store, "search_namespace", None)
+        if isinstance(namespace, str) and search_namespace is not None:
+            return search_namespace(embedding, namespace=namespace, limit=limit, predicate=predicate)
+        return self.store.search(
+            embedding, limit=limit,
+            predicate=lambda r: r.metadata.get("namespace") == namespace
+            and (predicate is None or predicate(r)),
+        )
+
     def _novelty(self, embedding: list[float] | None, namespace: str | None = None) -> float:
         """Novelty-vs-store: 1 - max cosine similarity to anything already stored (1 = wholly new,
         0 = an exact duplicate). A store-aware salience signal — a turn dissimilar to every existing
         memory carries new information; a near-restatement of a known fact does not. No LLM."""
         if embedding is None:
             return 1.0
-        hits = self.store.search(embedding, limit=1,
-                                 predicate=lambda r: r.metadata.get("namespace") == namespace)
+        hits = self._search_in_namespace(embedding, limit=1, namespace=namespace)
         max_sim = max(0.0, hits[0][0]) if hits else 0.0
         return max(0.0, 1.0 - max_sim)
 
@@ -558,8 +570,7 @@ class Memory:
         it as a restatement and reinforce that memory. Returns the reinforced record, or None. No LLM."""
         if not self._reinforce or embedding is None:
             return None
-        hits = self.store.search(embedding, limit=1,
-                                 predicate=lambda r: r.metadata.get("namespace") == namespace)
+        hits = self._search_in_namespace(embedding, limit=1, namespace=namespace)
         if hits and hits[0][0] >= self._reinforce_threshold:
             self._reinforce_record(hits[0][1], now)
             return hits[0][1]
@@ -670,12 +681,12 @@ class Memory:
             # match the bi-encoder ranked low still earns relevance and survives the top-k cut.
             # (No cross-encoder here — it reorders within-budget items but doesn't change recall.)
             relevances = [relevance_map.get(rec.id, max(0.0, cos)) for cos, rec in candidates]
-        elif self.reranker is not None:
-            # Sharper relevance: cross-encoder score (squashed to 0..1) over the pool.
-            raw = self.reranker.rerank(query, [rec.content for _, rec in candidates])
-            relevances = [max(_sigmoid(s), max(0.0, cos)) for s, (cos, _) in zip(raw, candidates)]
         else:
             relevances = [max(0.0, cos) for cos, _ in candidates]
+            if self.reranker is not None:
+                raw = _rerank_scores(self.reranker, query, [rec.content for _, rec in candidates])
+                if raw is not None:
+                    relevances = [max(_sigmoid(s), cosine) for s, cosine in zip(raw, relevances)]
 
         # Relative parsimony floor: drop hits far below the query's own best hit. Unlike the
         # absolute `min_relevance` (whose useful value depends on the embedder's cosine scale),
@@ -964,11 +975,11 @@ class Memory:
 
         predicate = lambda r: (
             r.id != new_record.id
-            and r.metadata.get("namespace") == new_record.metadata.get("namespace")
             and (not self._supersede_same_kind_only or r.kind == new_record.kind)
         )
-        candidates = self.store.search(
-            new_record.embedding, limit=self._supersede_pool, predicate=predicate
+        candidates = self._search_in_namespace(
+            new_record.embedding, limit=self._supersede_pool, predicate=predicate,
+            namespace=new_record.metadata.get("namespace"),
         )
 
         by_head: dict[str, tuple[float, MemoryRecord]] = {}
@@ -1174,8 +1185,9 @@ class Memory:
                 ent = max((self._nli.entailment(r.content, hyp) for r in chosen_records), default=0.0)
             cal = None
             if self._calibration_reranker is not None and self._abstention_relevance_floor > 0 and chosen_records:
-                raw = self._calibration_reranker.rerank(query, [r.content for r in chosen_records])
-                cal = max((_sigmoid(s) for s in raw), default=0.0)
+                raw = _rerank_scores(self._calibration_reranker, query, [r.content for r in chosen_records])
+                if raw is not None:
+                    cal = max(_sigmoid(s) for s in raw)
             top_conf = min(1.0, max(0.0, hits[0].score / (
                 self.w_relevance + self.w_importance + self.w_recency)))
             if ent is not None and ent < self._abstention_entailment_floor:
@@ -1526,6 +1538,16 @@ def _as_f32(embedding):
     except ImportError:
         return embedding
     return np.asarray(embedding, dtype=np.float32)
+
+
+def _rerank_scores(reranker: Reranker, query: str, documents: list[str]) -> list[float] | None:
+    try:
+        scores = reranker.rerank(query, documents)
+        if len(scores) == len(documents) and all(math.isfinite(s) for s in scores):
+            return scores
+    except Exception:
+        pass  # The embedding scores remain available if the optional reranker fails.
+    return None
 
 
 def _sigmoid(x: float) -> float:
