@@ -8,6 +8,12 @@ breaking changes only land in a major. Format loosely follows
 
 ## [Unreleased]
 
+## [1.1.1]
+
+### Fixed
+- The Python MCP server installs a compatible 1.x MCP SDK. MCP Registry installs use the matching
+  Midas release with the existing PyPI launcher.
+
 ## [1.1.0]
 
 ### Added

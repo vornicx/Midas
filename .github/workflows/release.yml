@@ -37,13 +37,13 @@ jobs:
 
           package = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
           runtime = runpy.run_path("midas_mcp/_version.py")["VERSION"]
-          release = (
-              os.environ["GITHUB_REF_NAME"].removeprefix("v")
+          tag = (
+              os.environ["GITHUB_REF_NAME"]
               if os.environ["GITHUB_REF_TYPE"] == "tag"
               else Path(".github/release-version").read_text().strip()
           )
           server = json.loads(Path("server.json").read_text())
-          if len({release, package, runtime, server["version"]}) != 1:
+          if tag != f"v{package}" or runtime != package or server["version"] != package:
               raise SystemExit("Release, package, runtime, and MCP Registry versions must match.")
 
           launcher_path = Path("packages/midas-memory-mcp")
@@ -55,19 +55,18 @@ jobs:
               raise SystemExit("MCP Registry package must match the PyPI launcher.")
           if launcher_runtime["__version__"] != launcher["version"]:
               raise SystemExit("Launcher package and runtime versions must match.")
+          if not any(
+              arg.get("name") == "--with" and arg.get("value") == f"midas-memory[mcp,local]=={package}"
+              for arg in registry_package["runtimeArguments"]
+          ):
+              raise SystemExit("The MCP Registry launcher must install the release of Midas being published.")
           PY
       - run: pip install build
       - run: python -m build
-      - run: python -m build --outdir dist-launcher packages/midas-memory-mcp
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           # Token auth when the secret exists; empty → the action uses OIDC trusted publishing.
           password: ${{ secrets.PYPI_API_TOKEN }}
-          skip-existing: true
-      - uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist-launcher
-          password: ${{ secrets.PYPI_MCP_API_TOKEN || secrets.PYPI_API_TOKEN }}
           skip-existing: true
 
   mcp:

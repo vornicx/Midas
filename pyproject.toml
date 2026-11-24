@@ -1,6 +1,6 @@
 [project]
 name = "midas-memory"
-version = "1.1.0"
+version = "1.1.1"
 description = "Local-first, eval-first memory for long-horizon AI agents — no LLM at ingest"
 readme = "README.md"
 license = "MIT"
@@ -18,11 +18,11 @@ dependencies = []
 #   langgraph -> use Midas as a LangGraph BaseStore (long-term memory)
 #   openai    -> OpenAI embeddings + LLM-judge   ·   dev -> tests + exact token counts
 [project.optional-dependencies]
-all = ["fastembed>=0.7", "turbovec>=0.8", "model2vec>=0.8", "mcp>=1.0", "langgraph>=0.2"]
+all = ["fastembed>=0.7", "turbovec>=0.8", "model2vec>=0.8", "mcp>=1.0,<2", "langgraph>=0.2"]
 local = ["fastembed>=0.7"]
 turbovec = ["turbovec>=0.8"]
 model2vec = ["model2vec>=0.8"]
-mcp = ["mcp>=1.0"]
+mcp = ["mcp>=1.0,<2"]
 encrypted = ["sqlcipher3-binary>=0.5"]
 langgraph = ["langgraph>=0.2"]
 openai = ["openai>=1.0"]
