@@ -9,3 +9,4 @@ os.environ.setdefault("MIDAS_MCP_DB", ":memory:")
 # A bare Memory() now auto-selects LocalEmbedder when fastembed is present; pin hashing so the suite
 # stays deterministic and fast (no model load) regardless of the dev env.
 os.environ.setdefault("MIDAS_EMBEDDER", "hashing")
+os.environ["MIDAS_UPDATE_CHECK"] = "0"

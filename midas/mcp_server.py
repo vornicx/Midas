@@ -910,6 +910,9 @@ def stats(namespace: str = "") -> dict:
         by_kind[record.kind] = by_kind.get(record.kind, 0) + 1
         by_provenance[record.provenance] = by_provenance.get(record.provenance, 0) + 1
         by_tier[_memory().tier(record)] += 1
+    from midas_mcp.updates import check_updates
+
+    update = check_updates(cached_only=True)
     return {
         "total": sum(by_kind.values()),
         "namespace": ns or None,
@@ -918,6 +921,7 @@ def stats(namespace: str = "") -> dict:
         "by_tier": by_tier,
         "by_namespace": by_namespace,
         "guard_uses": list(MEMORY_USES),
+        **({"update": update} if update["status"] == "available" else {}),
     }
 
 

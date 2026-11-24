@@ -21,7 +21,7 @@ uv tool install "midas-memory[mcp,local]"   # install
 midas init                                  # create the shared memory + wire up your MCP clients
 # or, no Python:    npx -y midas-memory-mcp     # TypeScript port
 # or, as a library: pip install "midas-memory[local]"
-uv tool upgrade midas-memory   # Update Midas
+midas update                   # Update Midas
 ```
 
 <p align="center">
@@ -163,7 +163,14 @@ midas serve --http        # → http://127.0.0.1:7077/mcp   (one server, one mem
 midas serve --http --token <secret>   # require `Authorization: Bearer <secret>` on every request
 ```
 
-Keep Midas current with **`midas update`**. See your memory anytime with **`midas inspect`**.
+**`midas status`** and **`midas doctor`** flag newer stable Python releases. The shared MCP worker
+refreshes the same check on connection, and MCP clients can surface a cached notice in their logs.
+Automatic checks use a local 24-hour cache. Run **`midas update --check`** to refresh it on demand,
+or **`midas update`** to install through your current package manager. Close and reopen your
+MCP clients after updating. If the previous shared worker is still active, give it up to 30 seconds
+to exit after the last session closes. Set **`MIDAS_UPDATE_CHECK=0`** to disable automatic checks.
+
+See your memory anytime with **`midas inspect`**.
 
 Already carrying agent memory in files? **`midas import --from claude-md CLAUDE.md`** (or
 `--from cursorrules`, `--from jsonl`, `--from mem0`, `--from zep`) turns those rules and exports into
@@ -400,8 +407,9 @@ python -m eval.continuity                                                      #
 ## Privacy & license
 
 Local-first: every memory lives in a SQLite file on your machine, recall returns the exact stored text,
-and capture/recall/forget make **no network calls**. No account, API key, or telemetry. The only outbound
-traffic is a one-time embedding-model download (for the `local` backend) and the package install.
+and capture/recall/forget make **no network calls**. No account, API key, or telemetry. Outbound
+traffic is limited to model downloads, package installation and updates, and the public PyPI
+version check. Set `MIDAS_UPDATE_CHECK=0` for offline use with cached models or hashing.
 Optional **encryption at rest**: set `MIDAS_MCP_KEY` with the `[encrypted]` extra and the store is a
 SQLCipher database — unreadable without the key (and Midas fails closed rather than silently writing
 plaintext). Full details in [`PRIVACY.md`](PRIVACY.md) · [MIT](LICENSE).

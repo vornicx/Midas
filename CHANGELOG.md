@@ -8,13 +8,23 @@ breaking changes only land in a major. Format loosely follows
 
 ## [Unreleased]
 
+## [1.1.0]
+
 ### Added
+- **Update notices and a read-only check**: `midas update --check` queries PyPI for stable releases.
+  `midas status`, `midas doctor`, and the shared MCP worker use a daily cache for notifications.
+  `midas update` keeps the current installation manager. Set `MIDAS_UPDATE_CHECK=0` to turn off
+  automatic checks.
+- **Live user-prompt capture**: `midas init --claude-hook --codex-hook` can offer prompts from Claude
+  Code and Codex to the shared engine while sessions are open.
 - **Grok Build support in `midas init`**: when the `grok` CLI is installed, Midas now uses Grok's
   native `grok mcp add --scope user` flow to wire the shared store with `MIDAS_MCP_CLIENT=grok-build`.
   `midas status [--json]`, `midas doctor`, `midas init --dry-run`, project-scoped mode, and
   `midas uninstall` all understand `~/.grok/config.toml` / `[mcp_servers.midas]` as well.
 
 ### Changed
+- **One worker per SQLite database for Python MCP clients**: stdio relays share its models and
+  memory. The worker exits 30 seconds after the last session closes.
 - **License changed from Apache-2.0 to [MIT](LICENSE)** — the simplest, most permissive license there
   is, so the project is maximally reusable by the community. Everything stays free: use it, fork it,
   embed it in commercial products, no attribution beyond the copyright notice.

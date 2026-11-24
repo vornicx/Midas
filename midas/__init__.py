@@ -3,6 +3,8 @@
 The core: semantic recall + budgeted context assembly behind a small,
 store/embedder-agnostic API. This is the thing the eval harness benchmarks.
 """
+from midas_mcp._version import VERSION as __version__
+
 from .embeddings import (
     DiskCachedEmbedder,
     Embedder,
@@ -116,4 +118,3 @@ __all__ = [
     "IVFIndex",
     "IVFStore",
 ]
-__version__ = "1.0.0"

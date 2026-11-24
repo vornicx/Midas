@@ -14,8 +14,9 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
+from ._version import VERSION
 
-PROTOCOL = 1
+PROTOCOL = 2
 MAX_MESSAGE_BYTES = 8 * 1024 * 1024
 ENGINE_SETTINGS = {
     "MIDAS_MCP_EMBEDDER": "local",
@@ -99,14 +100,15 @@ def connect(db: str | None = None, *, capture: bool = False) -> socket.socket:
             sock = socket.create_connection(("127.0.0.1", address["port"]), timeout=2)
             sock.sendall(json.dumps({
                 "token": address["token"], "protocol": PROTOCOL, "engine": engine_fingerprint(),
+                "version": VERSION,
                 "cwd": os.getcwd(), "client": os.getenv("MIDAS_MCP_CLIENT", "agent"),
                 "actor": os.getenv("MIDAS_MCP_ACTOR", ""), "namespace": os.getenv("MIDAS_MCP_NAMESPACE", ""),
                 "session": uuid.uuid4().hex, "capture": capture,
             }).encode() + b"\n")
             status = sock.recv(1)
             if status == b"!":
-                raise RuntimeError("Midas is already active with different engine settings. "
-                                   "Match the settings or close the other Midas sessions first.")
+                raise RuntimeError("Midas is already active with a different version or engine settings. "
+                                   "Close the Midas clients and allow the previous worker to exit.")
             if status == b"+":
                 sock.settimeout(None)
                 ready = True
@@ -194,6 +196,10 @@ def main() -> None:
         raise SystemExit('Midas MCP server needs the MCP SDK: pip install "midas-memory[mcp]"')
     try:
         with connect() as sock:
+            from .updates import check_updates, update_notice
+
+            if notice := update_notice(check_updates(cached_only=True)):
+                print(f"[midas-mcp] {notice}", file=sys.stderr)
             _relay(sock)
     except (BrokenPipeError, ConnectionResetError):
         return

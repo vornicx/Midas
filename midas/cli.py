@@ -344,7 +344,9 @@ def _derive_scope(ns_values: set) -> tuple[str, str | None, list[str]]:
 
 def cmd_status(args: argparse.Namespace) -> int:
     from midas import __version__
+    from midas_mcp.updates import check_updates, update_notice
 
+    update = check_updates()
     db = _store_path(args.db)
     store_info: dict = {"exists": Path(db).exists()}
     if store_info["exists"]:
@@ -376,10 +378,13 @@ def cmd_status(args: argparse.Namespace) -> int:
         receipt = _receipt(db, scope_mode=scope_mode, namespace=namespace,
                            clients=clients, warnings=warnings)
         receipt["store"] = store_info
+        receipt["update"] = update
         print(json.dumps(receipt, indent=2))
         return 0
 
     print(f"Midas {__version__}")
+    if notice := update_notice(update):
+        print(notice)
     print(f"memory: {db}")
     if store_info["exists"]:
         print(f"  {store_info['records']} records ({store_info['live']} live)"
@@ -397,17 +402,46 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 # ---- update -----------------------------------------------------------------------------------
 
+def _update_command(*, pip: bool = False) -> list[str]:
+    import importlib.util
+
+    prefix = Path(sys.prefix)
+    if not pip:
+        if (prefix / "uv-receipt.toml").is_file():
+            return ["uv", "tool", "upgrade", prefix.name]
+        if (prefix / "pipx_metadata.json").is_file():
+            return ["pipx", "upgrade", prefix.name]
+        if importlib.util.find_spec("pip") is None and shutil.which("uv"):
+            return ["uv", "pip", "install", "--python", sys.executable, "--upgrade", "midas-memory"]
+    return [sys.executable, "-m", "pip", "install", "--upgrade", "midas-memory"]
+
+
 def cmd_update(args: argparse.Namespace) -> int:
-    if args.pip or not shutil.which("uv"):
-        cmd = [sys.executable, "-m", "pip", "install", "-U", "midas-memory[mcp,local]"]
-    else:
-        cmd = ["uv", "tool", "upgrade", "midas-memory"]
-    print("Updating Midas:  " + " ".join(cmd))
+    from midas_mcp.updates import check_updates, update_notice
+
+    if getattr(args, "check", False):
+        update = check_updates(force=True)
+        if notice := update_notice(update):
+            print(notice)
+        elif update["status"] == "current":
+            print(f"Midas {update['installed']} is up to date. Latest on PyPI: {update['latest']}.")
+        else:
+            print("Could not check for updates on PyPI.", file=sys.stderr)
+            return 1
+        return 0
+
+    cmd = _update_command(pip=args.pip)
+    print("Updating Midas:  " + " ".join(cmd), flush=True)
     if args.dry_run:
         return 0
-    rc = subprocess.run(cmd).returncode
-    if rc != 0 and not args.pip and shutil.which("uv"):
-        print("\n(if you installed Midas with pip, run `midas update --pip`)")
+    try:
+        rc = subprocess.run(cmd).returncode
+    except OSError as exc:
+        print(f"Could not run the Midas installer: {exc}", file=sys.stderr)
+        return 1
+    if rc == 0:
+        print("Close all Midas clients, then reopen them to use the installed version. "
+              "A shared worker may take up to 30 seconds to exit.")
     return rc
 
 
@@ -440,7 +474,9 @@ def _wired_clients() -> list[str]:
 
 def cmd_doctor(args: argparse.Namespace) -> int:
     from midas import __version__
+    from midas_mcp.updates import check_updates, update_notice
 
+    update = check_updates()
     checks: list[dict] = []
 
     def check(good: bool, label: str, hint: str = "") -> None:
@@ -492,12 +528,15 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             "python": sys.version.split()[0],
             "memory_db": db,
             "ok": ok,
+            "update": update,
             "checks": checks,
             "clients_wired": wired,
         }, indent=2))
         return 0 if ok else 1
 
     print(f"Midas {__version__}  ·  Python {sys.version.split()[0]}\n")
+    if notice := update_notice(update):
+        print(notice)
     for c in checks:
         print(f"  {'✓' if c['ok'] else '⚠'}  {c['check']}" + (f"  — {c['hint']}" if c["hint"] else ""))
     print("\n" + ("Everything looks good." if ok else "Some checks need attention (see ⚠ above)."))
@@ -848,9 +887,11 @@ def main() -> None:
                      help="print a machine-readable client wiring receipt instead of text")
     pst.set_defaults(func=cmd_status)
 
-    pu = sub.add_parser("update", help="upgrade Midas to the latest version")
-    pu.add_argument("--pip", action="store_true", help="force a pip upgrade instead of uv tool")
-    pu.add_argument("--dry-run", action="store_true")
+    pu = sub.add_parser("update", help="check for or install the latest Midas release")
+    pu.add_argument("--pip", action="store_true", help="upgrade using pip in the current Python")
+    update_mode = pu.add_mutually_exclusive_group()
+    update_mode.add_argument("--check", action="store_true", help="look up the latest stable release")
+    update_mode.add_argument("--dry-run", action="store_true", help="print the installer command")
     pu.set_defaults(func=cmd_update)
 
     pn = sub.add_parser("inspect", help="open the local Memory Inspector")

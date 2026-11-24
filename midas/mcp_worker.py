@@ -11,6 +11,8 @@ from mcp.server.stdio import stdio_server
 
 from midas import mcp_server
 from midas_mcp import MAX_MESSAGE_BYTES, PROTOCOL, engine_fingerprint
+from midas_mcp._version import VERSION
+from midas_mcp.updates import check_updates
 
 
 IDLE_SECONDS = 30
@@ -43,9 +45,10 @@ async def _serve(endpoint: Path) -> None:
     loop = asyncio.get_running_loop()
     idle_timer = loop.call_later(IDLE_SECONDS, stop.set)
     connections = 0
+    update_check = None
 
     async def serve_client(reader, writer):
-        nonlocal connections, idle_timer
+        nonlocal connections, idle_timer, update_check
         connections += 1
         idle_timer.cancel()
         try:
@@ -57,7 +60,8 @@ async def _serve(endpoint: Path) -> None:
                     str(hello.get("token", "")).encode(), token.encode()):
                 return
             capture = hello.get("capture") is True
-            if hello.get("protocol") != PROTOCOL or (not capture and hello.get("engine") != engine):
+            if (hello.get("protocol") != PROTOCOL or hello.get("version") != VERSION
+                    or (not capture and hello.get("engine") != engine)):
                 writer.write(b"!")
                 await writer.drain()
                 return
@@ -67,6 +71,8 @@ async def _serve(endpoint: Path) -> None:
                 event = json.loads(await asyncio.wait_for(reader.readline(), 3))
                 await mcp_server.capture_prompt(event)
                 return
+            if update_check is None or update_check.done():
+                update_check = asyncio.create_task(asyncio.to_thread(check_updates))
             session = await asyncio.to_thread(mcp_server.session_context, hello)
             context = mcp_server._session.set(session)
             try:
@@ -96,6 +102,8 @@ async def _serve(endpoint: Path) -> None:
             endpoint.unlink(missing_ok=True)
             temporary.unlink(missing_ok=True)
             idle_timer.cancel()
+            if update_check is not None:
+                await update_check
 
 
 def run_worker(endpoint: Path) -> None:
