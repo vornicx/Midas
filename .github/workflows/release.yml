@@ -1,15 +1,15 @@
 name: Release
 
-# Tag a release and this publishes it everywhere:
+# Tag a release to publish to PyPI, MCP Registry, and npm:
 #   git tag vX.Y.Z && git push origin vX.Y.Z
-# PyPI: uses the PYPI_API_TOKEN repo secret if set; otherwise falls back to
-# trusted publishing (OIDC — configure the publisher on pypi.org). npm uses the
-# NPM_TOKEN repo secret. Both steps are idempotent: a version already on the
-# registry is skipped, not failed.
+# To publish only the Python and MCP releases, update .github/release-version on main.
+# PyPI uses trusted publishing unless a PyPI token secret is configured.
 
 on:
   push:
     tags: ["v*"]
+    branches: [main]
+    paths: [".github/release-version"]
 
 permissions:
   contents: read
@@ -19,15 +19,17 @@ jobs:
     name: Publish to PyPI
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       id-token: write # PyPI trusted publishing (OIDC) — configure the trusted publisher on PyPI once
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Verify the Python release version
+      - name: Verify the release versions
         run: |
           python - <<'PY'
+          import json
           import os
           import runpy
           import tomllib
@@ -35,20 +37,68 @@ jobs:
 
           package = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
           runtime = runpy.run_path("midas_mcp/_version.py")["VERSION"]
-          tag = os.environ["GITHUB_REF_NAME"]
-          if runtime != package or tag != f"v{package}":
-              raise SystemExit(f"Release tag {tag}, package {package}, and runtime {runtime} disagree.")
+          release = (
+              os.environ["GITHUB_REF_NAME"].removeprefix("v")
+              if os.environ["GITHUB_REF_TYPE"] == "tag"
+              else Path(".github/release-version").read_text().strip()
+          )
+          server = json.loads(Path("server.json").read_text())
+          if len({release, package, runtime, server["version"]}) != 1:
+              raise SystemExit("Release, package, runtime, and MCP Registry versions must match.")
+
+          launcher_path = Path("packages/midas-memory-mcp")
+          launcher = tomllib.loads((launcher_path / "pyproject.toml").read_text())["project"]
+          launcher_runtime = runpy.run_path(str(launcher_path / "midas_memory_mcp/__init__.py"))
+          registry_package, = server["packages"]
+          if (registry_package["registryType"], registry_package["identifier"],
+                  registry_package["version"]) != ("pypi", launcher["name"], launcher["version"]):
+              raise SystemExit("MCP Registry package must match the PyPI launcher.")
+          if launcher_runtime["__version__"] != launcher["version"]:
+              raise SystemExit("Launcher package and runtime versions must match.")
           PY
       - run: pip install build
       - run: python -m build
+      - run: python -m build --outdir dist-launcher packages/midas-memory-mcp
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           # Token auth when the secret exists; empty → the action uses OIDC trusted publishing.
           password: ${{ secrets.PYPI_API_TOKEN }}
           skip-existing: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist-launcher
+          password: ${{ secrets.PYPI_MCP_API_TOKEN || secrets.PYPI_API_TOKEN }}
+          skip-existing: true
+
+  mcp:
+    name: Publish to MCP Registry
+    needs: pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the official MCP publisher
+        working-directory: ${{ runner.temp }}
+        run: |
+          archive=mcp-publisher_linux_amd64.tar.gz
+          curl --fail --silent --show-error --location --retry 3 \
+            "https://github.com/modelcontextprotocol/registry/releases/download/v1.8.16/$archive" \
+            --output "$archive"
+          sha=6e2f799550cf843c6fd3350498d56cc49be3dc0af1e6237eb0e6435c7a9d5c05
+          echo "$sha  $archive" | sha256sum --check
+          tar -xzf "$archive" mcp-publisher
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Validate and publish the server
+        run: |
+          mcp-publisher validate server.json
+          mcp-publisher login github-oidc
+          mcp-publisher publish server.json
 
   npm:
     name: Publish the TS port to npm
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     defaults:
       run:
