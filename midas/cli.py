@@ -188,17 +188,20 @@ def cmd_init(args: argparse.Namespace) -> int:
         _ensure_store(db)
     scoped = getattr(args, "project_scoped", False)
     force = getattr(args, "force", False)
+    custom_db = db if args.db or os.getenv("MIDAS_MCP_DB") else None
 
     def env_for(client_id: str) -> dict:
         e = {"MIDAS_MCP_EMBEDDER": "local", "MIDAS_MCP_CLIENT": client_id}
         if scoped:
             e["MIDAS_MCP_NAMESPACE"] = "auto"   # each project gets its own partition
+        if custom_db:
+            e["MIDAS_MCP_DB"] = custom_db
         return e
 
-    def eflags(e: dict) -> list[str]:
+    def eflags(e: dict, flag: str = "-e") -> list[str]:
         out: list[str] = []
         for k, v in e.items():
-            out += ["-e", f"{k}={v}"]
+            out += [flag, f"{k}={v}"]
         return out
 
     results: list[tuple[str, str]] = []
@@ -214,17 +217,15 @@ def cmd_init(args: argparse.Namespace) -> int:
         return path.exists() and "midas" in _safe_read(path)
 
     # Clients with their own CLI (cleanest, no file editing) — each stamped with its client id:
-    codex_note = "  — set MIDAS_MCP_CLIENT=codex" + (" + MIDAS_MCP_NAMESPACE=auto" if scoped else "") + \
-                 " in ~/.codex/config.toml"
-    for name, cfg_path, note, add_cmd, rm_cmd in (
-        ("Claude Code", Path.home() / ".claude.json", "",
+    for name, cfg_path, add_cmd, rm_cmd in (
+        ("Claude Code", Path.home() / ".claude.json",
          ["claude", "mcp", "add", "midas", "-s", "user", *eflags(env_for("claude-code")),
           "--", "midas-mcp"],
          ["claude", "mcp", "remove", "midas", "-s", "user"]),
-        ("Codex", Path.home() / ".codex/config.toml", codex_note,
-         ["codex", "mcp", "add", "midas", "--", "midas-mcp"],
+        ("Codex", Path.home() / ".codex/config.toml",
+         ["codex", "mcp", "add", "midas", *eflags(env_for("codex"), "--env"), "--", "midas-mcp"],
          ["codex", "mcp", "remove", "midas"]),
-        ("Grok Build", Path.home() / ".grok/config.toml", "",
+        ("Grok Build", Path.home() / ".grok/config.toml",
          ["grok", "mcp", "add", "--scope", "user", "midas", *eflags(env_for("grok-build")),
           "--", "midas-mcp"],
          ["grok", "mcp", "remove", "--scope", "user", "midas"]),
@@ -235,15 +236,21 @@ def cmd_init(args: argparse.Namespace) -> int:
                    reason=f"`{add_cmd[0]}` CLI not found")
             continue
         msg, ok = res
-        results.append((name, msg + note))
+        results.append((name, msg))
         record(name, cfg_path, detected=True, wired=already_wired(cfg_path) if dry else ok,
                changed=ok and not dry, reason=msg if (dry or not ok) else None)
 
     if getattr(args, "claude_hook", False):
         from midas.hooks import install_claude_hook
 
-        msg = install_claude_hook(Path.home() / ".claude" / "settings.json", dry=dry)
+        msg = install_claude_hook(Path.home() / ".claude" / "settings.json", dry=dry,
+                                 db=custom_db, scoped=scoped)
         results.append(("Claude Code hook", msg))
+
+    if getattr(args, "codex_hook", False):
+        from midas.hooks import install_codex_hook
+
+        results.append(("Codex hook", install_codex_hook(dry=dry, db=custom_db, scoped=scoped)))
 
     # Clients configured by a JSON file (only the ones already present, unless --all):
     for name, client_id, path, key, shape in _json_clients():
@@ -283,13 +290,18 @@ def cmd_init(args: argparse.Namespace) -> int:
 # ---- serve ------------------------------------------------------------------------------------
 
 def cmd_serve(args: argparse.Namespace) -> int:
-    if args.db:  # set BEFORE importing mcp_server (it builds its store at import)
-        os.environ["MIDAS_MCP_DB"] = _store_path(args.db)
+    if args.db:
+        os.environ["MIDAS_MCP_DB"] = args.db if args.db == ":memory:" else _store_path(args.db)
     if getattr(args, "token", None):
         os.environ["MIDAS_MCP_TOKEN"] = args.token
-    from midas import mcp_server
+    if args.http:
+        from midas.mcp_server import run_server
 
-    mcp_server.run_server("http" if args.http else "stdio", host=args.host, port=args.port)
+        run_server("http", host=args.host, port=args.port)
+    else:
+        from midas_mcp import main as relay
+
+        relay()
     return 0
 
 
@@ -697,11 +709,14 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     r = _cli_remove("grok", ["grok", "mcp", "remove", "--scope", "user", "midas"])
     if r:
         results.append(("Grok Build", r))
-    from midas.hooks import uninstall_claude_hook
+    from midas.hooks import uninstall_claude_hook, uninstall_codex_hook
 
     r = uninstall_claude_hook(Path.home() / ".claude" / "settings.json")
     if r != "not installed":
         results.append(("Claude Code hook", r))
+    r = uninstall_codex_hook()
+    if r != "not installed":
+        results.append(("Codex hook", r))
     for name, _cid, path, key, _shape in _json_clients():
         if not path.exists():
             continue
@@ -813,8 +828,9 @@ def main() -> None:
     pi.add_argument("--json", action="store_true",
                     help="print a machine-readable client wiring receipt instead of text")
     pi.add_argument("--claude-hook", action="store_true",
-                    help="also install a Claude Code SessionEnd hook that auto-captures each "
-                         "session's user turns (the capture policy decides what's kept)")
+                    help="capture Claude Code user prompts while the session is active")
+    pi.add_argument("--codex-hook", action="store_true",
+                    help="capture Codex user prompts while the session is active")
     pi.set_defaults(func=cmd_init)
 
     ps = sub.add_parser("serve", help="run the MCP server (stdio, or --http for an MCP URL)")

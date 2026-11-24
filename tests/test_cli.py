@@ -209,7 +209,8 @@ def test_init_wires_grok_build_via_native_cli(tmp_path, capsys, monkeypatch) -> 
     assert calls == [[
         "grok", "mcp", "add", "--scope", "user", "midas",
         "-e", "MIDAS_MCP_EMBEDDER=local", "-e", "MIDAS_MCP_CLIENT=grok-build",
-        "-e", "MIDAS_MCP_NAMESPACE=auto", "--", "midas-mcp",
+        "-e", "MIDAS_MCP_NAMESPACE=auto", "-e", f"MIDAS_MCP_DB={tmp_path / 'm.sqlite3'}",
+        "--", "midas-mcp",
     ]]
 
 
@@ -313,15 +314,13 @@ def test_schema_version_and_newer_guard(tmp_path) -> None:
         SQLiteStore(db)
 
 
-def test_resolve_namespace_modes(monkeypatch) -> None:
+def test_resolve_namespace_modes(tmp_path) -> None:
     from midas import mcp_server
 
-    monkeypatch.delenv("MIDAS_MCP_NAMESPACE", raising=False)
-    assert mcp_server._resolve_namespace() == ""           # unscoped by default
-    monkeypatch.setenv("MIDAS_MCP_NAMESPACE", "team-a")
-    assert mcp_server._resolve_namespace() == "team-a"      # explicit scope
-    monkeypatch.setenv("MIDAS_MCP_NAMESPACE", "auto")
-    assert mcp_server._resolve_namespace()                 # auto derives a non-empty project scope
+    config = {"cwd": str(tmp_path), "client": "agent", "actor": "", "namespace": ""}
+    assert mcp_server.session_context(config).namespace == ""
+    assert mcp_server.session_context({**config, "namespace": "team-a"}).namespace == "team-a"
+    assert mcp_server.session_context({**config, "namespace": "auto"}).namespace == tmp_path.name
 
 
 def test_source_and_origin_attribution() -> None:
@@ -329,5 +328,5 @@ def test_source_and_origin_attribution() -> None:
 
     s = mcp_server._source("s1")
     assert s.startswith("mcp:") and s.endswith(":s1") and s.count(":") == 2  # mcp:<client>:<session>
-    o = mcp_server._resolve_origin()
+    o = mcp_server._default_session().origin
     assert isinstance(o, dict) and ("git" in o or "cwd" in o)  # where it was captured (git/cwd)

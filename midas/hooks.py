@@ -1,19 +1,9 @@
-"""Claude Code session hook — "install Midas and it starts remembering", even when the agent never
-calls `capture`.
-
-`midas init --claude-hook` registers a SessionEnd hook in `~/.claude/settings.json` that runs
-`midas hook capture-session`. When a Claude Code session ends, the hook receives the session payload
-on stdin (session id, transcript path, cwd), reads the transcript JSONL, and OFFERS each user turn to
-`Memory.capture` — Midas's no-LLM policy then decides what is actually kept (importance floor, dedup),
-exactly as if the agent had called `capture` itself. User turns only in v1: they carry the durable
-preferences/facts/decisions; assistant prose is mostly restatement.
-
-Fail-open by design: a hook must never break the user's session, so every error path returns a result
-instead of raising, and the CLI always exits 0.
-"""
+"""Live prompt hook setup and compatibility with the original Claude SessionEnd hook."""
 from __future__ import annotations
 
+import base64
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -84,55 +74,79 @@ def capture_session(payload: dict, *, db: str | None = None) -> dict:
         return {"offered": 0, "stored": 0, "skipped": 0, "error": str(exc)[:200]}
 
 
-# The hook block `midas init --claude-hook` merges into ~/.claude/settings.json.
-HOOK_COMMAND = "midas hook capture-session"
+HOOK_COMMAND = "midas hook capture-session"  # legacy SessionEnd command
 
 
-def hook_settings_block() -> dict:
-    return {"type": "command", "command": HOOK_COMMAND}
+def _prompt_command(client: str) -> str:
+    return f"midas-mcp --capture-prompt {client}"
 
 
-def install_claude_hook(settings_path: Path, *, dry: bool = False) -> str:
-    """Register the SessionEnd hook in Claude Code's settings.json, non-destructively (merge +
-    backup; idempotent — re-running never duplicates the entry)."""
-    import shutil
+def _update_prompt_hook(path: Path, client: str, *, install: bool, dry: bool = False,
+                        db: str | None = None, scoped: bool = False) -> str:
+    try:
+        cfg = json.loads(path.read_text(encoding="utf-8") or "{}") if path.exists() else {}
+        if not isinstance(cfg, dict) or not isinstance(cfg.get("hooks", {}), dict):
+            raise ValueError("invalid hook configuration")
+    except (OSError, ValueError):
+        return f"⚠  {path} is not a readable hook configuration"
 
-    cfg: dict = {}
-    if settings_path.exists():
-        try:
-            cfg = json.loads(settings_path.read_text() or "{}")
-        except Exception:
-            return f"⚠  {settings_path} is not valid JSON — add the hook by hand"
-    matchers = cfg.setdefault("hooks", {}).setdefault("SessionEnd", [])
-    for m in matchers:
-        if any(h.get("command") == HOOK_COMMAND for h in m.get("hooks", [])):
-            return "already installed"
+    original = cfg.get("hooks", {})
+    hooks = dict(original)
+    command = _prompt_command(client)
+    events = {"UserPromptSubmit": command}
+    if client == "claude-code":
+        events["SessionEnd"] = HOOK_COMMAND
+    for event, owned in events.items():
+        if event not in hooks:
+            continue
+        groups = []
+        for group in hooks[event]:
+            kept = [hook for hook in group.get("hooks", [])
+                    if hook.get("command") != owned
+                    and not str(hook.get("command", "")).startswith(owned + " ")]
+            if kept or not group.get("hooks"):
+                groups.append({**group, "hooks": kept} if group.get("hooks") else group)
+        hooks[event] = groups
+
+    if install:
+        if db:
+            command += " --db-encoded " + base64.urlsafe_b64encode(db.encode()).decode()
+        if scoped:
+            command += " --project-scoped"
+        handler = {"type": "command", "command": command, "timeout": 5}
+        if client == "claude-code":
+            handler["async"] = True
+        hooks.setdefault("UserPromptSubmit", []).append({"hooks": [handler]})
+    if hooks == original:
+        return "already installed" if install else "not installed"
     if dry:
-        return f"would add SessionEnd hook → {settings_path}"
-    if settings_path.exists():
-        shutil.copy(settings_path, str(settings_path) + ".midas-bak")
-    matchers.append({"hooks": [hook_settings_block()]})
-    settings_path.parent.mkdir(parents=True, exist_ok=True)
-    settings_path.write_text(json.dumps(cfg, indent=2) + "\n")
-    return f"SessionEnd auto-capture hook added → {settings_path}"
+        return f"would add UserPromptSubmit hook → {path}"
+    if path.exists():
+        shutil.copy(path, str(path) + ".midas-bak")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({**cfg, "hooks": hooks}, indent=2) + "\n", encoding="utf-8")
+    return f"UserPromptSubmit hook added → {path}" if install else "removed"
+
+
+def install_claude_hook(settings_path: Path, *, dry: bool = False, db: str | None = None,
+                        scoped: bool = False) -> str:
+    return _update_prompt_hook(settings_path, "claude-code", install=True, dry=dry, db=db,
+                               scoped=scoped)
 
 
 def uninstall_claude_hook(settings_path: Path) -> str:
-    """Remove the SessionEnd hook (for `midas uninstall`)."""
-    if not settings_path.exists():
-        return "not installed"
-    try:
-        cfg = json.loads(settings_path.read_text() or "{}")
-    except Exception:
-        return "left as-is (unparseable)"
-    matchers = cfg.get("hooks", {}).get("SessionEnd", [])
-    kept = [m for m in matchers
-            if not any(h.get("command") == HOOK_COMMAND for h in m.get("hooks", []))]
-    if len(kept) == len(matchers):
-        return "not installed"
-    import shutil
+    return _update_prompt_hook(settings_path, "claude-code", install=False)
 
-    shutil.copy(settings_path, str(settings_path) + ".midas-bak")
-    cfg["hooks"]["SessionEnd"] = kept
-    settings_path.write_text(json.dumps(cfg, indent=2) + "\n")
-    return "removed"
+
+def codex_hook_path() -> Path:
+    import os
+
+    return Path(os.getenv("CODEX_HOME") or Path.home() / ".codex").expanduser() / "hooks.json"
+
+
+def install_codex_hook(*, dry: bool = False, db: str | None = None, scoped: bool = False) -> str:
+    return _update_prompt_hook(codex_hook_path(), "codex", install=True, dry=dry, db=db, scoped=scoped)
+
+
+def uninstall_codex_hook() -> str:
+    return _update_prompt_hook(codex_hook_path(), "codex", install=False)

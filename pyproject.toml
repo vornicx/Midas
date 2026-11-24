@@ -34,7 +34,7 @@ Repository = "https://github.com/vornicx/Midas"
 
 [project.scripts]
 midas = "midas.cli:main"
-midas-mcp = "midas.mcp_server:main"
+midas-mcp = "midas_mcp:main"
 midas-inspect = "midas.inspector:main"
 
 [build-system]
@@ -43,7 +43,7 @@ build-backend = "hatchling.build"
 
 # `midas` is the shippable SDK; `eval/` is dev-only tooling and stays out of the wheel.
 [tool.hatch.build.targets.wheel]
-packages = ["midas"]
+packages = ["midas", "midas_mcp"]
 
 [tool.ruff]
 line-length = 100

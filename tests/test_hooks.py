@@ -61,21 +61,27 @@ def test_capture_session_never_raises() -> None:
 def test_install_and_uninstall_hook_idempotent(tmp_path) -> None:
     settings = tmp_path / ".claude" / "settings.json"
     settings.parent.mkdir(parents=True)
-    settings.write_text(json.dumps({"model": "opus", "hooks": {"PreToolUse": []}}))
+    other = {"type": "command", "command": "other-hook"}
+    settings.write_text(json.dumps({"model": "opus", "hooks": {
+        "PreToolUse": [], "SessionEnd": [{"hooks": [other, {"command": HOOK_COMMAND}]}],
+    }}))
 
     assert "would add" in install_claude_hook(settings, dry=True)
-    assert json.loads(settings.read_text()).get("hooks", {}).get("SessionEnd") is None  # dry: untouched
+    assert "UserPromptSubmit" not in json.loads(settings.read_text())["hooks"]
 
     assert "added" in install_claude_hook(settings)
     cfg = json.loads(settings.read_text())
     assert cfg["model"] == "opus" and "PreToolUse" in cfg["hooks"]  # merge, never clobber
-    assert cfg["hooks"]["SessionEnd"][0]["hooks"][0]["command"] == HOOK_COMMAND
+    assert cfg["hooks"]["SessionEnd"] == [{"hooks": [other]}]
+    assert cfg["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"] == (
+        "midas-mcp --capture-prompt claude-code"
+    )
 
     assert install_claude_hook(settings) == "already installed"     # idempotent
-    assert len(json.loads(settings.read_text())["hooks"]["SessionEnd"]) == 1
+    assert len(json.loads(settings.read_text())["hooks"]["UserPromptSubmit"]) == 1
 
     assert uninstall_claude_hook(settings) == "removed"
-    assert json.loads(settings.read_text())["hooks"]["SessionEnd"] == []
+    assert json.loads(settings.read_text())["hooks"]["UserPromptSubmit"] == []
     assert uninstall_claude_hook(settings) == "not installed"
 
 
@@ -97,14 +103,21 @@ def test_cli_hook_command_reads_stdin_and_exits_zero(tmp_path, capsys, monkeypat
     assert cli.cmd_hook(argparse.Namespace(action="capture-session", db=db)) == 0  # fail-open
 
 
-def test_init_claude_hook_flag(tmp_path, capsys, monkeypatch) -> None:
+def test_init_live_hook_flags(tmp_path, capsys, monkeypatch) -> None:
     from midas import cli
     from tests.test_cli import _sandbox_client_paths
 
     monkeypatch.setattr(cli.shutil, "which", lambda exe: None)
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / ".codex"))
     _sandbox_client_paths(monkeypatch, tmp_path)
     rc = cli.cmd_init(argparse.Namespace(db=str(tmp_path / "m.sqlite3"), dry_run=False, all=False,
-                                         claude_hook=True))
-    assert rc == 0 and "Claude Code hook" in capsys.readouterr().out
-    cfg = json.loads((tmp_path / ".claude" / "settings.json").read_text())
-    assert cfg["hooks"]["SessionEnd"][0]["hooks"][0]["command"] == HOOK_COMMAND
+                                         claude_hook=True, codex_hook=True, project_scoped=True))
+    assert rc == 0
+    output = capsys.readouterr().out
+    assert "Claude Code hook" in output and "Codex hook" in output
+    for client, path in (("claude-code", ".claude/settings.json"), ("codex", ".codex/hooks.json")):
+        cfg = json.loads((tmp_path / path).read_text())
+        hook = cfg["hooks"]["UserPromptSubmit"][0]["hooks"][0]
+        assert hook["command"].startswith(f"midas-mcp --capture-prompt {client} --db-encoded ")
+        assert hook["command"].endswith(" --project-scoped")
+        assert hook.get("async", False) == (client == "claude-code")

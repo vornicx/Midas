@@ -11,7 +11,10 @@ from __future__ import annotations
 
 
 def main() -> None:
-    from midas.mcp_server import main as run
+    try:
+        from midas_mcp import main as run
+    except ModuleNotFoundError:  # compatibility with older Midas SDK installs
+        from midas.mcp_server import main as run
 
     run()
 

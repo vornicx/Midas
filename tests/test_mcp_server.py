@@ -302,11 +302,11 @@ def test_maintenance_pass_consolidates_and_bounds():
 
 def test_recall_as_of_returns_the_historical_belief():
     forget_all()
-    from midas.mcp_server import _mem
+    from midas.mcp_server import _memory
 
     # 1.7e9 ≈ 2023-11-14, 1.75e9 ≈ 2025-06-15; the as-of date falls between the two.
-    _mem.remember("the launch date is September 14", kind="fact", created_at=1.7e9)
-    _mem.remember("actually the launch date moved to October 2", kind="fact", created_at=1.75e9)
+    _memory().remember("the launch date is September 14", kind="fact", created_at=1.7e9)
+    _memory().remember("actually the launch date moved to October 2", kind="fact", created_at=1.75e9)
 
     current = recall("when is the launch?", limit=2)
     assert any("October 2" in h["content"] for h in current)
@@ -413,13 +413,13 @@ def test_memory_conflicts_tool():
 def test_maintain_ttl():
     import time as _t
 
-    from midas.mcp_server import _mem
+    from midas.mcp_server import _memory
 
     forget_all()
     remember("old chatter about the weather", kind="chat")
-    rec = _mem.store.all()[0]
+    rec = _memory().store.all()[0]
     rec.created_at = _t.time() - 40 * 86_400
-    _mem.store.put(rec)
+    _memory().store.put(rec)
     remember("The primary database is PostgreSQL.", kind="constraint", importance=5)
 
     out = maintain(ttl="chat=30")

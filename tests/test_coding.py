@@ -107,9 +107,9 @@ def test_mcp_check_forbidden_action_tool() -> None:
 
     os.environ.setdefault("MIDAS_MCP_EMBEDDER", "hashing")
     pytest.importorskip("mcp")
-    from midas.mcp_server import _mem, check_forbidden_action
+    from midas.mcp_server import _memory, check_forbidden_action
 
-    remember_forbidden_action(_mem, "Never drop the production database.", project="apollo-fb")
+    remember_forbidden_action(_memory(), "Never drop the production database.", project="apollo-fb")
     assert check_forbidden_action(action="drop the production database", project="apollo-fb")["forbidden"] is True
     assert check_forbidden_action(action="read the production logs", project="apollo-fb")["forbidden"] is False
 
@@ -119,10 +119,10 @@ def test_mcp_project_state_tool_is_wired() -> None:
 
     os.environ.setdefault("MIDAS_MCP_EMBEDDER", "hashing")
     pytest.importorskip("mcp")
-    from midas.mcp_server import _mem
+    from midas.mcp_server import _memory
     from midas.mcp_server import project_state as project_state_tool
 
-    remember_architecture_decision(_mem, "Apollo uses event sourcing for the ledger.", project="apollo-mcp")
+    remember_architecture_decision(_memory(), "Apollo uses event sourcing for the ledger.", project="apollo-mcp")
     out = project_state_tool(project="apollo-mcp")
     assert out["project"] == "apollo-mcp"
     assert out["counts"].get("architecture_decision", 0) >= 1

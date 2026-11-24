@@ -24,6 +24,7 @@ Config (env):
     MIDAS_MCP_SUPERSEDE    = 1/0 typed belief revision for stale facts (default: 1)
     MIDAS_MCP_SUPERSEDE_CONVO = 1 enables strict-cue chat revision (default: 0)
     MIDAS_MCP_NLI          = 1 gates revision with the local NLI model (default: 0)
+    MIDAS_MCP_MODEL_THREADS = CPU threads per local embedding/ranking model (default: 2)
     MIDAS_MCP_AUTO_MAINTAIN = minutes between background maintenance passes (consolidate
                              near-duplicates + bound the store) — "sleep-time" upkeep at $0,
                              no LLM, while the agent is idle (default: 0 = off)
@@ -45,7 +46,10 @@ from __future__ import annotations
 import os
 import sys
 import time
-from dataclasses import asdict
+from contextvars import ContextVar
+from dataclasses import asdict, dataclass
+from functools import cache, partial, wraps
+from threading import RLock
 
 from midas import (
     AGENT_MEMORY_INSTRUCTIONS, MEMORY_PROVENANCE, MEMORY_USES, HashingEmbedder, Memory,
@@ -74,78 +78,82 @@ _TTL = parse_ttl_spec(os.getenv("MIDAS_MCP_TTL", ""))
 _MAX_RECORDS = int(os.getenv("MIDAS_MCP_MAX_RECORDS", "0")) or None
 # The relevance parameters Midas imposes on `capture` (the no-LLM "what's worth keeping" gate).
 _POLICY = MemoryPolicy(min_importance=int(os.getenv("MIDAS_MCP_MIN_IMPORTANCE", "2")))
-# The MCP client/agent this server serves (set per-client by `midas init`: claude-code / codex / cursor…)
-# — stamped as the actor and into the source so every memory is traceable to *who* produced it.
-_CLIENT = os.getenv("MIDAS_MCP_CLIENT", "agent")
-_ACTOR = os.getenv("MIDAS_MCP_ACTOR") or _CLIENT
-def _resolve_namespace() -> str:
-    """Default scope for this server instance. A per-call `namespace` arg overrides it; empty = unscoped
-    (reads see everything, writes carry no namespace) — fully backward compatible. MIDAS_MCP_NAMESPACE=
-    "auto" derives the scope from the PROJECT the server was launched in (the git repo name, else the cwd
-    basename), so each project gets its own partition in the one shared store — automatically."""
-    ns = os.getenv("MIDAS_MCP_NAMESPACE", "")
-    if ns != "auto":
-        return ns
-    try:
-        import subprocess
-
-        root = subprocess.run(["git", "rev-parse", "--show-toplevel"],
-                              capture_output=True, text=True, timeout=2)
-        if root.returncode == 0 and root.stdout.strip():
-            return os.path.basename(root.stdout.strip())
-    except Exception:
-        pass
-    return os.path.basename(os.getcwd()) or ""
 
 
-# Default scope for this server instance (see _resolve_namespace; "auto" = per-project).
-_NAMESPACE = _resolve_namespace()
+@dataclass(frozen=True)
+class SessionContext:
+    client: str
+    actor: str
+    namespace: str
+    origin: dict
+    session_id: str = "default"
+
+
+_session: ContextVar[SessionContext | None] = ContextVar("midas_session", default=None)
+
+
+def session_context(config: dict) -> SessionContext:
+    """Resolve the launching client's scope and code origin, independent of the worker's cwd."""
+    import subprocess
+
+    cwd = config["cwd"]
+    basename = os.path.basename(cwd)
+
+    def git(*args: str) -> str:
+        try:
+            result = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=2)
+            return result.stdout.strip() if result.returncode == 0 else ""
+        except (OSError, subprocess.SubprocessError):
+            return ""
+
+    namespace = config["namespace"]
+    if namespace == "auto":
+        namespace = os.path.basename(git("rev-parse", "--show-toplevel")) or basename
+    origin = {"cwd": basename} if basename else {}
+    commit = git("rev-parse", "--short", "HEAD")
+    if commit:
+        origin.update(git=commit, branch=git("rev-parse", "--abbrev-ref", "HEAD"))
+    client = config["client"]
+    return SessionContext(client, config["actor"] or client, namespace, origin,
+                          config.get("session") or "default")
+
+
+@cache
+def _default_session() -> SessionContext:
+    return session_context({
+        "cwd": os.getcwd(), "client": os.getenv("MIDAS_MCP_CLIENT", "agent"),
+        "actor": os.getenv("MIDAS_MCP_ACTOR", ""), "namespace": os.getenv("MIDAS_MCP_NAMESPACE", ""),
+    })
+
+
+def _context() -> SessionContext:
+    return _session.get() or _default_session()
 
 
 def _ns(namespace: str) -> str:
-    return namespace or _NAMESPACE
+    return namespace or _context().namespace
 
 
 def _source(session: str) -> str:
-    """A structured, traceable source for every write: who (client) + which thread (session)."""
-    return f"mcp:{_CLIENT}:{session}"
-
-
-def _resolve_origin() -> dict:
-    """Where the server runs — the git commit/branch + cwd — stamped on every memory so a belief traces
-    back to the code state it came from. Resolved once at startup (cheap); empty outside a repo."""
-    cwd = os.path.basename(os.getcwd())
-    try:
-        import subprocess
-
-        def _git(*a: str) -> str:
-            r = subprocess.run(["git", *a], capture_output=True, text=True, timeout=2)
-            return r.stdout.strip() if r.returncode == 0 else ""
-
-        commit = _git("rev-parse", "--short", "HEAD")
-        if commit:
-            return {"git": commit, "branch": _git("rev-parse", "--abbrev-ref", "HEAD"), "cwd": cwd}
-    except Exception:
-        pass
-    return {"cwd": cwd} if cwd else {}
-
-
-_ORIGIN = _resolve_origin()
+    context = _context()
+    return f"mcp:{context.client}:{context.session_id if session == 'default' else session}"
 
 
 def _ns_metadata(namespace: str, session: str) -> dict:
-    ns = _ns(namespace)
-    md: dict = {"session": session}
-    if ns:
+    context = _context()
+    md = {"session": context.session_id if session == "default" else session}
+    if ns := _ns(namespace):
         md["namespace"] = ns
-    if _ORIGIN:
-        md["origin"] = _ORIGIN  # where (git/cwd) it was captured — links the memory to the code state
+    if context.origin:
+        md["origin"] = context.origin
     return md
 
 
 def _ns_filter(namespace: str) -> dict | None:
     ns = _ns(namespace)
     return {"namespace": ns} if ns else None
+
+
 _SUPERSEDE = os.getenv("MIDAS_MCP_SUPERSEDE", "1") != "0"
 _SUPERSEDE_CONVO = os.getenv("MIDAS_MCP_SUPERSEDE_CONVO", "0") == "1"
 _USE_NLI = os.getenv("MIDAS_MCP_NLI", "0") == "1"
@@ -162,6 +170,7 @@ def build_memory() -> Memory:
     embedder = HashingEmbedder()
     reranker = None
     choice = os.getenv("MIDAS_MCP_EMBEDDER", "local").lower()
+    threads = max(1, int(os.getenv("MIDAS_MCP_MODEL_THREADS", "2")))
     if choice != "hashing":
         try:
             from midas import LocalEmbedder, LocalReranker
@@ -171,9 +180,9 @@ def build_memory() -> Memory:
                 # 0.68 vs 1.00 with the multilingual model). The cross-encoder reranker is
                 # English-trained (ms-marco), so it stays off for non-English models.
                 model = _MULTILINGUAL_MODEL if choice == "multilingual" else os.getenv("MIDAS_MCP_EMBEDDER")
-                embedder = LocalEmbedder(model_name=model)
+                embedder = LocalEmbedder(model_name=model, threads=threads)
             else:
-                embedder, reranker = LocalEmbedder(), LocalReranker()
+                embedder, reranker = LocalEmbedder(threads=threads), LocalReranker(threads=threads)
         except Exception as exc:  # fastembed missing or model load failed
             print(f"[midas-mcp] local embedder unavailable ({exc}); using hashing", file=sys.stderr)
 
@@ -192,15 +201,12 @@ def build_memory() -> Memory:
     if db:
         from midas.sqlite_store import SQLiteStore
 
-        os.makedirs(os.path.dirname(db), exist_ok=True)
         store = SQLiteStore(db, ann_threshold=10_000 if ann else None)
         print(f"[midas-mcp] memory: {db}", file=sys.stderr)
     elif ann:
         from midas import InMemoryStore
 
         store = InMemoryStore(ann_threshold=10_000)
-    if _NAMESPACE:
-        print(f"[midas-mcp] namespace (project scope): {_NAMESPACE}", file=sys.stderr)
     nli = None
     if _USE_NLI:
         from midas.nli import LocalNLI
@@ -218,12 +224,24 @@ def build_memory() -> Memory:
 
 
 try:
+    import anyio
     from mcp.server.fastmcp import FastMCP
     from mcp.types import ToolAnnotations
 except ImportError as exc:  # pragma: no cover
     raise SystemExit('Midas MCP server needs the MCP SDK: uv pip install -e ".[mcp]"') from exc
 
-_mem = build_memory()
+@cache
+def _memory() -> Memory:
+    return build_memory()
+
+
+_engine_lock = RLock()
+
+
+def _call_tool(func, **kwargs):
+    with _engine_lock:
+        return func(**kwargs)
+
 # `instructions` are surfaced to the model by the MCP client on connect — this is how installing Midas
 # makes an agent start remembering on its own: it injects the recall->work->capture loop + the policy.
 server = FastMCP("midas-memory", instructions=AGENT_MEMORY_INSTRUCTIONS)
@@ -231,7 +249,51 @@ server = FastMCP("midas-memory", instructions=AGENT_MEMORY_INSTRUCTIONS)
 server._mcp_server.version = __version__
 
 
-@server.tool(
+@cache
+def _tool_limiter():
+    return anyio.CapacityLimiter(1)
+
+
+def _tool(**options):
+    """Keep the transport responsive and serialize shared model/SQLite work across sessions."""
+    def decorate(func):
+        @wraps(func)
+        async def call(**kwargs):
+            return await anyio.to_thread.run_sync(
+                partial(_call_tool, func, **kwargs), limiter=_tool_limiter(),
+            )
+
+        server.tool(**options)(call)
+        return func
+
+    return decorate
+
+
+async def capture_prompt(event: dict) -> None:
+    """Offer a live, opted-in client prompt to the same engine as the MCP sessions."""
+    if not isinstance(event, dict) or any(not isinstance(event.get(field), str)
+            for field in ("prompt", "session_id", "cwd", "namespace", "client")):
+        return
+    prompt, session_id, client = event["prompt"].strip(), event["session_id"], event["client"]
+    if not prompt or not session_id or client not in ("claude-code", "codex"):
+        return
+
+    def store_prompt():
+        session = session_context({**event, "actor": client, "session": session_id})
+        token = _session.set(session)
+        try:
+            mem = _memory()
+            result = mem.capture(prompt, kind="chat", actor=client, source=f"hook:{client}:{session_id}",
+                                 metadata=_ns_metadata("", session_id))
+            if result.stored and _MAX_RECORDS and len(mem.store.all()) > _MAX_RECORDS:
+                mem.forget_decayed(max_records=_MAX_RECORDS)
+        finally:
+            _session.reset(token)
+
+    await anyio.to_thread.run_sync(partial(_call_tool, store_prompt), limiter=_tool_limiter())
+
+
+@_tool(
     title="Remember",
     annotations=ToolAnnotations(title="Remember", readOnlyHint=False, destructiveHint=False),
 )
@@ -257,21 +319,21 @@ def remember(
     namespace: scope tag (e.g. a project or user id); defaults to MIDAS_MCP_NAMESPACE.
     """
     imp = int(importance) or None  # 0 -> derive importance from content
-    rec = _mem.remember(
+    rec = _memory().remember(
         content,
         kind=kind,
         importance=imp,
         source=_source(session),
         provenance=provenance,
-        actor=actor or _ACTOR,
+        actor=actor or _context().actor,
         metadata=_ns_metadata(namespace, session),
     )
-    if _MAX_RECORDS and len(_mem.store.all()) > _MAX_RECORDS:
-        _mem.forget_decayed(max_records=_MAX_RECORDS)  # keep memory bounded (no LLM)
+    if _MAX_RECORDS and len(_memory().store.all()) > _MAX_RECORDS:
+        _memory().forget_decayed(max_records=_MAX_RECORDS)  # keep memory bounded (no LLM)
     return f"remembered ({rec.id})"
 
 
-@server.tool(
+@_tool(
     title="Capture turn",
     annotations=ToolAnnotations(title="Capture turn", readOnlyHint=False, destructiveHint=False),
 )
@@ -292,16 +354,16 @@ def capture(
     kind: note | chat | fact | preference | constraint | mission.
     provenance: planning | action | observation | user_confirmation.
     """
-    result = _mem.capture(
+    result = _memory().capture(
         content,
         kind=kind,
         source=_source(session),
         provenance=provenance,
-        actor=actor or _ACTOR,
+        actor=actor or _context().actor,
         metadata=_ns_metadata(namespace, session),
     )
-    if result.stored and _MAX_RECORDS and len(_mem.store.all()) > _MAX_RECORDS:
-        _mem.forget_decayed(max_records=_MAX_RECORDS)
+    if result.stored and _MAX_RECORDS and len(_memory().store.all()) > _MAX_RECORDS:
+        _memory().forget_decayed(max_records=_MAX_RECORDS)
     return {
         "stored": result.stored,
         "reason": result.reason,
@@ -312,7 +374,7 @@ def capture(
     }
 
 
-@server.tool(
+@_tool(
     title="Remember code memory",
     annotations=ToolAnnotations(title="Remember code memory", readOnlyHint=False, destructiveHint=False),
 )
@@ -332,13 +394,13 @@ def remember_code(
     category. No LLM. Set provenance="user_confirmation" only when the user explicitly confirmed it.
     """
     rec = _remember_code_impl(
-        _mem, content, code_kind, project=project,
+        _memory(), content, code_kind, project=project,
         provenance=(provenance or None), importance=(int(importance) or None),
-        actor=_ACTOR, source=_source(session),
+        actor=_context().actor, source=_source(session),
         metadata=_ns_metadata(namespace, session),
     )
-    if _MAX_RECORDS and len(_mem.store.all()) > _MAX_RECORDS:
-        _mem.forget_decayed(max_records=_MAX_RECORDS)  # keep memory bounded (no LLM)
+    if _MAX_RECORDS and len(_memory().store.all()) > _MAX_RECORDS:
+        _memory().forget_decayed(max_records=_MAX_RECORDS)  # keep memory bounded (no LLM)
     return _serialize_record(rec)
 
 
@@ -393,7 +455,7 @@ def _serialize_recall_hit(hit, *, explain: bool = True) -> dict:
     return item
 
 
-@server.tool(
+@_tool(
     title="Recall",
     annotations=ToolAnnotations(title="Recall", readOnlyHint=True, openWorldHint=False),
 )
@@ -426,7 +488,7 @@ def recall(
         as_of_ts = _dt.datetime.fromisoformat(as_of).replace(tzinfo=_dt.timezone.utc).timestamp()
     return [
         _serialize_recall_hit(h, explain=bool(explain))
-        for h in _mem.recall(
+        for h in _memory().recall(
             query,
             limit=int(limit),
             kind=kind or None,
@@ -441,19 +503,19 @@ def recall(
     ]
 
 
-@server.tool(
+@_tool(
     title="Inspect memory",
     annotations=ToolAnnotations(title="Inspect memory", readOnlyHint=True, openWorldHint=False),
 )
 def inspect_memory(memory_id: str) -> dict:
     """Inspect one stored memory by id without search, mutation, or embedding exposure."""
-    record = _mem.store.get(memory_id)
+    record = _memory().store.get(memory_id)
     if record is None:
         return {"found": False, "id": memory_id}
     return {"found": True, **_serialize_record(record)}
 
 
-@server.tool(
+@_tool(
     title="Build context",
     annotations=ToolAnnotations(title="Build context", readOnlyHint=True, openWorldHint=False),
 )
@@ -472,7 +534,7 @@ def build_context(
     and the header anchors today's date so the reader can resolve relative time. Standing user
     directives ("from now on…", "always…") are pinned in regardless of query relevance.
     """
-    return _mem.assemble(
+    return _memory().assemble(
         query,
         token_budget=int(token_budget),
         limit=int(limit),
@@ -487,7 +549,7 @@ def build_context(
     )
 
 
-@server.tool(
+@_tool(
     title="Memory state",
     annotations=ToolAnnotations(title="Memory state", readOnlyHint=True, openWorldHint=False),
 )
@@ -500,11 +562,11 @@ def memory_state(namespace: str = "", kinds: str = "", limit: int = 50) -> dict:
     """
     kind_tuple = tuple(k.strip() for k in kinds.split(",") if k.strip())
     extra = {"kinds": kind_tuple} if kind_tuple else {}
-    records = _state_view(_mem, scope=_ns_filter(namespace), limit=int(limit), **extra)
+    records = _state_view(_memory(), scope=_ns_filter(namespace), limit=int(limit), **extra)
     return {"count": len(records), "state": [_serialize_record(r) for r in records]}
 
 
-@server.tool(
+@_tool(
     title="Memory diff",
     annotations=ToolAnnotations(title="Memory diff", readOnlyHint=True, openWorldHint=False),
 )
@@ -514,7 +576,7 @@ def memory_diff(hours: float = 24.0, namespace: str = "") -> dict:
     everything. Deterministic, no LLM.
     """
     since = time.time() - float(hours) * 3600.0
-    diff = _diff_view(_mem, since, scope=_ns_filter(namespace))
+    diff = _diff_view(_memory(), since, scope=_ns_filter(namespace))
     return {
         "since_hours": float(hours),
         "added": [_serialize_record(r) for r in diff.added],
@@ -524,7 +586,7 @@ def memory_diff(hours: float = 24.0, namespace: str = "") -> dict:
     }
 
 
-@server.tool(
+@_tool(
     title="Resume session",
     annotations=ToolAnnotations(title="Resume session", readOnlyHint=True, openWorldHint=False),
 )
@@ -537,7 +599,7 @@ def resume(project: str = "", namespace: str = "", hours: float = 168.0,
     needs a query): resume is the query-less session start. Deterministic, no LLM.
     """
     pack = _resume_view(
-        _mem, scope=_ns_filter(namespace), project=project or None,
+        _memory(), scope=_ns_filter(namespace), project=project or None,
         since=time.time() - float(hours) * 3600.0, token_budget=int(token_budget),
     )
     return {
@@ -554,7 +616,7 @@ def resume(project: str = "", namespace: str = "", hours: float = 168.0,
     }
 
 
-@server.tool(
+@_tool(
     title="Memory conflicts",
     annotations=ToolAnnotations(title="Memory conflicts", readOnlyHint=True, openWorldHint=False),
 )
@@ -565,7 +627,7 @@ def memory_conflicts(namespace: str = "", limit: int = 10) -> dict:
     heuristic: numbers disagree / one side negates). Midas never resolves these silently: verify with
     the user, then `forget` the wrong one or capture the corrected value (which supersedes). No LLM.
     """
-    found = _conflicts_view(_mem, scope=_ns_filter(namespace), limit=int(limit))
+    found = _conflicts_view(_memory(), scope=_ns_filter(namespace), limit=int(limit))
     return {
         "count": len(found),
         "conflicts": [
@@ -577,7 +639,7 @@ def memory_conflicts(namespace: str = "", limit: int = 10) -> dict:
     }
 
 
-@server.tool(
+@_tool(
     title="Open loops",
     annotations=ToolAnnotations(title="Open loops", readOnlyHint=True, openWorldHint=False),
 )
@@ -589,11 +651,11 @@ def open_loops(project: str = "", namespace: str = "", limit: int = 20) -> dict:
     scope = _ns_filter(namespace) or {}
     if project:
         scope["project"] = project
-    records = _open_loops_view(_mem, scope=scope or None, limit=int(limit))
+    records = _open_loops_view(_memory(), scope=scope or None, limit=int(limit))
     return {"count": len(records), "open_loops": [_serialize_record(r) for r in records]}
 
 
-@server.tool(
+@_tool(
     title="Remember commitment",
     annotations=ToolAnnotations(title="Remember commitment", readOnlyHint=False,
                                 destructiveHint=False),
@@ -605,13 +667,13 @@ def remember_commitment(content: str, project: str = "", due: str = "", session:
     `close_loop`, so promises survive across sessions. due: optional free-text deadline.
     """
     rec = _remember_commitment_impl(
-        _mem, content, project=project or None, due=due or None, actor=_ACTOR,
+        _memory(), content, project=project or None, due=due or None, actor=_context().actor,
         source=_source(session), metadata=_ns_metadata(namespace, session),
     )
     return f"commitment recorded ({rec.id}) — close it with close_loop when done"
 
 
-@server.tool(
+@_tool(
     title="Close loop",
     annotations=ToolAnnotations(title="Close loop", readOnlyHint=False, destructiveHint=False),
 )
@@ -621,13 +683,13 @@ def close_loop(loop_id: str, resolution: str) -> str:
     `loop_id` from `open_loops` (the record id).
     """
     try:
-        rec = _close_loop_impl(_mem, loop_id, resolution, actor=_ACTOR)
+        rec = _close_loop_impl(_memory(), loop_id, resolution, actor=_context().actor)
     except ValueError as exc:
         return str(exc)
     return f"loop closed ({loop_id} -> {rec.id})"
 
 
-@server.tool(
+@_tool(
     title="Project state",
     annotations=ToolAnnotations(title="Project state", readOnlyHint=True, openWorldHint=False),
 )
@@ -638,7 +700,7 @@ def project_state(project: str, limit: int = 200) -> dict:
     what is forbidden before acting. Deterministic, no LLM. Capture code memories with the SDK's
     `midas.coding.remember_*` helpers (they tag `code_kind` + `project`).
     """
-    grouped = _project_state_view(_mem, project, limit=int(limit))
+    grouped = _project_state_view(_memory(), project, limit=int(limit))
     return {
         "project": project,
         "counts": {k: len(recs) for k, recs in grouped.items()},
@@ -646,7 +708,7 @@ def project_state(project: str, limit: int = 200) -> dict:
     }
 
 
-@server.tool(
+@_tool(
     title="Check forbidden action",
     annotations=ToolAnnotations(title="Check forbidden action", readOnlyHint=True, openWorldHint=False),
 )
@@ -658,8 +720,8 @@ def check_forbidden_action(action: str, project: str) -> dict:
         semantic signal is noisy (~31% false positives, `eval.forbidden_eval`), so it warns, not blocks.
     Separate from the provenance/currency gate (`check_memory_use`).
     """
-    lexical = _is_forbidden(_mem, action, project, use_embeddings=False)
-    matched = _is_forbidden(_mem, action, project)  # lexical + semantic
+    lexical = _is_forbidden(_memory(), action, project, use_embeddings=False)
+    matched = _is_forbidden(_memory(), action, project)  # lexical + semantic
     lex_ids = {r.id for r in lexical}
     semantic_only = [r for r in matched if r.id not in lex_ids]
     return {
@@ -672,7 +734,7 @@ def check_forbidden_action(action: str, project: str) -> dict:
     }
 
 
-@server.tool(
+@_tool(
     title="Audit memory use",
     annotations=ToolAnnotations(title="Audit memory use", readOnlyHint=True, openWorldHint=False),
 )
@@ -682,10 +744,10 @@ def audit_use(query: str, intended_use: str = "external_action", namespace: str 
     with both a source and an actor). Hand this to an auditor to prove WHY an action is or isn't justified.
     Source-traceable, deterministic, no LLM.
     """
-    return _audit_use(_mem, query, intended_use, metadata_filter=_ns_filter(namespace))
+    return _audit_use(_memory(), query, intended_use, metadata_filter=_ns_filter(namespace))
 
 
-@server.tool(
+@_tool(
     title="Memory policy",
     annotations=ToolAnnotations(title="Memory policy", readOnlyHint=True, openWorldHint=False),
 )
@@ -699,7 +761,7 @@ def memory_policy() -> dict:
     }
 
 
-@server.tool(
+@_tool(
     title="Check memory use",
     annotations=ToolAnnotations(title="Check memory use", readOnlyHint=True, openWorldHint=False),
 )
@@ -715,27 +777,27 @@ def check_memory_use(
     intended_use: planning | answer | external_action | destructive_action.
     External/destructive actions require user_confirmation provenance; otherwise ask the user first.
     """
-    decision = _mem.guard_reliance(
+    decision = _memory().guard_reliance(
         query,
         intended_use=intended_use,
-        acting_agent=acting_agent or _ACTOR,
+        acting_agent=acting_agent or _context().actor,
         limit=int(limit),
         metadata_filter=_ns_filter(namespace),
     )
     return asdict(decision)
 
 
-@server.tool(
+@_tool(
     title="Forget memory",
     annotations=ToolAnnotations(title="Forget memory", readOnlyHint=False, destructiveHint=True),
 )
 def forget(memory_id: str) -> str:
     """Delete a single memory by id (ids come from `recall`). Supersession chains through the
     deleted record are relinked, so belief-revision history stays walkable."""
-    return "forgotten" if _mem.forget(memory_id) else f"no memory with id {memory_id}"
+    return "forgotten" if _memory().forget(memory_id) else f"no memory with id {memory_id}"
 
 
-@server.tool(
+@_tool(
     title="Forget matching",
     annotations=ToolAnnotations(title="Forget matching", readOnlyHint=False, destructiveHint=True),
 )
@@ -753,7 +815,7 @@ def forget_matching(
     Deletion bypasses durability protections — an explicit erasure request outranks retention —
     and returns the full list of removed memories as the audit trail.
     """
-    matched = _mem.forget_matching(
+    matched = _memory().forget_matching(
         query,
         min_relevance=float(min_relevance),
         limit=int(limit),
@@ -770,18 +832,18 @@ def forget_matching(
     }
 
 
-@server.tool(
+@_tool(
     title="Forget all",
     annotations=ToolAnnotations(title="Forget all", readOnlyHint=False, destructiveHint=True),
 )
 def forget_all() -> str:
     """Clear all stored memories (fresh start)."""
-    n = len(_mem.store.all())
-    _mem.store.clear()
+    n = len(_memory().store.all())
+    _memory().store.clear()
     return f"cleared {n} memories"
 
 
-@server.tool(
+@_tool(
     title="Maintain memory",
     annotations=ToolAnnotations(title="Maintain memory", readOnlyHint=False, destructiveHint=True),
 )
@@ -799,16 +861,16 @@ def maintain(consolidate_threshold: float = 0.0, max_records: int = 0, min_value
     Durable memories (facts/preferences/constraints, high importance) and supersession chains are
     never dropped. Returns counts and the ids removed (auditable).
     """
-    before = len(_mem.store.all())
+    before = len(_memory().store.all())
     ttl_map = parse_ttl_spec(ttl) if ttl else _TTL
-    expired = _mem.forget_expired(ttl_map) if ttl_map else []
+    expired = _memory().forget_expired(ttl_map) if ttl_map else []
     consolidated = (
-        _mem.consolidate(similarity_threshold=float(consolidate_threshold))
+        _memory().consolidate(similarity_threshold=float(consolidate_threshold))
         if consolidate_threshold and consolidate_threshold > 0
         else []
     )
     forgotten = (
-        _mem.forget_decayed(
+        _memory().forget_decayed(
             max_records=int(max_records) or None,
             min_value=float(min_value) or None,
         )
@@ -817,7 +879,7 @@ def maintain(consolidate_threshold: float = 0.0, max_records: int = 0, min_value
     )
     return {
         "before": before,
-        "remaining": len(_mem.store.all()),
+        "remaining": len(_memory().store.all()),
         "expired": len(expired),
         "consolidated": len(consolidated),
         "forgotten": len(forgotten),
@@ -825,7 +887,7 @@ def maintain(consolidate_threshold: float = 0.0, max_records: int = 0, min_value
     }
 
 
-@server.tool(
+@_tool(
     title="Memory stats",
     annotations=ToolAnnotations(title="Memory stats", readOnlyHint=True, openWorldHint=False),
 )
@@ -840,14 +902,14 @@ def stats(namespace: str = "") -> dict:
     by_provenance: dict[str, int] = {p: 0 for p in MEMORY_PROVENANCE}
     by_tier: dict[str, int] = {"short": 0, "medium": 0, "long": 0}
     by_namespace: dict[str, int] = {}
-    for record in _mem.store.all():
+    for record in _memory().store.all():
         rec_ns = record.metadata.get("namespace") or "(none)"
         by_namespace[rec_ns] = by_namespace.get(rec_ns, 0) + 1
         if ns and record.metadata.get("namespace") != ns:
             continue
         by_kind[record.kind] = by_kind.get(record.kind, 0) + 1
         by_provenance[record.provenance] = by_provenance.get(record.provenance, 0) + 1
-        by_tier[_mem.tier(record)] += 1
+        by_tier[_memory().tier(record)] += 1
     return {
         "total": sum(by_kind.values()),
         "namespace": ns or None,
@@ -905,9 +967,9 @@ def _run_maintenance_pass() -> dict:
     This is the sleep-time idea (reorganise memory while the agent is idle) at Midas prices:
     extractive consolidation + value-ranked forgetting, $0, nothing leaves the box — versus
     LLM-agent rewrites of memory in systems like Letta's sleep-time agents."""
-    expired = _mem.forget_expired(_TTL) if _TTL else []
-    consolidated = _mem.consolidate(similarity_threshold=0.95)
-    forgotten = _mem.forget_decayed(max_records=_MAX_RECORDS) if _MAX_RECORDS else []
+    expired = _memory().forget_expired(_TTL) if _TTL else []
+    consolidated = _memory().consolidate(similarity_threshold=0.95)
+    forgotten = _memory().forget_decayed(max_records=_MAX_RECORDS) if _MAX_RECORDS else []
     return {"expired": len(expired), "consolidated": len(consolidated), "forgotten": len(forgotten)}
 
 
@@ -917,7 +979,7 @@ def _auto_maintain_loop(interval_seconds: float) -> None:
     while True:
         _time.sleep(interval_seconds)
         try:
-            result = _run_maintenance_pass()
+            result = _call_tool(_run_maintenance_pass)
             if any(result.values()):
                 print(f"[midas-mcp] auto-maintain: {result}", file=sys.stderr)
         except Exception as exc:  # never let upkeep kill the server
@@ -948,10 +1010,7 @@ class _BearerAuth:
         await self.app(scope, receive, send)
 
 
-def run_server(transport: str = "stdio", host: str = "127.0.0.1", port: int = 7077) -> None:
-    """Run the MCP server. transport='stdio' (default — each client launches it) or 'http' (one shared
-    server at an MCP URL: http://host:port/mcp). The `midas` CLI calls this; `midas-mcp` uses stdio.
-    Set MIDAS_MCP_TOKEN (or `midas serve --token`) to require a bearer token on the HTTP transport."""
+def _start_maintenance() -> None:
     interval_min = int(os.getenv("MIDAS_MCP_AUTO_MAINTAIN", "0") or "0")
     if interval_min > 0:
         import threading
@@ -960,6 +1019,13 @@ def run_server(transport: str = "stdio", host: str = "127.0.0.1", port: int = 70
             target=_auto_maintain_loop, args=(interval_min * 60.0,), daemon=True
         ).start()
         print(f"[midas-mcp] auto-maintain every {interval_min} min (no LLM)", file=sys.stderr)
+
+
+def run_server(transport: str = "stdio", host: str = "127.0.0.1", port: int = 7077) -> None:
+    """Run the MCP server. transport='stdio' for standalone operation or 'http' for an explicit endpoint.
+    The default `midas-mcp` command connects to the shared local worker.
+    Set MIDAS_MCP_TOKEN (or `midas serve --token`) to require a bearer token on the HTTP transport."""
+    _start_maintenance()
     if transport in ("http", "streamable-http"):
         server.settings.host = host
         server.settings.port = port
@@ -977,7 +1043,9 @@ def run_server(transport: str = "stdio", host: str = "127.0.0.1", port: int = 70
 
 
 def main() -> None:
-    run_server("stdio")
+    from midas_mcp import main as relay
+
+    relay()
 
 
 if __name__ == "__main__":

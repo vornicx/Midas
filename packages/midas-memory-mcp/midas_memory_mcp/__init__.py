@@ -15,6 +15,9 @@ __all__ = ["main"]
 
 def main() -> None:
     """Run the Midas MCP server (delegates to the SDK's entry point)."""
-    from midas.mcp_server import main as _run
+    try:
+        from midas_mcp import main as _run
+    except ModuleNotFoundError:  # compatibility with older Midas SDK installs
+        from midas.mcp_server import main as _run
 
     _run()

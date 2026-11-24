@@ -323,11 +323,12 @@ class LocalEmbedder:
         cache_dir: str | Path | None = None,
         batch_size: int = 32,
         max_text_chars: int | None = None,
+        threads: int | None = None,
     ) -> None:
         self.cache_dir = configure_local_model_cache(cache_dir)
         from fastembed import TextEmbedding  # lazy import — optional dependency
 
-        self._model = TextEmbedding(model_name=model_name, cache_dir=self.cache_dir)
+        self._model = TextEmbedding(model_name=model_name, cache_dir=self.cache_dir, threads=threads)
         self.model_name = model_name
         # Dimension from the model's own registry entry — hardcoding 768 poisoned the disk cache
         # for any non-default model (e.g. multilingual MiniLM is 384-d: blobs were written with a
@@ -367,11 +368,12 @@ class LocalReranker:
         model_name: str = "Xenova/ms-marco-MiniLM-L-6-v2",
         *,
         cache_dir: str | Path | None = None,
+        threads: int | None = None,
     ) -> None:
         self.cache_dir = configure_local_model_cache(cache_dir)
         from fastembed.rerank.cross_encoder import TextCrossEncoder  # lazy, optional
 
-        self._model = TextCrossEncoder(model_name=model_name, cache_dir=self.cache_dir)
+        self._model = TextCrossEncoder(model_name=model_name, cache_dir=self.cache_dir, threads=threads)
         self.model_name = model_name
 
     # Cross-encoders cap the query+doc PAIR at ~512 tokens; oversized input crashes the ONNX

@@ -147,7 +147,16 @@ detects — **Claude Code, Codex, Grok Build, Cursor, Claude Desktop, Windsurf, 
 Cline, Zed** — at it. So all your agents read and write the **same** memory, autonomously, with no
 per-client paths to keep in sync.
 
-Prefer a single endpoint over per-client launches? Run one server and give your clients an **MCP URL**:
+`midas-mcp` starts one local worker per SQLite database and connects all compatible sessions to it.
+Stdio clients launch a small relay. The worker loads the memory engine on its first tool call and
+exits 30 seconds after the last connection closes. After upgrading, restart open MCP clients once
+to replace the old per-session servers. The SQLite database and client commands carry over.
+
+Sessions sharing a database use the same engine settings. Client identity, actor, project scope,
+and conversation IDs stay separate. Set `MIDAS_MCP_DB=:memory:` for an isolated ephemeral session,
+or `MIDAS_MCP_MODE=standalone` when you need a separate stdio engine with its own settings.
+
+If your clients use a direct **MCP URL**, you can run a dedicated HTTP server:
 
 ```bash
 midas serve --http        # → http://127.0.0.1:7077/mcp   (one server, one memory, every client shares it)
@@ -160,9 +169,10 @@ Already carrying agent memory in files? **`midas import --from claude-md CLAUDE.
 `--from cursorrules`, `--from jsonl`, `--from mem0`, `--from zep`) turns those rules and exports into
 first-class, recallable, governable memories — tagged with where they came from, idempotent on re-run.
 
-Want memory even when the agent never calls `capture`? **`midas init --claude-hook`** installs a
-Claude Code SessionEnd hook that offers each session's user turns to memory — Midas's no-LLM policy
-still decides what is actually kept.
+For automatic capture while sessions are open, run **`midas init --claude-hook --codex-hook`**.
+Each flag enables the respective client. The hooks offer new user prompts to the local shared
+worker, where the existing capture policy decides what to keep. Codex requires you to trust the
+installed hook in `/hooks`. Rerun `midas init --claude-hook` to migrate an older SessionEnd hook.
 
 <details>
 <summary><b>Manual setup</b> — any client, or to customize (click to expand)</summary>
@@ -206,9 +216,8 @@ current).
 
 ### One memory, many clients
 
-By default every client shares **one live memory** (`~/.midas/memory.sqlite3`) — each detects the others'
-writes (SQLite `data_version`) and refreshes, so a fact captured in your IDE is recallable from your chat
-app seconds later, no restarts.
+By default the shared worker holds **one live memory** (`~/.midas/memory.sqlite3`). A fact captured
+in one connected client is available to other clients in the same scope as soon as it is stored.
 
 Want **per-project** separation instead? **`midas init --project-scoped`** (or `MIDAS_MCP_NAMESPACE=auto`)
 gives each project its own partition in the same store — the scope is derived from the git repo / cwd the
